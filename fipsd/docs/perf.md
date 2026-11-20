@@ -116,6 +116,250 @@ markdown summary). No new failure metric or hosted-gate policy is introduced;
 raw per-probe and latency details remain in the JSON. No component version
 bump: these are test/harness/documentation changes, not shipped daemon APIs.
 
+## Dataplane threads: nostrc-u19cz.3
+
+Measured **2026-11-19** on the M4 Max below (Release `-O3 -g`, local macOS, not
+hosted/Linux qualification). The machine was shared with other benchmarking
+agents and two VMs (load average 10-17), so absolute numbers are noisy: the
+baseline (`5b3c987c8`) and each stage were measured **back to back in one
+session**, every run is reported (no best-of selection), and run 1's c-c pair
+carried a 4 s `sample` of both daemons, which depresses its numbers.
+Saturation is `perf_loopback.py --runs 2 --seconds 5 --latency-samples 300`.
+CPU per delivered datagram comes from the paced harness of
+`perf/u19cz-1-paced-harness` (`4ff8ca4f2`, its CPU-window client built from
+that commit) at a fixed 100 Mbit/s: `--paced --paced-seconds 5
+--paced-max-mbps 100`, about 10.4k datagrams/s.
+
+### Result: interleaved baseline vs stage 3
+
+Final round: baseline and stage 3 alternated, no `sample`. One saturated
+`--runs 1` run and one 100 Mbit/s probe per binary per round, two rounds.
+
+| | Baseline `5b3c987c8` | Stage 3 `ea2031f60` |
+|---|---:|---:|
+| c-c Mbit/s (loss %) | 721.6 (0.1), 708.2 (0.1) | 891.5 (25.5), 725.7 (39.1) |
+| c-rust Mbit/s (loss %) | 717.9 (0.8), 726.9 (0.6) | 1000.4 (18.5), 1217.6 (3.7) |
+| c-c one-way p50 fwd/rev us | 98/103, 91/93 | 72/72, 80/81 |
+| c-rust one-way p50 fwd/rev us | 64/66, 92/92 | 55/61, 61/64 |
+| daemon CPU % one core, c-c, tx / rx | 102.6/111.4, 101.4/110.4 | 251.0/180.0, 243.7/172.3 |
+| CPU us/datagram at 100 Mbit/s, c-c tx / rx | 48.7/48.5, 53.6/53.4 | 33.2/35.3, 36.5/38.6 |
+| CPU us/datagram at 100 Mbit/s, c-rust C sender | 55.2, 53.4 | 37.8, 38.6 |
+| Rust in the same probes (sender / receiver) | 29.1/44.9, 23.8/39.8 | 21.3/34.4, 26.2/43.1 |
+
+Trade-off at moderate paced rates. Direct c-c probes, 3 s, two each,
+interleaved. Losses out of 93750 / 156250 / 218750 datagrams:
+
+| Offered | Baseline | Stage 3 |
+|---|---:|---:|
+| 300 Mbit/s | 9, 1865 | 62, 181 |
+| 500 Mbit/s | 8, 332 | 783, 1706 |
+| 700 Mbit/s | 9340, 3623 | 5577, 1674 |
+
+Every stage 3 loss is `native.drop_flow_queue_full` at the receiver. The
+faster dispatcher delivers a batch faster than the flow feeder drains a
+per-flow queue of `node.native_api.pending_per_flow` (default 16). The
+baseline lost mostly local send refusals at the sender instead. Native
+delivery is outside this change and is tracked as nostrc-rpqvh. Unpaced C-to-C
+overload loss is the same mechanism.
+
+Idle cost is unchanged. Two linked idle daemons (`top`, 5 s intervals) saw
++239 to +298 context switches per interval for stage 1 against +213 to +383 for
+the baseline, at 0.0-0.3% CPU. The two crypto threads block on their
+condvars.
+
+Verification, per stage, Debug `-DGO_WARNINGS_AS_ERRORS=ON`, with
+`FIPSD_UDP_INTEROP_RUST_BINARY` set, and `FIPSD_TCP_INTEROP_RUST_BINARY` from
+stage 2 on. Stage 1 ran the three TCP interop tests separately. ASan: 3/3.
+TSan: the C-to-Rust rekey-saturated scenario missed once while running beside
+the other two, then passed 6/6 alone, alternating with the baseline, with
+identical K flips (C 34.1-34.4 s, Rust 35.9-37.0 s).
+
+- ASan+UBSan `ctest -R '^Fips' -E 'Soak|Perf'`: 221/221.
+- TSan, same selection: 221/221, no ThreadSanitizer report.
+- TSan `--repeat until-fail:5` over two-node (node, UDP v4/v6, native), ring,
+  presence/rebind, restart-replay, TCP rekey saturated, native burst, workers
+  and dataplane: stages 2 and 3 55/55. Stage 1 54/55: the miss was
+  `FipsdTcpRekeySaturatedTest`'s deadline, a pre-existing tail (nostrc-4im43).
+  The unmodified baseline TSan binary also took 21.6 and 36.2 s of a 37 s
+  deadline. Later runs did not separate the builds: across inline on/off and
+  sharding on/off variants, slow runs were 0/10 vs 2/10, 2/10 vs 0/10, 1/15 vs
+  2/15.
+- Capability skips: privileged TUN/Ethernet/IPv6 smoke, Tor, and the control
+  and fipsctl interop tests, which need an upstream control checkout and cargo.
+
+Deferred, with beads:
+
+- Outbound fusion (nostrc-ov6k4).
+- Windows worker-side send (nostrc-akn6b).
+- libfips-core's 58 KB output clear per executed step (nostrc-02p6s).
+- Per-wake timer scans (nostrc-w3tfz).
+- libgo's per-send `fcntl` (nostrc-bmsti).
+
+### Stage 1: crypto on OS threads
+
+Before, the "crypto workers" were scheduler fibers. libgo wakes a fiber on its
+last worker and steals only from deep queues, so in each daemon one OS thread
+did all packet work (sender `sample`: 2104 of 2136 samples active on one
+thread, the second scheduler worker idle).
+
+- `worker_set.c` runs each worker on its own pthread (winpthreads on Windows,
+  as libgo's blocking executor). Each has a bounded FIFO ring under a
+  mutex/condvar. A producer signals only when it makes a waiting worker's empty
+  queue non-empty (upstream `MacWorkerSender`), and an idle worker blocks: no
+  timer, no spin. Completions use the existing bounded results channel. A
+  blocking `go_channel_send` from a plain thread waits on OS primitives and
+  wakes the dispatcher's select through `gof_hook_make_runnable`, as the
+  blocking executor does. Workers drain batches of 32; the dispatcher keeps its
+  64-event batch.
+- Jobs carry a shard. A peer's link jobs stay on one worker and its session
+  jobs on the next, so a flow completes in order and a session datagram's two
+  AEADs (or an arrival's two opens) pipeline over two workers.
+- A handoff buys parallelism only while other input waits. When the results
+  channel, transport events, peer inbox and command mailbox are all empty, and
+  the shard's worker has nothing in flight, the dispatcher runs the job itself.
+  Its completion still goes through the results channel, behind that worker's.
+  Without this, CPU per datagram at 100 Mbit/s rose from ~56 to ~88 us: two
+  thread wakes per job cost several times the AEAD.
+- Wipes. `recycle` used to wipe all three 2 KB slabs after
+  `fipsd_crypto_job_destroy` had already wiped them. It now wipes once, only
+  the bytes a tenant can have written: the header in `ad`, the copied input, and
+  in `output` the header plus at most input + tag. The dataplane also called
+  `fips_rekey_outputs_clear` on already-empty output lists, which wipes all 48
+  items (58 KB) whatever `count` says, and executed steps that produced no
+  output. fipsd now skips both; outputs only append at `count`, and compaction
+  wipes the tail it drops.
+
+| Stage 1, back to back | Baseline `5b3c987c8` (two sessions) | Stage 1 |
+|---|---:|---:|
+| c-c Mbit/s, run 1 (sampled) / run 2 | 517.2 / 714.4; 474.7 / 707.1 | 323.3 / 877.0 |
+| c-c loss %, run 1 / run 2 | 0.6 / 0.1; 1.1 / 0.1 | 46.4 / 15.1 |
+| c-c one-way p50 fwd/rev us, run 2 | 98 / 99; 85 / 88 | 64 / 66 |
+| c-rust Mbit/s, run 1 / run 2 | 660.0 / 709.9; 683.7 / 718.7 | 1011.5 / 1000.5 |
+| c-rust loss %, run 1 / run 2 | 5.7 / 1.2; 2.0 / 0.5 | 1.8 / 4.4 |
+| daemon CPU % one core, c-c run 2, tx / rx | 102.5 / 112.9; 102.8 / 116.8 | 167.6 / 183.4 |
+| CPU us/datagram at 100 Mbit/s, c-c tx / rx | 56.6/55.2, 62.0/55.0, 56.5/55.7, 71.6/66.4, 56.6/56.2, 61.1/56.6 | 38.4/39.7, 39.0/40.3, 36.3/37.5 |
+| CPU us/datagram at 100 Mbit/s, c-rust C sender | 55.3, 64.6, 62.8, 66.3, 52.8, 68.8 | 36.5, 36.5, 35.3 |
+
+Rust at 100 Mbit/s in the same probes: 20.7-29.1 us (sender) and 34.6-56.0 us
+(receiver) per datagram. Thread split (`sample`, c-c run 1):
+
+- Baseline sender: one thread 2104/2136 active (`__sendmsg` 719, ChaCha20 403,
+  `__bzero` 157, Poly1305 110, `memset` 109). Receiver: one thread 1697/1864
+  active.
+- Stage 1 sender: dispatcher thread 1567/1614 active, `fipsd-crypto-0` and
+  `fipsd-crypto-1` 412 each. Receiver: dispatcher 916/1467, crypto 286 + 269.
+- At 100 Mbit/s the Stage 1 workers are nearly idle (inline runs). The
+  dispatcher threads hold `__sendmsg`, the per-iteration timer scans and clock
+  reads.
+
+The sender now offers more than one C receiver absorbs unpaced. c-c loss is
+receiver overload: run 2 sent 538k and delivered 457k. Rust-rust drops 39-86%
+the same way. It is not a send-side regression, and c-rust stays near 2-4%.
+The sender's dispatcher thread is saturated with `__sendmsg`; stage 2 moves
+that send.
+
+### Stage 2: data-lane sends from the worker
+
+The worker that sealed a data-lane link frame now sends it, as upstream's
+encrypt workers do. This applies to transports whose new
+`send_concurrent(to)` op allows it: UDP to a numeric endpoint, POSIX only.
+On Windows the fiber socket layer uses overlapped I/O, and upstream spawns no
+encrypt workers there. The UDP instance and DNS-cache nsync locks are
+published to TSan (`udp/lock.h`), as libgo's `NLOCK` does. TCP, Tor, Nym,
+Ethernet, BLE and the loopback test transport keep the completion-time send,
+as do farewells (which outlive the table) and addressed, control-lane path
+messages.
+
+- Submit resolves the active pair, as the completion would, and checks that
+  pair's MTU (the completion's own check). Counters stay reserved by the
+  dispatcher, and all accounting stays on the completion: `frames_sent`, link
+  statistics, MMP `record_sent`, the machine's `DataSent` and send-failure
+  counts. It runs only for frames the worker reports sent.
+- 9keoz.12 guard. Each peer slot has a gate (mutex + generation). The worker
+  sends only while holding it at the generation captured at submit. The
+  dispatcher bumps it, under the mutex, before a path switch closes the old
+  pair, on rebind, when the link's epoch set changes
+  (installed/retired/reverted/restarted/teardown), when removal starts, and on
+  slot release. A bump waits for an in-progress send. After it, a held frame
+  comes back unsent, and the completion resolves it as before: re-resolve,
+  MTU, stale check, dispatcher send.
+
+| Stage 2, back to back | Baseline `5b3c987c8` | Stage 2 |
+|---|---:|---:|
+| c-c Mbit/s, run 1 (sampled) / run 2 | 509.1 / 709.8 | 271.9 / 613.4 |
+| c-c loss %, run 1 / run 2 | 1.3 / 0.1 | 56.7 / 47.4 |
+| c-c one-way p50 fwd/rev us, run 2 | 78 / 84 | 62 / 63 |
+| c-rust Mbit/s, run 1 (sampled) / run 2 | 712.7 / 676.3 | 878.6 / 1118.9 |
+| c-rust loss %, run 1 / run 2 | 1.1 / 2.0 | 20.8 / 6.1 |
+| daemon CPU % one core, c-c run 2, tx / rx | 102.3 / 113.8 | 247.9 / 183.5 |
+| CPU us/datagram at 100 Mbit/s, c-c tx / rx | 54.4/53.8, 70.1/66.2 | 39.2/40.8, 43.8/45.3 |
+| CPU us/datagram at 100 Mbit/s, c-rust C sender | 66.5, 55.7 | 40.0, 39.6 |
+
+Thread split (`sample`, c-c run 1):
+
+- Sender: `fipsd-crypto-0`, the link worker, 1601/1722 active (`__sendmsg` 942,
+  ChaCha20 362, Poly1305 94, `__fcntl` 53). Dispatcher 1356/1722 with no
+  `__sendmsg`. `fipsd-crypto-1` (FSP seals) 517.
+- Receiver: dispatcher 1141/1579, crypto 403 + 391.
+
+The single-flow sender is now bound by its link worker. C-to-Rust delivers
+1.1 Gbit/s unpaced; C-to-C collapses into receiver overload. The receiver drops
+work it has already partly done: an arrival needs a second slab and job for its
+FSP open, and delivery bursts overflow the native flow queue (stage 3).
+Paced, the picture differs. A direct 400 Mbit/s c-c probe lost 111 of 125000
+datagrams on stage 2 (109 `native.drop_flow_queue_full` at the receiver),
+against 4128 on the baseline (3281 local send refusals, 756
+`drop_flow_queue_full`). Single sustainable-rate searches (<1% loss) were
+dominated by such edge losses and by host load: unchanged Rust-to-Rust ranged
+197-687 Mbit/s between sessions. They are not reported as a stage metric.
+
+### Stage 3: one job per arrival
+
+Inbound fusion. The link open job's after-step (`fipsd_dp_worker_preopen`)
+runs on the executing thread. For an established session frame addressed to
+this node, it also opens that frame, using the session epochs of the packet's
+own immutable, retained snapshot, tried in snapshot order as the open retry
+chain does. The plaintext is left in the slab, and nothing is accepted there.
+
+At completion the dispatcher runs the link step (FMP replay window), then
+`fipsd_dp_preopened` from `hs_session_datagram_received`. That checks the
+opening epoch is still live in the session machine (stale-epoch check), and
+the authenticated-frame step marks the FSP replay window. A failed pre-open is
+not a verdict. Its snapshot can predate a session epoch installed by an
+earlier frame that was still completing, so the frame takes the ordinary open
+with a fresh snapshot, the full retry chain and its accounting. One slab, one
+job and one completion per arrival replace two.
+
+Outbound fusion is deliberately not done. With per-link sharding, one job
+would add the FSP seal (~500 samples in the stage 2 profile) to the link
+worker, which is already the single-flow bottleneck (93% busy with
+`__sendmsg` + FMP seal). That would cut single-flow throughput by about a
+fifth to save dispatcher time, which is not the limit. At low load both seals
+already run inline on the dispatcher. Upstream fuses outbound because its
+rx_loop, not the worker, was its limit.
+
+| Stage 3, back to back | Baseline `5b3c987c8` | Stage 3 |
+|---|---:|---:|
+| c-c Mbit/s, run 1 (sampled) / run 2 | 469.7 / 714.1 | 330.5 / 744.8 |
+| c-c loss %, run 1 / run 2 | 1.0 / 0.2 | 48.3 / 31.4 |
+| c-c one-way p50 fwd/rev us, run 2 | 88 / 89 | 82 / 81 |
+| c-rust Mbit/s, run 1 (sampled) / run 2 | 690.5 / 721.8 | 1114.7 / 1052.4 |
+| c-rust loss %, run 1 / run 2 | 2.0 / 0.5 | 5.0 / 8.8 |
+| daemon CPU % one core, c-c run 2, tx / rx | 102.5 / 112.2 | 234.8 / 171.9 |
+| CPU us/datagram at 100 Mbit/s, c-c tx / rx | 55.9/55.9, 56.6/55.5 | 36.3/38.4, 48.2/47.7 |
+| CPU us/datagram at 100 Mbit/s, c-rust C sender | 55.4, 67.9 | 38.2, 36.0 |
+
+Thread split (`sample`, c-c run 1):
+
+- Sender: unchanged from stage 2. `fipsd-crypto-0` 1589/1690 active
+  (`__sendmsg` 973), dispatcher 1302/1690, `fipsd-crypto-1` 505.
+- Receiver: `fipsd-crypto-0` does both opens, 737/1730 active (ChaCha20 518,
+  Poly1305 143). Dispatcher 1210/1730. The second worker serves other flows.
+
+C-to-C overload loss falls from stage 2's 47% to 31% at more goodput. The
+remaining loss is the receiver's dispatcher plus native delivery bursts
+(`native.drop_flow_queue_full`).
+
 ## Dataplane correction: nostrc-pxwaj
 
 Measured **2026-11-16** on the same Apple M4 Max workstation as the original

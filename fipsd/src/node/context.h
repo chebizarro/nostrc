@@ -27,6 +27,12 @@ GoChannel *fipsd_node_peer_commands(const fipsd_node_context *);
 /* Dispatcher callbacks only. Nonblocking; refusal leaves owned job with caller.
  * Counter reservation still belongs to peer/session owner, never this handle. */
 int fipsd_node_dispatch_crypto(const fipsd_node_context *, fipsd_crypto_job *);
+/* Dispatcher callbacks only: fipsd_worker_set_run_inline on the node's pool. */
+int fipsd_node_run_crypto_inline(const fipsd_node_context *, fipsd_crypto_job *);
+/* Dispatcher callbacks only: whether other input already waits for the
+ * dispatcher (completions, transport events, peer commands, the command
+ * mailbox), i.e. whether handing a job to a worker overlaps it with work. */
+bool fipsd_node_dispatch_backlog(const fipsd_node_context *);
 
 /* Handed to the attached handler extension on the dispatcher fiber, before the
  * first event. Everything here is owned by the node and outlives the handlers'

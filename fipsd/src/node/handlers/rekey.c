@@ -167,6 +167,11 @@ static void effect(void *c, const fips_rekey_output *o, const uint8_t *plaintext
         o->kind == FIPS_REKEY_OUT_Reverted || o->kind == FIPS_REKEY_OUT_PeerRestarted ||
         o->kind == FIPS_REKEY_OUT_Teardown)
         h->dataplane->needs_publish = true;
+    /* The link's epoch set moves: no worker may send under the old view. */
+    if (x->rec && (o->kind == FIPS_REKEY_OUT_Installed || o->kind == FIPS_REKEY_OUT_Retired ||
+            o->kind == FIPS_REKEY_OUT_Reverted || o->kind == FIPS_REKEY_OUT_PeerRestarted ||
+            o->kind == FIPS_REKEY_OUT_Teardown))
+        fipsd_dp_link_moved(h, x->rec);
     switch (o->kind) {
     case FIPS_REKEY_OUT_Deliver:
         if (x->result) { x->result->delivered = true; x->result->begin = o->begin; x->result->end = o->end; }
@@ -253,12 +258,14 @@ void hs_release_outputs(handlers *h, const fips_node_addr *peer, fips_rekey_outp
             FIPSD_WARN(HMOD, "wire output discarded while closing a link");
     }
     if (peer) hs_index_forget_peer(h, peer);
-    fips_rekey_outputs_clear(out);
+    hs_outputs_clear(out);
 }
 bool hs_link_execute(handlers *h, peer_rec *rec, const fips_transport_addr *arrival, uint8_t *input, size_t len, link_exec_result *result)
 {
     fips_rekey *m = fipsd_active_peer_link_machine(rec->peer);
     if (!m) { hs_release_outputs(h, &rec->addr, &h->link_out); return false; }
+    /* No outputs (DataSent's usual case): the executor would only re-wipe. */
+    if (!h->link_out.count) return true;
     exec_ctx x = {.h = h, .rec = rec, .arrival = arrival, .result = result};
     fips_session_executor exec = {.ctx = &x, .coords = coords, .send = send_wire, .effect = effect,
         .release = release_index, .prompt = prompt_worker, .wire = h->link_exec_wire, .capacity = sizeof h->link_exec_wire};
@@ -268,9 +275,9 @@ bool hs_link_step(handlers *h, peer_rec *rec, fips_rekey_input input, const fips
 {
     const fipsd_peer_info *info = fipsd_active_peer_info(rec->peer);
     fips_rekey_env env; hs_env(h, &env, info->transport.value);
-    fips_rekey_outputs_clear(&h->link_out);
+    hs_outputs_clear(&h->link_out);
     fips_status s = fipsd_active_peer_link_step(rec->peer, hs_now(h), input, &env, &h->link_out);
-    if (s != FIPS_OK) { fips_rekey_outputs_clear(&h->link_out); return false; }
+    if (s != FIPS_OK) { hs_outputs_clear(&h->link_out); return false; }
     return hs_link_execute(h, rec, arrival, frame, len, result);
 }
 /* .7: this seam never performs packet crypto on the dispatcher. */
@@ -319,6 +326,9 @@ void hs_link_message(handlers *h, peer_rec *rec, fipsd_transport *t, const fips_
 /* Session machines: same executor, FSP framing by fips_session_execute. */
 bool hs_session_execute(handlers *h, fips_session_entry *entry, const uint8_t *input, size_t len)
 {
+    /* No outputs (DataSent's usual case): nothing installs, delivers or tears
+     * down, and the executor would only re-wipe the empty list. */
+    if (!h->session_out.count) return true;
     session_ext *ext = hs_session_ext(h, entry);
     link_exec_result r = {0};
     exec_ctx x = {.h = h, .entry = entry, .ext = ext, .result = &r};
@@ -378,7 +388,7 @@ bool hs_session_execute(handlers *h, fips_session_entry *entry, const uint8_t *i
         fips_node_addr peer = entry->peer;
         fipsd_dp_mtu_release(h->dataplane, &peer);
         fips_rekey_carry carry = {0};
-        fips_rekey_outputs_clear(&h->session_out);
+        hs_outputs_clear(&h->session_out);
         if (fips_session_table_remove(&h->sessions, entry, FIPS_REKEY_CLOSE_OpeningTeardown, &h->session_out, &carry)) {
             exec_ctx y = {.h = h, .ext = ext};
             fips_session_executor exec2 = {.ctx = &y, .coords = coords, .send = send_wire, .effect = effect,

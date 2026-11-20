@@ -94,6 +94,8 @@ static void run_outputs(handlers *h, peer_rec *rec, fips_path_outputs *out)
             break;
         }
         case FIPS_PATH_OUTPUT_Switched: {
+            /* Before the old pair is closed: no worker sends on it after this. */
+            fipsd_dp_link_moved(h, rec);
             const fipsd_peer_info *old = fipsd_active_peer_info(rec->peer);
             fipsd_transport *previous = hs_transport(h, old->transport);
             fips_transport_id old_transport = old->transport;

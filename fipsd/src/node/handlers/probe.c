@@ -112,14 +112,14 @@ static void execute(handlers *h, probe_job *j, const fips_probe_actions *actions
             }
             {
                 fips_rekey_carry carry = {0};
-                fips_rekey_outputs_clear(&h->session_out);
+                hs_outputs_clear(&h->session_out);
                 if (fips_session_table_remove(&h->sessions, entry, FIPS_REKEY_CLOSE_Admin, &h->session_out, &carry)) {
                     for (size_t k = 0; k < h->session_out.count; ++k) if (h->session_out.items[k].kind == FIPS_REKEY_OUT_Release) {
                         uint32_t index;
                         if (fips_rekey_index_lease_release(&h->session_out.items[k].lease, &index)) (void)fips_index_allocator_free(&h->indices, (fips_session_index){index});
                     }
                 }
-                fips_rekey_outputs_clear(&h->session_out);
+                hs_outputs_clear(&h->session_out);
                 fipsd_dp_mtu_release(h->dataplane, &j->target); /* release probe-owned clamp */
                 x->used = false; x->established = false; ++h->counters.sess_closed;
             }

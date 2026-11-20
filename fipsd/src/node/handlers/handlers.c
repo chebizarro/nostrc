@@ -85,7 +85,7 @@ peer_rec *hs_rec_alloc(handlers *h, fipsd_active_peer *peer)
     return NULL;
 }
 void hs_rec_free(handlers *h, peer_rec *rec)
-{ h->dataplane->needs_publish = true; rec->used = false; rec->peer = NULL; }
+{ fipsd_dp_link_moved(h, rec); h->dataplane->needs_publish = true; rec->used = false; rec->peer = NULL; }
 void hs_notice_full(handlers *h, const fipsd_node_notice *notice, const uint8_t *payload, size_t len)
 {
     if (!h->notices) return;

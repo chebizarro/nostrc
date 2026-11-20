@@ -267,6 +267,108 @@ static void concurrent_recycle(void)
     assert(atomic_load(d.current.ref_count) == 1);
     go_channel_free(jobs); go_refptr_release(&d.current); free(d.packets);
 }
+static bool zero(const uint8_t *b, size_t n) { for (size_t i = 0; i < n; ++i) if (b[i]) return false; return true; }
+/* nostrc-u19cz.3: recycle wipes each byte a tenant can have written, once, and
+ * nothing past it (it used to wipe all three 2 KB slabs after destroy had
+ * already wiped them). Seal-shaped and refused-open-shaped tenants. */
+static void exact_wipe(void)
+{
+    fipsd_dataplane d = {.packet_count = 1};
+    d.packets = calloc(1, sizeof *d.packets); assert(d.packets);
+    d.current = make_go_refptr(calloc(1, sizeof(fipsd_dp_snapshot)), free); assert(d.current.ptr);
+    for (int shape = 0; shape < 2; ++shape) {
+        fipsd_dp_packet *p = fipsd_dp_packet_take(&d); assert(p && !p->body && !p->wire_size);
+        size_t body = 12, in = 300, out = body + in + FIPS_NOISE_TAG_SIZE;
+        memset(p->ad, 0xA5, FIPSD_DP_WIRE); memset(p->input, 0xA5, FIPSD_DP_WIRE); memset(p->output, 0xA5, FIPSD_DP_WIRE);
+        p->body = body;
+        if (shape == 0) p->job.input_size = in; /* seal: plaintext length */
+        else p->wire_size = body + in; /* open refused before its job was set up */
+        fipsd_crypto_job_destroy(&p->job);
+        assert(!atomic_load(&p->busy) && atomic_load(&d.in_flight) == 0);
+        assert(zero(p->ad, body) && p->ad[body] == 0xA5);
+        assert(zero(p->input, in) && p->input[in] == 0xA5);
+        assert(zero(p->output, out) && p->output[out] == 0xA5);
+    }
+    go_refptr_release(&d.current); free(d.packets);
+}
+static size_t gate_sends;
+static int counting_send(fipsd_transport *t, const fips_transport_addr *to, const uint8_t *b, size_t n)
+{ (void)t; (void)to; (void)b; assert(n == 12 + 40); ++gate_sends; return 0; }
+/* nostrc-u19cz.3 worker send (9keoz.12 guard): a sealed frame leaves from the
+ * executing thread only at the gate generation captured at submit; after the
+ * dispatcher moves the link it comes back unsent for the completion. */
+static void worker_send_gate(void)
+{
+    static const fipsd_transport_ops ops = {.send = counting_send};
+    fipsd_transport t = {.ops = &ops};
+    handlers h = {0}; peer_rec recs[2] = {{0}};
+    fipsd_dataplane d = {.packet_count = 2, .gate_count = 2}; h.dataplane = &d; h.recs = recs;
+    d.packets = calloc(2, sizeof *d.packets); d.gates = calloc(2, sizeof *d.gates); assert(d.packets && d.gates);
+    for (size_t i = 0; i < 2; ++i) assert(!pthread_mutex_init(&d.gates[i].mu, NULL));
+    d.current = make_go_refptr(calloc(1, sizeof(fipsd_dp_snapshot)), free); assert(d.current.ptr);
+    for (int moved = 0; moved < 2; ++moved) {
+        fipsd_dp_packet *p = fipsd_dp_packet_take(&d); assert(p && !p->worker_sent && !p->via);
+        p->via = &t; p->gate = &d.gates[1]; p->body = 12;
+        p->gate_generation = atomic_load(&p->gate->generation);
+        p->job.result = FIPS_NOISE_OK; p->job.output_size = 40;
+        if (moved) fipsd_dp_link_moved(&h, &recs[1]);
+        size_t before = gate_sends;
+        fipsd_dp_worker_send(&p->job);
+        assert(p->worker_sent == !moved && gate_sends == before + !moved);
+        fipsd_crypto_job_destroy(&p->job);
+    }
+    fipsd_dp_link_moved(&h, &recs[0]); /* other slots are independent */
+    assert(atomic_load(&d.gates[0].generation) == 1 && atomic_load(&d.gates[1].generation) == 1);
+    fipsd_dp_packet *p = fipsd_dp_packet_take(&d); assert(p);
+    p->via = &t; p->gate = &d.gates[1]; p->gate_generation = 1; p->job.result = FIPS_NOISE_EncryptionFailed;
+    fipsd_dp_worker_send(&p->job); assert(!p->worker_sent); /* nothing sealed, nothing sent */
+    fipsd_crypto_job_destroy(&p->job);
+    for (size_t i = 0; i < 2; ++i) pthread_mutex_destroy(&d.gates[i].mu);
+    go_refptr_release(&d.current); free(d.packets); free(d.gates);
+}
+/* nostrc-u19cz.3 inbound fusion: a link open's after-step opens the session
+ * frame it carries only when it is addressed to this node, with the packet
+ * snapshot's session keys, and accepts nothing (fipsd_dp_preopened does, on
+ * the dispatcher). Opened / wrong key / transit. */
+static void preopen(void)
+{
+    fips_node_addr me = {{9}}, src = {{8}}, other = {{7}};
+    uint8_t raw[32] = {5}, wrong_raw[32] = {6};
+    fips_aead_key key, wrong;
+    assert(fips_aead_key_init(&key, raw) == FIPS_AEAD_OK && fips_aead_key_init(&wrong, wrong_raw) == FIPS_AEAD_OK);
+    fipsd_dp_epoch epoch = {.peer = src, .session = true, .tag = 77};
+    fipsd_dp_snapshot *s = calloc(1, sizeof *s); assert(s);
+    s->me = me; s->epochs = &epoch; s->epoch_count = 1;
+    fipsd_dataplane d = {.packet_count = 1};
+    d.packets = calloc(1, sizeof *d.packets); assert(d.packets);
+    d.current = make_go_refptr(s, free); assert(d.current.ptr);
+    uint8_t plain[40]; memset(plain, 0x3c, sizeof plain);
+    for (int c = 0; c < 3; ++c) {
+        fips_cipher_state_init(&epoch.recv, c == 1 ? &wrong : &key);
+        uint8_t frame[FIPS_FRAMING_FSP_HEADER_SIZE + sizeof plain + FIPS_NOISE_TAG_SIZE]; size_t sealed;
+        fips_fsp_build_header(5, 0, sizeof plain, frame);
+        assert(fips_aead_seal(&key, 5, frame, FIPS_FRAMING_FSP_HEADER_SIZE, plain, sizeof plain,
+            frame + FIPS_FRAMING_FSP_HEADER_SIZE, sizeof frame - FIPS_FRAMING_FSP_HEADER_SIZE, &sealed) == FIPS_AEAD_OK);
+        fips_session_datagram dg; fips_session_datagram_init(&dg, src, c == 2 ? other : me, frame, sizeof frame);
+        uint8_t enc[256]; fips_writer w; fips_writer_init(&w, enc, sizeof enc);
+        assert(fips_session_datagram_encode(&dg, &w, NULL) == FIPS_OK);
+        fipsd_dp_packet *p = fipsd_dp_packet_take(&d); assert(p && !p->fsp_tried);
+        p->body = FIPS_FRAMING_FMP_ESTABLISHED_HEADER_SIZE;
+        fips_writer inner; fips_writer_init(&inner, p->output + p->body, FIPSD_DP_WIRE - p->body);
+        assert(fips_fmp_prepend_inner_header(1, enc, fips_writer_len(&w), &inner, NULL) == FIPS_OK);
+        p->job.result = FIPS_NOISE_OK; p->job.output_size = fips_writer_len(&inner);
+        p->job.input_size = p->job.output_size + FIPS_NOISE_TAG_SIZE; /* the link ciphertext it came from */
+        fipsd_dp_worker_preopen(&p->job);
+        assert(p->fsp_tried == (c != 2) && p->fsp_ok == (c == 0));
+        if (c == 0) assert(p->fsp_plain == sizeof plain && !memcmp(p->input, plain, sizeof plain) && p->fsp_tag == 77 &&
+            p->fsp_counter == 5 && p->fsp_body == FIPS_FRAMING_FSP_HEADER_SIZE && p->fsp_frame == sizeof frame &&
+            !p->fsp_k && !memcmp(p->fsp_src.bytes, src.bytes, 16));
+        fipsd_crypto_job_destroy(&p->job);
+        fips_cipher_state_destroy(&epoch.recv);
+    }
+    fips_aead_key_destroy(&key); fips_aead_key_destroy(&wrong);
+    go_refptr_release(&d.current); free(d.packets);
+}
 typedef struct blocked_send { handlers *h; GoChannel *cancel, *started; int result; } blocked_send;
 static void *send_until_cancelled(void *arg)
 {
@@ -336,7 +438,7 @@ static void coalesced_snapshots(void)
 }
 int main(void)
 {
-    concurrent_recycle(); cancelled_mailbox();
+    concurrent_recycle(); cancelled_mailbox(); exact_wipe(); worker_send_gate(); preopen();
     forwarding(); errors(); clamps(); backpressure_and_counters(); authenticate_then_mark(); saturated_trial_retry(); delayed_transport_consumer(); coalesced_snapshots();
     puts("dataplane: forwarding/local/TTL/CE, reject limiter, clamp release, 4-worker unique reserved counters, bounded refusal: ok");
     return 0;

@@ -2,6 +2,7 @@
 #define FIPSD_UDP_DNS_H
 #include "transport/udp/io.h"
 #include <nsync.h>
+#include "transport/udp/lock.h"
 #define FIPSD_UDP_DNS_ENTRIES 256u
 typedef struct fipsd_udp_dns_entry {
     char name[257];

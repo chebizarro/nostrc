@@ -157,6 +157,10 @@ bool fipsd_dp_init(handlers *h)
     d->coord_scratch = calloc(1, sizeof *d->coord_scratch);
     d->route_peers = calloc(h->cfg.peer_capacity, sizeof *d->route_peers);
     d->tables = go_swap_create(NULL, snapshot_free);
+    d->gates = calloc(h->cfg.peer_capacity, sizeof *d->gates);
+    if (!d->gates) return false;
+    for (; d->gate_count < h->cfg.peer_capacity; ++d->gate_count)
+        if (pthread_mutex_init(&d->gates[d->gate_count].mu, NULL)) return false;
     return d->packets && d->clamps && d->coord_scratch && d->route_peers && d->tables;
 }
 void fipsd_dp_destroy(fipsd_dataplane *d)
@@ -165,5 +169,7 @@ void fipsd_dp_destroy(fipsd_dataplane *d)
     /* Runtime joined AND result queues drained before handlers are destroyed. */
     go_refptr_release(&d->current); go_swap_free(d->tables);
     fipsd_dp_cache_view_free(&d->cache_view);
+    for (size_t i = 0; i < d->gate_count; ++i) pthread_mutex_destroy(&d->gates[i].mu);
+    free(d->gates);
     free(d->coord_scratch); free(d->route_peers); free(d->clamps); free(d->packets); free(d);
 }

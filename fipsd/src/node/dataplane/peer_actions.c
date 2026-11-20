@@ -2,6 +2,7 @@
 
 bool fipsd_dp_peer_rebind(handlers *h, peer_rec *rec)
 {
+    fipsd_dp_link_moved(h, rec); /* the pair or its MTU may have changed */
     const fipsd_peer_info *info = fipsd_active_peer_info(rec->peer);
     uint16_t mtu = fipsd_dp_link_mtu(h, rec, info->transport, &info->addr);
     /* Discard the old path's measurement, even on a same-transport address

@@ -11,14 +11,34 @@ static bool path_message(const uint8_t *message, size_t len)
     return len && (message[0] == FIPS_LINK_PathProbe || message[0] == FIPS_LINK_PathAck ||
         message[0] == FIPS_LINK_PathClose);
 }
+/* Per-flow worker affinity (nostrc-u19cz.3): one peer's link jobs keep their
+ * order on one worker and its session jobs on the next, so the two AEADs of a
+ * session datagram (or the two opens of an arrival) pipeline over two workers
+ * while each flow completes in order. Node addresses are already hashes. */
+uint64_t fipsd_dp_shard(const fips_node_addr *peer, bool session)
+{
+    uint32_t key; memcpy(&key, peer->bytes, sizeof key);
+    return FIPSD_JOB_SHARD(key + (session ? 1u : 0u));
+}
+static size_t wire_bound(size_t n) { return n < FIPSD_DP_WIRE ? n : FIPSD_DP_WIRE; }
+/* Wipe what a tenant can have left, once (nostrc-u19cz.3; this replaced three
+ * full-slab wipes per packet, after destroy had already wiped them): header
+ * bytes in ad, the copied plaintext or ciphertext in input, and in output the
+ * header copy plus at most input + tag AEAD bytes. Every writer (seal, open,
+ * open_retry, restart, the completion's header copy and machine steps over
+ * p->output) stays inside these. destroy has already destroyed the key; take
+ * reinitializes the job. */
 static void recycle(fipsd_crypto_job *j)
 {
     fipsd_dp_packet *p = j->owner;
     fipsd_dataplane *d = p->plane;
     go_refptr_release(&p->snapshot);
-    sodium_memzero(p->ad, sizeof p->ad); sodium_memzero(p->input, sizeof p->input);
-    sodium_memzero(p->output, sizeof p->output);
-    sodium_memzero(&p->job, sizeof p->job);
+    size_t in = j->input_size;
+    if (p->wire_size > p->body && p->wire_size - p->body > in) in = p->wire_size - p->body;
+    in = wire_bound(in);
+    size_t ad = wire_bound(p->body);
+    sodium_memzero(p->ad, ad); sodium_memzero(p->input, in);
+    sodium_memzero(p->output, wire_bound(ad + in + FIPS_NOISE_TAG_SIZE));
     atomic_store_explicit(&p->busy, false, memory_order_release);
     /* busy=false transfers the slab: do not touch its fields after that. */
     atomic_fetch_sub_explicit(&d->in_flight, 1, memory_order_release);
@@ -39,6 +59,9 @@ fipsd_dp_packet *fipsd_dp_packet_take(fipsd_dataplane *d)
         p->plane = d; p->snapshot = d->current; go_refptr_retain(&p->snapshot);
         p->job = (fipsd_crypto_job){.owner = p, .recycle = recycle};
         p->session = p->ce = p->prompt = p->farewell = p->path_message = p->restart = false;
+        p->body = p->wire_size = 0; /* recycle's wipe extents start empty */
+        p->via = NULL; p->gate = NULL; p->worker_sent = false;
+        p->fsp_tried = p->fsp_ok = false;
         return p;
     }
     ++d->stats.backpressure; return NULL;
@@ -51,9 +74,105 @@ fipsd_dp_packet *fipsd_dp_acquire(handlers *h)
 bool fipsd_dp_submit(handlers *h, fipsd_dp_packet *p)
 {
     FIPSD_PERF_JOB_TAG(&p->job, p->session);
+    /* A worker buys parallelism only while other input waits for the
+     * dispatcher. Otherwise the handoff and its completion cost two thread
+     * wakes, several times the AEAD (nostrc-u19cz.3: CPU per datagram at a
+     * paced 100 Mbit/s rose ~55 -> ~88 us), so run it here. Either way the
+     * completion arrives through the results channel, in shard order. */
+    if (!fipsd_node_dispatch_backlog(h->ctx) && fipsd_node_run_crypto_inline(h->ctx, &p->job) == 0) return true;
     if (fipsd_node_dispatch_crypto(h->ctx, &p->job) == 0) return true;
     ++h->dataplane->stats.backpressure;
     fipsd_crypto_job_destroy(&p->job); return false;
+}
+/* On the executing thread (nostrc-u19cz.3). Sends only under the gate's lock
+ * at the generation captured at submit: a dispatcher bump waits for this send
+ * to finish, and every send after it defers to the completion. */
+void fipsd_dp_worker_send(fipsd_crypto_job *j)
+{
+    fipsd_dp_packet *p = j->owner;
+    if (j->result != FIPS_NOISE_OK) return;
+    pthread_mutex_lock(&p->gate->mu);
+    if (atomic_load_explicit(&p->gate->generation, memory_order_relaxed) == p->gate_generation) {
+        p->send_rc = fipsd_transport_send_lane(p->via, FIPSD_TRANSPORT_LANE_DATA, &p->endpoint,
+            p->output, p->body + j->output_size);
+        p->worker_sent = true;
+    }
+    pthread_mutex_unlock(&p->gate->mu);
+}
+/* Worker send for a data-lane link frame, as upstream's encrypt workers do:
+ * on a transport that allows it, to the active pair the completion would
+ * resolve now, if that pair's MTU (the completion's own check) admits the
+ * sealed frame. Everything else keeps the completion-time send. */
+static void worker_route(handlers *h, peer_rec *rec, fipsd_dp_packet *p, size_t wire)
+{
+    fipsd_dataplane *d = h->dataplane;
+    size_t slot = (size_t)(rec - h->recs);
+    if (slot >= d->gate_count) return;
+    const fipsd_peer_info *info = fipsd_active_peer_info(rec->peer);
+    fipsd_transport *t = hs_transport(h, info->transport);
+    if (!t || !t->ops->send_concurrent || !t->ops->send_concurrent(t, &info->addr) ||
+        wire > fipsd_dp_link_mtu(h, rec, info->transport, &info->addr)) return;
+    p->via = t; p->transport = info->transport; p->endpoint = info->addr;
+    p->gate = &d->gates[slot];
+    p->gate_generation = atomic_load_explicit(&p->gate->generation, memory_order_relaxed);
+    p->job.after = fipsd_dp_worker_send;
+}
+/* On the executing thread (nostrc-u19cz.3). Nothing is accepted here: the
+ * completion runs the link step (FMP replay window), then fipsd_dp_preopened
+ * the session's stale-epoch check and authenticated-frame step (FSP window),
+ * all on the dispatcher; a failed pre-open falls back to the ordinary open
+ * there. The packet's snapshot is immutable and retained, so
+ * its session keys are used in place, read-only, tried in snapshot order as
+ * open_candidate and fipsd_dp_open_retry do. The plaintext overwrites input,
+ * the link ciphertext no longer needed, inside recycle's wipe extent. */
+void fipsd_dp_worker_preopen(fipsd_crypto_job *j)
+{
+    fipsd_dp_packet *p = j->owner;
+    const fipsd_dp_snapshot *s = p->snapshot.ptr;
+    uint32_t timestamp; const uint8_t *message; size_t n;
+    if (j->result != FIPS_NOISE_OK || !s ||
+        !fips_fmp_strip_inner_header(p->output + p->body, j->output_size, &timestamp, &message, &n) ||
+        n < 2 || message[0] != FIPS_LINK_SessionDatagram) return;
+    fips_reader rd; fips_reader_init(&rd, message + 1, n - 1);
+    fips_session_datagram dg;
+    if (fips_session_datagram_decode(&rd, &dg, NULL) != FIPS_OK || memcmp(dg.dest_addr.bytes, s->me.bytes, 16)) return;
+    fips_fsp_encrypted_header header;
+    if (!fips_fsp_encrypted_header_parse(dg.payload, dg.payload_len, &header)) return;
+    size_t body = FIPS_FRAMING_FSP_HEADER_SIZE;
+    if (fips_fsp_encrypted_header_has_coords(&header)) {
+        fips_reader cr; fips_reader_init(&cr, dg.payload + body, dg.payload_len - body);
+        fips_fsp_coords src, dest;
+        if (fips_fsp_parse_encrypted_coords(&cr, &src, &dest, NULL) != FIPS_OK) return;
+        body += fips_reader_position(&cr);
+    }
+    if (body > dg.payload_len || dg.payload_len - body < FIPS_NOISE_TAG_SIZE) return;
+    FIPSD_PERF_BEGIN(fsp_start);
+    for (size_t i = 0; i < s->epoch_count && !p->fsp_ok; ++i) {
+        const fipsd_dp_epoch *e = &s->epochs[i];
+        if (!e->session || memcmp(e->peer.bytes, dg.src_addr.bytes, 16)) continue;
+        size_t out = 0;
+        p->fsp_tried = true; p->fsp_tag = e->tag;
+        if (fips_cipher_state_open(&e->recv, header.counter, dg.payload, FIPS_FRAMING_FSP_HEADER_SIZE,
+                dg.payload + body, dg.payload_len - body, p->input, FIPSD_DP_WIRE, &out) == FIPS_NOISE_OK) {
+            p->fsp_ok = true; p->fsp_plain = out;
+            if (j->worker_counts) atomic_fetch_add(&j->worker_counts[j->worker], 1);
+        }
+    }
+    FIPSD_PERF_END(fsp_start, FSP_DECRYPT);
+    if (!p->fsp_tried) return; /* no session epoch: the ordinary path drops it */
+    p->fsp_src = dg.src_addr; p->fsp_frame = dg.payload_len; p->fsp_body = body;
+    p->fsp_counter = header.counter; p->fsp_k = (header.flags & FIPS_FSP_FLAG_K) != 0;
+}
+void fipsd_dp_link_moved(handlers *h, const peer_rec *rec)
+{
+    fipsd_dataplane *d = h->dataplane;
+    size_t slot = (size_t)(rec - h->recs);
+    if (!d || slot >= d->gate_count) return;
+    fipsd_dp_gate *g = &d->gates[slot];
+    pthread_mutex_lock(&g->mu);
+    atomic_store_explicit(&g->generation, atomic_load_explicit(&g->generation, memory_order_relaxed) + 1,
+        memory_order_relaxed);
+    pthread_mutex_unlock(&g->mu);
 }
 bool fipsd_dp_seal(handlers *h, peer_rec *rec, fips_session_entry *entry,
     const fips_rekey_sealed *s, const uint8_t *plain, size_t len, bool prompt,
@@ -94,12 +213,17 @@ bool fipsd_dp_seal(handlers *h, peer_rec *rec, fips_session_entry *entry,
     p->job.ad = p->ad; p->job.ad_size = aad; p->job.input = p->input; p->job.input_size = len;
     p->job.output = p->output + p->body; p->job.capacity = FIPSD_DP_WIRE - p->body;
     p->job.worker_counts = h->dataplane->stats.sealed;
+    p->job.shard = fipsd_dp_shard(&p->peer, session);
     /* Disconnect is sealed asynchronously but deliberately outlives table removal. */
     uint32_t timestamp; const uint8_t *message; size_t message_len;
     if (!session && !prompt && fips_fmp_strip_inner_header(plain, len, &timestamp, &message, &message_len)) {
         p->farewell = message_len && message[0] == FIPS_LINK_Disconnect;
         p->path_message = path_message(message, message_len);
     }
+    /* Farewells (which outlive the table) and addressed path control stay
+     * on the completion's send. */
+    if (!session && rec && !p->farewell && !p->path_message)
+        worker_route(h, rec, p, p->body + len + FIPS_NOISE_TAG_SIZE);
     return fipsd_dp_submit(h, p);
 refuse:
     fipsd_crypto_job_destroy(&p->job); return false;
@@ -144,6 +268,8 @@ static bool open_candidate(handlers *h, fipsd_dp_packet *p, size_t start)
         p->job.input = p->input; p->job.input_size = p->wire_size - p->body;
         p->job.output = p->output + p->body; p->job.capacity = FIPSD_DP_WIRE - p->body;
         p->job.worker_counts = h->dataplane->stats.opened;
+        p->job.shard = fipsd_dp_shard(&p->peer, p->session);
+        if (!p->session) p->job.after = fipsd_dp_worker_preopen;
         return fipsd_dp_submit(h, p);
     }
     fipsd_crypto_job_destroy(&p->job); return false;

@@ -52,18 +52,18 @@ udp_socket *fipsd_udp_socket_open(udp_instance *u, const fipsd_udp_endpoint *loc
 void fipsd_udp_socket_release(udp_socket *s)
 {
     udp_instance *u = s->owner;
-    nsync_mu_lock(&u->mu);
+    udp_mu_lock(&u->mu);
     if (--s->users == 0 && s->detached) go_channel_close(s->unused);
-    nsync_mu_unlock(&u->mu);
+    udp_mu_unlock(&u->mu);
 }
 void fipsd_udp_socket_close(udp_socket *s)
 {
     if (!s) return;
     udp_instance *u = s->owner;
-    nsync_mu_lock(&u->mu);
+    udp_mu_lock(&u->mu);
     s->detached = true;
     if (!s->users) go_channel_close(s->unused);
-    nsync_mu_unlock(&u->mu);
+    udp_mu_unlock(&u->mu);
     /* Detached from every lookup before this call; await send leases before
      * changing socket association. Receivers get their own cancellation for
      * channel backpressure as well as a latched readiness cancellation. */
@@ -126,13 +126,13 @@ void fipsd_udp_receive(void *arg)
         }
         /* Bounded source-selection hints only, never an authentication or
          * connected-pool admission decision. Auth comes from the node. */
-        nsync_mu_lock(&u->mu);
+        udp_mu_lock(&u->mu);
         size_t slot = FIPSD_UDP_MAX_PEERS;
         for (size_t i = 0; i < FIPSD_UDP_MAX_PEERS; ++i)
             if (u->routes[i].used && fips_transport_addr_equal(&u->routes[i].peer, &from)) { slot = i; break; }
         if (slot == FIPSD_UDP_MAX_PEERS) slot = u->next_route++ % FIPSD_UDP_MAX_PEERS;
         u->routes[slot] = (udp_route){.used = true, .peer = from, .info = info};
-        nsync_mu_unlock(&u->mu);
+        udp_mu_unlock(&u->mu);
         if (fipsd_transport_emit(u->events, u->root, s->stop, FIPSD_TRANSPORT_PACKET,
                 u->transport.id, &from, bytes, (size_t)n)) break;
     }
