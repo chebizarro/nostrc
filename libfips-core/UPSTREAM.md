@@ -541,6 +541,24 @@ These are tracking-ready notes, **not** reports already submitted upstream:
   drop (`fipsd/README.md`). The same change would fix upstream's `feed()` on
   macOS without a protocol change; FreeBSD offers no such wake and needs the
   framing.
+- **I-7 — the daemon's receive path collapses under unpaced overload.** Found
+  in the 0.1.0 optimization pass (`nostrc-u19cz`). On loopback with two
+  daemons and a native-API client sending 1200-byte datagrams unpaced (CI
+  `perf_loopback.py`), Rust↔Rust delivers only about 55–80 Mbit/s at about 97–98%
+  loss on hosted ubuntu-24.04 runners and on an aarch64 VM. The same receiver
+  delivers about 420 Mbit/s at 0.6% loss when offered just under that rate: the
+  pre-optimization C sender, hosted run 44700102649 reference. Once offered
+  more, goodput falls to the collapsed level rather than plateauing, with the
+  Rust daemon at about 200–290 µs CPU per delivered datagram.
+
+  This is an overload collapse, not a capacity limit: work is spent on
+  datagrams that are later dropped. The C daemon under the same offered load
+  plateaus, at 905–935 Mbit/s with 28% loss on the same runner.
+
+  The likely place to look is admission when the decrypt-worker queue
+  (32,768 per worker, `src/node/decrypt_worker.rs`) and the native delivery
+  path are saturated: shed before decrypting rather than after. Not yet
+  reported upstream.
 
 ## Node bookkeeping port (nostrc-u50yr.4)
 
