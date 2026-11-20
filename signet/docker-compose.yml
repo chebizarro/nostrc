@@ -11,6 +11,7 @@ x-hardened: &hardened
   tmpfs: ["/tmp:size=10M,mode=1777,noexec,nosuid,nodev"]
   ulimits:
     core: 0
+    # Required daemon locking needs an unlimited soft limit; no IPC_LOCK cap.
     memlock: {soft: -1, hard: -1}
   mem_limit: 512m
   cpus: 1.0
@@ -26,6 +27,7 @@ services:
     stop_grace_period: 30s
     environment:
       SIGNET_REQUIRE_ENCRYPTED_DB: "true"
+      SIGNET_MLOCK_MODE: ${SIGNET_MLOCK_MODE:-required}
       SIGNET_DB_KEY_FILE: /run/secrets/signet_db_key
       SIGNET_BUNKER_NSEC_FILE: /run/secrets/signet_bunker_nsec
     volumes:

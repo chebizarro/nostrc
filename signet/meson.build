@@ -14,7 +14,7 @@
 #   set -Dnostrc_build_dir=../build (default) and ensure those libs are present.
 
 project('signet', 'c',
-  version: '0.9.0',
+  version: '0.10.0',
   default_options: [
     'c_std=c11',
     'warning_level=2',
@@ -245,6 +245,7 @@ signet_includes = [
 # Core library sources (everything except main entrypoints)
 signet_core_sources = files(
   'src/signet_config.c',
+  'src/memory_hardening.c',
   'src/secret_input.c',
   'src/http_listen.c',
   'src/config_reload.c',

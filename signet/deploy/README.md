@@ -177,6 +177,7 @@ and audit file; absence of a key must never generate replacement custody materia
 
 ```dotenv
 SIGNET_HEALTH_PORT=8080
+SIGNET_MLOCK_MODE=required
 SPACES_ENDPOINT=https://nyc3.digitaloceanspaces.com
 SPACES_BUCKET=<approved-single-bucket>
 SPACES_PREFIX=signet
@@ -209,9 +210,17 @@ sudo systemctl enable --now signet-compose.service
 
 systemd is the **only** supervisor; Compose has `restart: "no"`, host networking,
 no ports, no added daemon capabilities, read-only root, core limit zero, unlimited
-memlock, bounded tmpfs, and rotated operational logs. Verify actual memlock works
-without `CAP_IPC_LOCK` on the Droplet (`/proc/<pid>/status` and `limits`); a warning
-is not proof of locked memory. `/health` is liveness; `/ready` includes relay
+memlock, bounded tmpfs, and rotated operational logs. Compose defaults to
+`SIGNET_MLOCK_MODE=required`: finite/unknown soft memlock limits or failed
+current+future locking stop the daemon before secrets load. Keep the production
+setting at `required`; constrained local testing can explicitly select
+`best-effort` (current-only under finite limits) or `off`, which weaken coverage.
+The systemd unit supervises Docker; its own limits/environment do not set the
+container policy. Verify actual memlock works without `CAP_IPC_LOCK` on the
+Droplet (`/proc/<pid>/status` and `limits`); a warning is not proof of locked
+memory. Unlimited memlock does not remove the 512 MiB container OOM limit.
+See [memory-locking policy](../README.md#memory-locking-policy) for native systemd
+settings and macOS degradation behaviour. `/health` is liveness; `/ready` includes relay
 catch-up. Relay outages must not trigger process recreation.
 
 D2 remains desired-state configuration. Runtime provisioner grants/revocations

@@ -66,6 +66,8 @@ add_test(NAME http_routes COMMAND test_http_routes)
 add_test(NAME daemon_startup COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/test_daemon_startup.sh $<TARGET_FILE:signetd> $<TARGET_FILE:signetctl>)
 set_tests_properties(daemon_startup PROPERTIES TIMEOUT 120)
 signet_add_test_executable(test_replay_cache)
+signet_add_test_executable(test_memory_hardening)
+add_test(NAME memory_hardening COMMAND test_memory_hardening)
 signet_add_test_executable(test_policy_engine)
 signet_add_test_executable(test_audit_logger)
 signet_add_test_executable(test_bootstrap_contract)       # bootstrap/auth contract
@@ -373,6 +375,15 @@ if(COMMAND nostrc_describe_test)
     INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_backend_admission_daemon.py"
            "${CMAKE_CURRENT_SOURCE_DIR}/backend_admission_fixture.c"
            "${CMAKE_CURRENT_SOURCE_DIR}/test_relay_pool_wire.py")
+endif()
+
+add_test(NAME memory_hardening_daemon COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_memory_hardening_daemon.py $<TARGET_FILE:signetd>)
+set_tests_properties(memory_hardening_daemon PROPERTIES TIMEOUT 30)
+if(COMMAND nostrc_describe_test)
+  nostrc_describe_test(memory_hardening_daemon OWNER signet TARGETS signetd
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_memory_hardening_daemon.py"
+           "${CMAKE_CURRENT_SOURCE_DIR}/../src/memory_hardening.c")
 endif()
 
 # Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above

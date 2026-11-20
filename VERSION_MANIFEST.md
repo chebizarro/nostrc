@@ -233,7 +233,7 @@ other components and all version/release/tag values are unchanged.
 | nip-communikeys | `nips/nip-communikeys/` | 3.0.0 | Unreleased | — | `nips/nip-communikeys/CMakeLists.txt` (`NIP_COMMUNIKEYS_VERSION`) |
 | nip55l (Linux signer) | `nips/nip55l/` | 0.8.0 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
 | nostr-seal | `gnome/nostr-seal/` | 0.1.3 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
-| signet | `signet/` | 0.9.0 | 0.8.0-rc.1 | `signet-v0.8.0-rc.1` | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`), `signet/CMakeLists.txt` (`project VERSION`) |
+| signet | `signet/` | 0.10.0 | 0.8.0-rc.1 | `signet-v0.8.0-rc.1` | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`), `signet/CMakeLists.txt` (`project VERSION`) |
 
 
 ### FIPS component skeletons (nostrc-s50dj.1)
@@ -328,6 +328,20 @@ other components and all version/release/tag values are unchanged.
   including boundaries published during a bounded drain; reconnect retires old
   callback generations. Public channels and payload ownership remain unchanged.
   The CMake version source and Declared version agree; no release/tag is claimed.
+
+### Signet configurable process memory locking (nostrc-wwujv)
+
+- **signet 0.9.0 → 0.10.0: MINOR.** New startup-only
+  `SIGNET_MLOCK_MODE=off|best-effort|required` configuration. Best-effort
+  remains the default, but finite/unknown memlock budgets now use current-page
+  locking only rather than risking later allocation failures with `MCL_FUTURE`.
+  Required mode fails before secrets load unless the soft memlock limit is
+  unlimited and current+future locking succeeds. Invalid values refuse startup.
+  **Deployment incompatibility:** production Compose now defaults to required;
+  deployments that previously continued after locking failure will refuse startup.
+- CMake, Meson and both CLI macros agree; published release/tag columns remain
+  unchanged. The module and syscall test seam are private, not an installed API.
+  No other independently releasable component changes.
 
 ### Signet independent backend admission
 
