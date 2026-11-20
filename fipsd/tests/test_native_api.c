@@ -440,6 +440,83 @@ static void test_framing(api_node *a)
     close(ffd); await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_RELEASED, flow, 0);
     close(lfd); await_event(&a->events, FIPSD_NATIVE_EVENT_LISTENER_RELEASED, 0, 4242);
 }
+/* nostrc-rpqvh: a delivery writes straight onto a flow whose feeder holds
+ * nothing and queues the rest behind it, the feeder finishing a frame the
+ * direct write took only in part. Against a client that reads nothing until
+ * the end, `arrive` delivers until the flow's queue refuses one; on a stream
+ * flow an `inject` joins the sequence midway. Every datagram the node called
+ * delivered is then read exactly once, whole and in order, and the flow
+ * stays usable. */
+#define DIRECT_PAYLOAD 1000u
+static void direct_fill(uint8_t *buf, uint32_t seq) { for (uint32_t i = 0; i < DIRECT_PAYLOAD; ++i) buf[i] = (uint8_t)(seq * 31u + i); }
+static const char *direct_hex(const uint8_t *buf, size_t len)
+{
+    static char hex[2 * DIRECT_PAYLOAD + 1];
+    static const char digits[] = "0123456789abcdef";
+    for (size_t i = 0; i < len; ++i) { hex[2 * i] = digits[buf[i] >> 4]; hex[2 * i + 1] = digits[buf[i] & 15]; }
+    hex[2 * len] = 0;
+    return hex;
+}
+static const char *direct_arrive(api_node *a, uint32_t seq)
+{
+    static char outcome[96];
+    uint8_t buf[DIRECT_PAYLOAD]; direct_fill(buf, seq);
+    json_t *v = ask(a->path, arrive_line(PEER, 5000, 4244, direct_hex(buf, sizeof buf)), NULL);
+    CHECK(is_ok(v));
+    snprintf(outcome, sizeof outcome, "%s", str(json_object_get(v, "data"), "outcome"));
+    json_decref(v);
+    return outcome;
+}
+static void direct_expect(int fd, bool stream, uint32_t seq)
+{
+    uint8_t got[DIRECT_PAYLOAD + 1], want[DIRECT_PAYLOAD];
+    direct_fill(want, seq);
+    CHECK(flow_read(fd, stream, got, sizeof got) == (ssize_t)DIRECT_PAYLOAD && !memcmp(got, want, sizeof want));
+}
+static void test_direct_writes(api_node *a)
+{
+    const bool stream = FIPSD_NATIVE_STREAM_FRAMING;
+    const uint32_t injected = 0xfffffu, inject_after = 3;
+    int lfd, ffd;
+    json_t *v = ask(a->path, "{\"command\":\"listen\",\"params\":{\"framing\":\"stream\",\"local_port\":4244}}", &lfd);
+    CHECK(is_ok(v)); json_decref(v); bounded(lfd);
+    CHECK(!strcmp(direct_arrive(a, 0), "announced"));
+    json_t *m = raw_accept(lfd, &ffd); json_decref(m); bounded(ffd);
+    uint64_t flow = 0;
+    v = show_native_flows(a);
+    for (size_t i = 0; i < json_array_size(data(v, "flows")); ++i) {
+        json_t *f = json_array_get(data(v, "flows"), i);
+        if (json_integer_value(json_object_get(f, "local_port")) == 4244) flow = (uint64_t)json_integer_value(json_object_get(f, "flow_id"));
+    }
+    json_decref(v); CHECK(flow);
+    int small = 2048;
+    CHECK(setsockopt(ffd, SOL_SOCKET, SO_RCVBUF, &small, sizeof small) == 0);
+    uint32_t delivered = 1;
+    for (;; ++delivered) {
+        CHECK(delivered < 4096); /* the queue is bounded: a refusal must come */
+        if (stream && delivered == inject_after) {
+            uint8_t buf[DIRECT_PAYLOAD]; direct_fill(buf, injected);
+            char hex[2 * DIRECT_PAYLOAD + 1]; snprintf(hex, sizeof hex, "%s", direct_hex(buf, sizeof buf));
+            v = ask(a->path, inject_line(flow, hex, 0), NULL); CHECK(is_ok(v)); json_decref(v);
+        }
+        const char *outcome = direct_arrive(a, delivered);
+        if (!strcmp(outcome, "dropped: queue full")) break;
+        CHECK(!strcmp(outcome, "delivered"));
+    }
+    CHECK(delivered > fipsd_native_api_limits(a->api)->per_flow); /* the client's buffer took some directly */
+    for (uint32_t seq = 0; seq < delivered; ++seq) {
+        if (stream && seq == inject_after) direct_expect(ffd, stream, injected);
+        direct_expect(ffd, stream, seq);
+    }
+    CHECK(!strcmp(direct_arrive(a, delivered + 1), "delivered"));
+    direct_expect(ffd, stream, delivered + 1);
+    if (stream) frame_write(ffd, "x", 1); else write_dgram(ffd, "x", 1);
+    await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_UNPINNED, flow, 0);
+    close(ffd); await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_RELEASED, flow, 0);
+    close(lfd); await_event(&a->events, FIPSD_NATIVE_EVENT_LISTENER_RELEASED, 0, 4244);
+    printf("  direct writes: %u datagrams delivered behind a stalled 2 KiB %s client, all read whole and in order\n",
+           (unsigned)delivered, stream ? "stream" : "datagram");
+}
 static void test_arrivals_and_pins(api_node *a)
 {
     int lfd, ffd; json_t *v = ask(a->path, listen_line(4242), &lfd); CHECK(is_ok(v)); json_decref(v); bounded(lfd);
@@ -795,6 +872,7 @@ int main(void)
     test_connect(&a);
     test_arrivals_and_pins(&a);
     test_framing(&a);
+    test_direct_writes(&a);
     test_kept_descriptors(&a);
     test_debug_gate(&a, &b);
     test_command_cap_and_refusal_sizes(&a);

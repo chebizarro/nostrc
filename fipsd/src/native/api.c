@@ -45,10 +45,18 @@ typedef struct flow_rec {
     GoChannel *inbound;  /* fipsd_native_datagram*, capacity per_flow */
     _Atomic uint64_t datagrams, bytes;
     _Atomic bool closed;
-    bool stream;         /* a framed SOCK_STREAM pair (native/frame.h); the feeder is its only writer */
+    bool stream;         /* a framed SOCK_STREAM pair (native/frame.h); a frame is only ever started under the wmu protocol */
     _Atomic bool kicked; /* the flow queue overflowed since the feeder last sent (FIPSD_NATIVE_DGRAM_PARK) */
     size_t room;         /* datagram flows: the daemon half's SO_SNDBUF, NOTE_LOWAT's ceiling there */
-    unsigned refs;       /* reader, feeder and any transient user (inject) */
+    unsigned refs;       /* reader, feeder and any transient user (inject, a delivery batch) */
+    /* Who writes the client's descriptor (nostrc-rpqvh). A delivery writes
+     * directly while the feeder has nothing (backlog 0); everything else, and
+     * whatever did not fit, joins the queue in order and the feeder writes it.
+     * wmu orders the two and is held only across non-waiting sends. */
+    nsync_mu wmu;
+    size_t backlog;      /* under wmu: datagrams queued for the feeder (or in its hands) and not yet finished */
+    size_t head_sent;    /* under wmu: bytes of the first queued stream frame a direct write already sent */
+    bool failed;         /* under wmu: a direct write failed hard; the feeder meets it on its next write */
 } flow_rec;
 typedef struct listener_rec {
     bool used, released;
@@ -88,6 +96,7 @@ struct fipsd_native_api {
     fipsd_native_registry *registry;
     flow_rec *flows;
     size_t flow_cap;
+    flow_rec *flow_cache[64]; /* under mu: established flows by identifier, validated on use */
     listener_rec *listeners;
     size_t listener_cap;
     connection *conns;
@@ -216,6 +225,28 @@ static void flow_reader_fiber(void *arg)
     fipsd_native_frame_reader_clear(&frames);
     flow_end(a, f);
 }
+static bool would_wait(int error) { return error == EAGAIN || error == EWOULDBLOCK || error == ENOBUFS; }
+/* Whether a refused datagram-flow write may wait for the client (Linux
+ * SEQPACKET's EAGAIN, a macOS datagram flow's parking) rather than costing
+ * that datagram at once (ENOBUFS where nothing would wake a waiter). */
+static bool datagram_waits(const fipsd_native_api *a, int error)
+{
+    if (error == EAGAIN || error == EWOULDBLOCK) return true;
+    return error == ENOBUFS && FIPSD_NATIVE_DGRAM_PARK && a->dgram_park;
+}
+static void client_drop(fipsd_native_api *a, flow_rec *f)
+{
+    count(a, FIPSD_METRIC_native_drop_client_buffer_full, 1);
+    event(a, FIPSD_NATIVE_EVENT_FLOW_DROPPED, f->id, 0);
+    FIPSD_DEBUG(MODULE, "flow %llu: write dropped a datagram", (unsigned long long)f->id);
+}
+/* The feeder finished `n` queued datagrams (written or dropped). */
+static void feeder_done(flow_rec *f, size_t n)
+{
+    nsync_mu_lock(&f->wmu);
+    f->backlog -= n;
+    nsync_mu_unlock(&f->wmu);
+}
 #if FIPSD_NATIVE_DGRAM_PARK
 /* One datagram onto a macOS datagram flow (nostrc-e3ps5). A full client
  * refuses it with ENOBUFS; the feeder then parks until the client's buffer
@@ -260,13 +291,57 @@ static int feed_datagram(fipsd_native_api *a, flow_rec *f, const fipsd_native_da
         if (gof_wait_writable(f->sock, need, -1) != 0) return -1;
         woken = true;
     }
-    count(a, FIPSD_METRIC_native_drop_client_buffer_full, 1);
-    event(a, FIPSD_NATIVE_EVENT_FLOW_DROPPED, f->id, 0);
-    FIPSD_DEBUG(MODULE, "flow %llu: write dropped a datagram", (unsigned long long)f->id);
+    client_drop(a, f);
     return 0;
 }
 #endif
-/* Write datagrams the node delivered onto the client's descriptor. A full
+/* Stream frames gathered into one write: a delivery batch's direct write, or
+ * what the feeder takes off the queue at once. The feeder's own batch is
+ * outside the queue, so a flow buffers at most pending_per_flow queued plus
+ * FEED_BATCH in the feeder's hands (upstream: the queue plus one). */
+#define FRAME_BATCH 64u
+#define FEED_BATCH 16u
+typedef struct frame_batch {
+    uint8_t headers[FRAME_BATCH][FIPSD_NATIVE_FRAME_HEADER];
+    struct iovec iov[2 * FRAME_BATCH];
+    size_t count;
+} frame_batch;
+static void frames_add(frame_batch *b, const uint8_t *data, size_t len)
+{
+    fipsd_native_frame_header(b->headers[b->count], (uint32_t)len);
+    b->iov[2 * b->count] = (struct iovec){.iov_base = b->headers[b->count], .iov_len = FIPSD_NATIVE_FRAME_HEADER};
+    b->iov[2 * b->count + 1] = (struct iovec){.iov_base = (void *)data, .iov_len = len};
+    ++b->count;
+}
+/* One non-waiting write of iov[first..2 * count): bytes taken or -1 with errno. */
+static ssize_t frames_send_once(int fd, frame_batch *b, size_t first)
+{
+    struct msghdr msg = {.msg_iov = b->iov + first, .msg_iovlen = (int)(2 * b->count - first)};
+    ssize_t n;
+    do n = sendmsg(fd, &msg, FIPSD_NATIVE_MSG_NOSIGNAL | MSG_DONTWAIT); while (n < 0 && errno == EINTR);
+    return n;
+}
+/* Write `nitems` queued datagrams as frames in as few writes as the client
+ * allows, the first `skip` bytes of the first frame already on the stream (a
+ * direct write's partial frame). A full client parks this writer on
+ * writability, which the kernel raises when the client reads, so nothing is
+ * lost here. Returns 0 or -1 with the io errno. */
+static int feed_frames(flow_rec *f, fipsd_native_datagram **items, size_t nitems, size_t skip)
+{
+    frame_batch b;
+    b.count = 0; /* frames_add writes every entry it uses */
+    for (size_t i = 0; i < nitems; ++i) frames_add(&b, items[i]->bytes, items[i]->len);
+    size_t first = fipsd_native_iov_advance(b.iov, 2 * nitems, skip);
+    while (first < 2 * nitems) {
+        ssize_t n = frames_send_once(f->sock, &b, first);
+        if (n >= 0) { first += fipsd_native_iov_advance(b.iov + first, 2 * nitems - first, (size_t)n); continue; }
+        int error = fipsd_io_errno();
+        if (!would_wait(error)) { fipsd_io_set_errno(error); return -1; }
+        if (gof_wait_writable(f->sock, 0, -1) != 0) return -1;
+    }
+    return 0;
+}
+/* Write what the direct path could not onto the client's descriptor. A full
  * client buffer parks this writer on SOCK_SEQPACKET (Linux), on a stream
  * flow (macOS, FreeBSD with libfipsnative), whose kernel raises writability
  * when the client reads, and on a macOS datagram flow (feed_datagram), so
@@ -286,22 +361,36 @@ static void flow_feeder_fiber(void *arg)
     for (;;) {
         void *v = NULL;
         if (go_channel_receive(f->inbound, &v) != 0 || !v) break;
+        if (f->stream) {
+            /* Everything queued behind the first goes in the same write. */
+            fipsd_native_datagram *items[FEED_BATCH] = {v};
+            size_t n = 1;
+            nsync_mu_lock(&f->wmu);
+            size_t skip = f->head_sent;
+            f->head_sent = 0;
+            nsync_mu_unlock(&f->wmu);
+            while (n < FEED_BATCH && go_channel_try_receive(f->inbound, &v) == 0 && v) items[n++] = v;
+            int rc = feed_frames(f, items, n, skip);
+            int error = fipsd_io_errno();
+            for (size_t i = 0; i < n; ++i) fipsd_native_datagram_free(items[i]);
+            feeder_done(f, n);
+            if (rc == 0) continue;
+            if (error != ECANCELED) FIPSD_DEBUG(MODULE, "flow %llu: write failed: %s", (unsigned long long)f->id, strerror(error));
+            break;
+        }
         fipsd_native_datagram *dg = v;
         int rc;
-        if (f->stream) rc = fipsd_native_frame_send_fiber(f->sock, dg->bytes, dg->len);
 #if FIPSD_NATIVE_DGRAM_PARK
-        else if (a->dgram_park) rc = feed_datagram(a, f, dg, &shed);
-#endif
+        if (a->dgram_park) rc = feed_datagram(a, f, dg, &shed);
         else rc = fipsd_native_send_fiber(f->sock, dg->bytes, dg->len, -1);
+#else
+        rc = fipsd_native_send_fiber(f->sock, dg->bytes, dg->len, -1);
+#endif
         int error = fipsd_io_errno();
         fipsd_native_datagram_free(dg);
+        if (rc != 0 && error == ENOBUFS) { client_drop(a, f); rc = 0; }
+        feeder_done(f, 1);
         if (rc == 0) continue;
-        if (!f->stream && error == ENOBUFS) {
-            count(a, FIPSD_METRIC_native_drop_client_buffer_full, 1);
-            event(a, FIPSD_NATIVE_EVENT_FLOW_DROPPED, f->id, 0);
-            FIPSD_DEBUG(MODULE, "flow %llu: write dropped a datagram", (unsigned long long)f->id);
-            continue;
-        }
         if (error != ECANCELED) FIPSD_DEBUG(MODULE, "flow %llu: write failed: %s", (unsigned long long)f->id, strerror(error));
         break;
     }
@@ -310,7 +399,9 @@ static void flow_feeder_fiber(void *arg)
      * to whichever call comes first: a write that took it (ECONNRESET) leaves
      * the reader only EAGAIN, and it would never end the flow. Ending this
      * feeder ends the reader's wait so it releases the flow (harmless when
-     * the reader has already gone). */
+     * the reader has already gone). A direct write that meets the close
+     * leaves the datagram queued for this feeder, so it is always the feeder
+     * that sees it fail. */
     if (!f->stream) (void)gof_io_cancel_fd(f->sock);
 #endif
     if (a->before_flow_reap) a->before_flow_reap(a->flow_reap_user, f->id);
@@ -375,6 +466,10 @@ static bool flow_start(fipsd_native_api *a, uint64_t id, const fipsd_native_flow
     f->room = (size_t)sndbuf;
     atomic_init(&f->pin, pin); atomic_init(&f->datagrams, 0); atomic_init(&f->bytes, 0); atomic_init(&f->closed, false);
     atomic_init(&f->kicked, false);
+    /* Datagrams routed to the flow before this record existed are already
+     * queued (deliver_batch falls back to the queue then, under this lock):
+     * the feeder owns them, so direct writes wait behind them. */
+    f->backlog = go_channel_get_depth(inbound);
     nsync_mu_unlock(&a->mu);
     if (fipsd_runtime_spawn(a->runtime, flow_feeder_fiber, f) != 0) {
         nsync_mu_lock(&a->mu);
@@ -635,17 +730,162 @@ static flow_rec *flow_by_id_locked(fipsd_native_api *a, uint64_t id)
  * case it is parked on a client the kernel will not wake for it, and mark the
  * wake so the feeder sheds if it still cannot send (feed_datagram). The wake
  * is latched when the feeder is not parked yet, so none is lost. */
-static void overflowed_locked(fipsd_native_api *a, const fipsd_native_outcome *o)
+static void flow_kick(fipsd_native_api *a, flow_rec *f)
 {
 #if FIPSD_NATIVE_DGRAM_PARK
-    if (!a->dgram_park || o->kind != FIPSD_NATIVE_OUTCOME_DROPPED || o->reason != FIPSD_NATIVE_REASON_FLOW_QUEUE_FULL) return;
-    flow_rec *f = flow_by_id_locked(a, o->flow);
-    if (!f || f->stream) return;
+    if (!a->dgram_park || !f || f->stream) return;
     atomic_store(&f->kicked, true);
     (void)gof_io_wake_writers(f->sock);
 #else
-    (void)a; (void)o;
+    (void)a; (void)f;
 #endif
+}
+static bool queue_overflow(const fipsd_native_outcome *o)
+{
+    return o->kind == FIPSD_NATIVE_OUTCOME_DROPPED && o->reason == FIPSD_NATIVE_REASON_FLOW_QUEUE_FULL;
+}
+static void overflowed_locked(fipsd_native_api *a, const fipsd_native_outcome *o)
+{
+    if (queue_overflow(o)) flow_kick(a, flow_by_id_locked(a, o->flow));
+}
+/* ---- inbound delivery (nostrc-rpqvh) ----------------------------------------
+ * The node's receive path and `arrive` deliver through one batch. Routing,
+ * holding and counting happen under a->mu as before; the writes do not. A
+ * datagram for an established flow whose feeder has nothing goes straight
+ * onto the client's descriptor (a batch's frames for one stream flow in one
+ * write), so delivery keeps pace with the dispatcher whatever the scheduler
+ * does with the feeder: every fiber of a daemon usually shares one OS thread,
+ * where a queue the feeder drains only between dispatcher batches capped
+ * delivery at one queue's worth per batch and dropped the rest after their
+ * AEAD work. What the client cannot take yet joins the queue, in order, and
+ * the feeder writes it as before, parking on a full client; a full queue
+ * still drops and counts the datagram (native.drop_flow_queue_full). */
+#define DELIVERY_BATCH 64u
+typedef struct inbound {
+    const fips_node_addr *peer;
+    const fips_xonly_pubkey *pubkey; /* NULL: the sending peer's key is unknown */
+    uint16_t src, dst;
+    const uint8_t *data;
+    size_t len;
+    fipsd_native_outcome outcome;
+    flow_rec *flow; /* the established flow this batch writes or queues it for */
+} inbound;
+/* An established flow by identifier, if its record still names that sink. */
+static flow_rec *flow_of_locked(fipsd_native_api *a, uint64_t id, void *sink)
+{
+    flow_rec **slot = &a->flow_cache[id % (sizeof a->flow_cache / sizeof a->flow_cache[0])];
+    flow_rec *f = *slot;
+    if (f && f->used && !f->released && f->id == id && f->inbound == sink) return f;
+    f = flow_by_id_locked(a, id);
+    if (!f || f->inbound != sink) return NULL;
+    *slot = f;
+    return f;
+}
+/* Queue one datagram for the feeder (under f->wmu). */
+static void queue_for_feeder(flow_rec *f, inbound *d)
+{
+    fipsd_native_datagram *dg = fipsd_native_datagram_new(d->data, d->len);
+    if (dg && go_channel_try_send(f->inbound, dg) == 0) { ++f->backlog; return; }
+    fipsd_native_datagram_free(dg);
+    d->outcome = (fipsd_native_outcome){.kind = FIPSD_NATIVE_OUTCOME_DROPPED, .reason = FIPSD_NATIVE_REASON_FLOW_QUEUE_FULL, .flow = f->id};
+}
+/* Direct writes for a stream flow (under f->wmu): one write of every frame;
+ * returns how many were taken whole. A frame taken in part is the next to be
+ * queued, with head_sent telling the feeder where it stopped. */
+static size_t direct_frames(flow_rec *f, inbound **items, size_t nitems)
+{
+    frame_batch b;
+    b.count = 0; /* frames_add writes every entry it uses */
+    for (size_t i = 0; i < nitems; ++i) frames_add(&b, items[i]->data, items[i]->len);
+    ssize_t n = frames_send_once(f->sock, &b, 0);
+    if (n < 0) {
+        int error = errno;
+        if (!would_wait(error)) {
+            /* Left queued: the feeder's write meets the failure and ends the flow's writing. */
+            f->failed = true;
+            FIPSD_DEBUG(MODULE, "flow %llu: write failed: %s", (unsigned long long)f->id, strerror(error));
+        }
+        return 0;
+    }
+    size_t done = 0, left = (size_t)n;
+    while (done < nitems && left >= FIPSD_NATIVE_FRAME_HEADER + items[done]->len) left -= FIPSD_NATIVE_FRAME_HEADER + items[done++]->len;
+    f->head_sent = left;
+    return done;
+}
+/* Direct writes for a datagram flow (under f->wmu): one send each until the
+ * client refuses one it may wait for; returns how many were settled. */
+static size_t direct_datagrams(fipsd_native_api *a, flow_rec *f, inbound **items, size_t nitems)
+{
+    for (size_t i = 0; i < nitems; ++i) {
+        if (fipsd_native_send_once(f->sock, items[i]->data, items[i]->len) >= 0) continue;
+        int error = errno;
+        /* As the feeder would: one try, then a counted drop where nothing
+         * could wake a waiter (FreeBSD, FIPSD_NATIVE_DGRAM_PARK=0). */
+        if (error == ENOBUFS && !datagram_waits(a, error)) { client_drop(a, f); continue; }
+        if (!datagram_waits(a, error)) {
+            f->failed = true;
+            FIPSD_DEBUG(MODULE, "flow %llu: write failed: %s", (unsigned long long)f->id, strerror(error));
+        }
+        return i;
+    }
+    return nitems;
+}
+/* Everything one batch has for flow f, in arrival order. */
+static void flow_write(fipsd_native_api *a, flow_rec *f, inbound *d, size_t n)
+{
+    inbound *items[DELIVERY_BATCH];
+    size_t nitems = 0;
+    for (size_t i = 0; i < n; ++i) if (d[i].flow == f) items[nitems++] = &d[i];
+    nsync_mu_lock(&f->wmu);
+    size_t done = 0;
+    if (!f->backlog && !f->failed) done = f->stream ? direct_frames(f, items, nitems) : direct_datagrams(a, f, items, nitems);
+    for (size_t i = done; i < nitems; ++i) queue_for_feeder(f, items[i]);
+    nsync_mu_unlock(&f->wmu);
+    bool overflowed = false;
+    for (size_t i = 0; i < nitems; ++i) {
+        fipsd_native_link_count(a->metrics, &items[i]->outcome, items[i]->len);
+        overflowed |= queue_overflow(&items[i]->outcome);
+    }
+    if (overflowed) flow_kick(a, f);
+}
+/* Deliver n <= DELIVERY_BATCH inbound datagrams; each outcome is counted
+ * before this returns. */
+static void deliver_batch(fipsd_native_api *a, inbound *d, size_t n)
+{
+    flow_rec *flows[DELIVERY_BATCH];
+    size_t nflows = 0;
+    uint64_t now = mono_ms();
+    nsync_mu_lock(&a->mu);
+    for (size_t i = 0; i < n; ++i) {
+        d[i].flow = NULL;
+        d[i].outcome = (fipsd_native_outcome){.kind = FIPSD_NATIVE_OUTCOME_DROPPED, .reason = FIPSD_NATIVE_REASON_NO_PORT};
+        void *sink = NULL;
+        if (d[i].pubkey && fipsd_native_link_route(a->registry, d[i].peer, d[i].pubkey, d[i].src, d[i].dst, d[i].data, d[i].len, now, &sink, &d[i].outcome)) {
+            flow_rec *f = flow_of_locked(a, d[i].outcome.flow, sink);
+            if (f) {
+                d[i].flow = f;
+                size_t k = 0;
+                while (k < nflows && flows[k] != f) ++k;
+                if (k == nflows) { ++f->refs; flows[nflows++] = f; }
+                continue; /* counted by flow_write */
+            }
+            /* Accepted or connected, its record not written yet: its queue,
+             * which flow_start hands the feeder as backlog. */
+            fipsd_native_datagram *dg = fipsd_native_datagram_new(d[i].data, d[i].len);
+            if (!dg || go_channel_try_send(sink, dg) != 0) {
+                fipsd_native_datagram_free(dg);
+                d[i].outcome = (fipsd_native_outcome){.kind = FIPSD_NATIVE_OUTCOME_DROPPED, .reason = FIPSD_NATIVE_REASON_FLOW_QUEUE_FULL, .flow = d[i].outcome.flow};
+            }
+        }
+        fipsd_native_link_count(a->metrics, &d[i].outcome, d[i].len);
+        overflowed_locked(a, &d[i].outcome);
+    }
+    nsync_mu_unlock(&a->mu);
+    for (size_t k = 0; k < nflows; ++k) flow_write(a, flows[k], d, n);
+    if (!nflows) return;
+    nsync_mu_lock(&a->mu);
+    for (size_t k = 0; k < nflows; ++k) flow_unref_locked(a, flows[k]);
+    nsync_mu_unlock(&a->mu);
 }
 static json_t *no_such_flow(uint64_t id)
 {
@@ -671,6 +911,10 @@ static int inject_queued(fipsd_native_api *a, flow_rec *f, const uint8_t *data, 
     if (go_channel_is_closed(f->inbound)) { fipsd_io_set_errno(EPIPE); return -1; } /* the client closed the flow */
     fipsd_native_datagram *dg = fipsd_native_datagram_new(data, len);
     if (!dg) { fipsd_io_set_errno(ENOMEM); return -1; }
+    /* Claimed before it is queued, so no direct write overtakes it. */
+    nsync_mu_lock(&f->wmu);
+    ++f->backlog;
+    nsync_mu_unlock(&f->wmu);
     void *token = NULL;
     GoSelectCase cases[] = {
         {.op = GO_SELECT_SEND, .chan = f->inbound, .value = dg},
@@ -679,6 +923,7 @@ static int inject_queued(fipsd_native_api *a, flow_rec *f, const uint8_t *data, 
     GoSelectResult r = go_select_timeout(cases, 2, FIPSD_NATIVE_REPLY_TIMEOUT_MS);
     if (r.selected_case == 0 && r.ok) return 0;
     fipsd_native_datagram_free(dg);
+    feeder_done(f, 1);
     fipsd_io_set_errno(r.selected_case < 0 ? ETIMEDOUT : EPIPE);
     return -1;
 }
@@ -715,15 +960,12 @@ static json_t *do_arrive(fipsd_native_api *a, const fipsd_native_command *cmd)
         snprintf(message, sizeof message, "invalid peer: %s", fips_identity_error_name(st));
         return fipsd_native_deny("EINVAL", message);
     }
-    fipsd_native_datagram *dg = fipsd_native_datagram_new(cmd->data, cmd->data_len);
-    if (!dg) return fipsd_native_deny("ECONNREFUSED", "allocation failed");
     fips_node_addr peer = fips_node_addr_from_pubkey(&key);
-    nsync_mu_lock(&a->mu);
-    if (atomic_load(&a->stopping)) { nsync_mu_unlock(&a->mu); fipsd_native_datagram_free(dg); return shutting_down(); }
-    fipsd_native_outcome outcome = fipsd_native_link_deliver(a->registry, &peer, &key, cmd->src, cmd->dst, dg, mono_ms());
-    fipsd_native_link_count(a->metrics, &outcome, cmd->data_len);
-    overflowed_locked(a, &outcome);
-    nsync_mu_unlock(&a->mu);
+    if (atomic_load(&a->stopping)) return shutting_down();
+    /* The receive path's own delivery, one datagram long. */
+    inbound d = {.peer = &peer, .pubkey = &key, .src = cmd->src, .dst = cmd->dst, .data = cmd->data, .len = cmd->data_len};
+    deliver_batch(a, &d, 1);
+    fipsd_native_outcome outcome = d.outcome;
     char text[96];
     fipsd_native_outcome_text(&outcome, text, sizeof text);
     bool named = outcome.kind == FIPSD_NATIVE_OUTCOME_ANNOUNCED || outcome.kind == FIPSD_NATIVE_OUTCOME_HELD;
@@ -877,22 +1119,21 @@ static void accept_fiber(void *arg)
 }
 
 /* ---- the node's datagram sink --------------------------------------------- */
-static void deliver_notice(fipsd_native_api *a, fipsd_node_notice *n)
+static void deliver_notices(fipsd_native_api *a, fipsd_node_notice **notices, size_t n)
 {
-    FIPSD_PERF_WAIT(n, ENDPOINT_EVENT_WAIT);
-    fipsd_native_outcome outcome = {.kind = FIPSD_NATIVE_OUTCOME_DROPPED, .reason = FIPSD_NATIVE_REASON_NO_PORT};
-    fipsd_native_datagram *dg = n->has_pubkey ? fipsd_native_datagram_new(n->payload, n->len) : NULL;
-    if (!n->has_pubkey) FIPSD_DEBUG(MODULE, "inbound datagram from a peer with no known key, dropped");
-    nsync_mu_lock(&a->mu);
-    if (n->has_pubkey) {
-        if (!dg) outcome.reason = FIPSD_NATIVE_REASON_FLOW_QUEUE_FULL;
-        else outcome = fipsd_native_link_deliver(a->registry, &n->peer, &n->pubkey, n->src_port, n->dst_port, dg, mono_ms());
+    inbound d[DELIVERY_BATCH];
+    for (size_t i = 0; i < n; ++i) {
+        fipsd_node_notice *m = notices[i];
+        FIPSD_PERF_WAIT(m, ENDPOINT_EVENT_WAIT);
+        if (!m->has_pubkey) FIPSD_DEBUG(MODULE, "inbound datagram from a peer with no known key, dropped");
+        d[i] = (inbound){.peer = &m->peer, .pubkey = m->has_pubkey ? &m->pubkey : NULL, .src = m->src_port,
+                         .dst = m->dst_port, .data = m->payload, .len = m->len};
     }
-    fipsd_native_link_count(a->metrics, &outcome, n->len);
-    overflowed_locked(a, &outcome);
-    nsync_mu_unlock(&a->mu);
-    event(a, FIPSD_NATIVE_EVENT_DATAGRAM_COUNTED, 0, n->dst_port);
-    fipsd_node_notice_free(n);
+    deliver_batch(a, d, n);
+    for (size_t i = 0; i < n; ++i) {
+        event(a, FIPSD_NATIVE_EVENT_DATAGRAM_COUNTED, 0, notices[i]->dst_port);
+        fipsd_node_notice_free(notices[i]);
+    }
 }
 static void expire(fipsd_native_api *a, uint64_t now)
 {
@@ -918,13 +1159,23 @@ static void rx_fiber(void *arg)
         GoSelectResult r = go_select_timeout(cases, 2, 1000);
         if (r.selected_case == 1) break;
         if (r.selected_case == 0 && value) {
-            deliver_notice(a, value);
             /* Drain what the dispatcher already queued before re-registering
-             * the select: one wake delivers a burst, bounded by the sink. */
-            for (unsigned left = FIPSD_NATIVE_SINK_CAPACITY; left; --left) {
-                value = NULL;
-                if (go_channel_try_receive(a->sink, &value) != 0 || !value) break;
-                deliver_notice(a, value);
+             * the select, in delivery batches: one wake delivers a burst,
+             * bounded by the sink. */
+            fipsd_node_notice *batch[DELIVERY_BATCH];
+            size_t n = 0, total = 1;
+            batch[n++] = value;
+            for (;;) {
+                while (n < DELIVERY_BATCH && total <= FIPSD_NATIVE_SINK_CAPACITY) {
+                    value = NULL;
+                    if (go_channel_try_receive(a->sink, &value) != 0 || !value) break;
+                    batch[n++] = value; ++total;
+                }
+                if (!n) break;
+                bool full = n == DELIVERY_BATCH;
+                deliver_notices(a, batch, n);
+                n = 0;
+                if (!full || total > FIPSD_NATIVE_SINK_CAPACITY) break;
             }
         }
         uint64_t now = mono_ms();

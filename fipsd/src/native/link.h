@@ -36,6 +36,15 @@ typedef struct fipsd_native_outcome {
 fipsd_native_outcome fipsd_native_link_deliver(fipsd_native_registry *r, const fips_node_addr *peer,
                                                const fips_xonly_pubkey *pubkey, uint16_t src, uint16_t dst,
                                                fipsd_native_datagram *dg, uint64_t now);
+/* The same decision without the send to an established flow, for an owner
+ * that writes or queues the datagram itself (api.c, the node's receive path
+ * and `arrive`): true when an established flow owns the destination, with
+ * `*sink` its registered sink and `outcome->flow` its identifier, `data`
+ * untouched; otherwise false with the decision performed on a copy of `data`
+ * (announced, held or dropped) in `*outcome`. */
+bool fipsd_native_link_route(fipsd_native_registry *r, const fips_node_addr *peer, const fips_xonly_pubkey *pubkey,
+                             uint16_t src, uint16_t dst, const uint8_t *data, size_t len, uint64_t now,
+                             void **sink, fipsd_native_outcome *outcome);
 /* Count one dispatched inbound datagram the way upstream's rx_loop does. */
 void fipsd_native_link_count(fipsd_metrics *m, const fipsd_native_outcome *outcome, size_t bytes);
 /* The `outcome` text the debug `arrive` command reports. */

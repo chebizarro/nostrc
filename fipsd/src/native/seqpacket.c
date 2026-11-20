@@ -136,30 +136,12 @@ int fipsd_native_send_fiber(int fd, const void *buf, size_t len, int timeout_ms)
 }
 
 /* ---- stream flows (native/frame.h) ----------------------------------------- */
-static size_t advance(struct iovec *iov, size_t count, size_t sent)
+size_t fipsd_native_iov_advance(struct iovec *iov, size_t count, size_t sent)
 {
     size_t first = 0;
     while (first < count && sent >= iov[first].iov_len) { sent -= iov[first].iov_len; iov[first].iov_len = 0; ++first; }
     if (first < count) { iov[first].iov_base = (uint8_t *)iov[first].iov_base + sent; iov[first].iov_len -= sent; }
     return first;
-}
-int fipsd_native_frame_send_fiber(int fd, const void *buf, size_t len)
-{
-    if (len > FIPSD_NATIVE_FRAME_MAX) { fipsd_io_set_errno(EMSGSIZE); return -1; }
-    uint8_t header[FIPSD_NATIVE_FRAME_HEADER];
-    fipsd_native_frame_header(header, (uint32_t)len);
-    struct iovec iov[2] = {{.iov_base = header, .iov_len = sizeof header}, {.iov_base = (void *)buf, .iov_len = len}};
-    size_t first = 0, left = sizeof header + len;
-    while (left) {
-        struct msghdr msg = {.msg_iov = iov + first};
-        msg.msg_iovlen = first ? 1 : 2;
-        /* Parks on writability: the kernel raises it when the client reads. */
-        ssize_t n = gof_sendmsg(fd, &msg, FIPSD_NATIVE_MSG_NOSIGNAL, -1);
-        if (n < 0) { if (fipsd_io_errno() == EINTR) continue; return -1; }
-        left -= (size_t)n;
-        first = advance(iov, 2, (size_t)n);
-    }
-    return 0;
 }
 int fipsd_native_frame_send_once(int fd, const void *buf, size_t len)
 {

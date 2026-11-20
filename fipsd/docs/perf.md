@@ -79,6 +79,11 @@ Read each pairing's JSON as follows:
   startup/exit and the 200 ms drain are outside the marked send window. The
   denominator still includes datagrams received during the drain; its CPU is
   deliberately excluded from the headline traffic-window cost.
+- `native_counters`: per daemon (sender first), the non-zero changes of its
+  `show_metrics` `native.*` counters across the probe, e.g. the receiver's
+  `native.drop_flow_queue_full`; null where a daemon does not answer
+  `show_metrics`. The control snapshot is read after the drain, so a late
+  datagram can land on either side of it.
 - `us_per_delivered_datagram_run` retains the former whole-driver CPU cost for
   comparison. Existing `traffic_s`, `traffic_percent_one_core` and
   `traffic_wall_s` retain their whole-run meanings, so older gate metrics are
@@ -96,6 +101,9 @@ observations still have IPC/scheduling and sequential `ps` sampling skew; macOS
 CPU accounting is quantized. This is event-bounded process accounting, not an
 atomic cross-process CPU-clock snapshot. Short probes magnify those errors.
 CPU excludes the traffic driver and kernel work not charged to the daemons.
+
+`--pairs` (default `c-c,rust-rust,c-rust`) restricts the pairings, which
+still rotate across runs; the default output is unchanged.
 
 The native driver's optional arguments are
 `LEFT_API RIGHT_API RIGHT_NPUB SECONDS LATENCY_SAMPLES [OFFERED_MBPS [PORT]]`.
@@ -159,8 +167,8 @@ Every stage 3 loss is `native.drop_flow_queue_full` at the receiver. The
 faster dispatcher delivers a batch faster than the flow feeder drains a
 per-flow queue of `node.native_api.pending_per_flow` (default 16). The
 baseline lost mostly local send refusals at the sender instead. Native
-delivery is outside this change and is tracked as nostrc-rpqvh. Unpaced C-to-C
-overload loss is the same mechanism.
+delivery is outside this change and is tracked as nostrc-rpqvh (fixed below,
+"Native delivery"). Unpaced C-to-C overload loss is the same mechanism.
 
 Idle cost is unchanged. Two linked idle daemons (`top`, 5 s intervals) saw
 +239 to +298 context switches per interval for stage 1 against +213 to +383 for
@@ -376,6 +384,103 @@ Thread split (`sample`, c-c run 1):
 C-to-C overload loss falls from stage 2's 47% to 31% at more goodput. The
 remaining loss is the receiver's dispatcher plus native delivery bursts
 (`native.drop_flow_queue_full`).
+
+## Native delivery: nostrc-rpqvh
+
+Measured **2026-11-19** on the same M4 Max (Release `-O3 -g`), against the
+unmodified base `810730485`, back to back and interleaved in one session,
+every run reported. The host was shared with other agents' benchmarks and two
+VMs (load average 12-40, mostly 15-25): even unchanged Rust-to-Rust lost
+59-91% unpaced, and at 100 Mbit/s both builds' receivers, C and Rust, dropped
+a few hundred datagrams to a descheduled client.
+
+**Root cause.** In a busy daemon every fiber runs on one libgo worker: a
+woken fiber runs on its waker's worker, so the dispatcher, the native receive
+fiber and the flow's feeder share a thread (`sample` of the base receiver,
+unpaced: that worker 1422/1431 samples busy, the second idle; dispatcher
+~870, UDP receive ~395, feeder ~80, receive fiber ~75). The receive fiber
+pushed a dispatcher batch (up to 64) into the flow's queue of
+`pending_per_flow` = 16 without yielding, and the feeder could drain only that
+queue's worth before the dispatcher's next batch: about 16 delivered per 64
+decrypted. In that sampled unpaced run 601k of 1.15M datagrams were
+`native.drop_flow_queue_full` at the receiver, after their AEAD work. CPU was
+never the limit (feeder plus receive fiber ~11% of the thread); the queue's
+per-round capacity was.
+
+**Change** (`native/api.c`, design in `fipsd/README.md`, "Inbound delivery
+keeps pace with the dispatcher"). The receive fiber delivers up to 64 notices
+as a batch and writes a flow's datagrams straight onto the client's
+descriptor while the feeder holds nothing (one `sendmsg` per batch per stream
+flow, no copy, no fiber hop); only what the client cannot take yet is queued
+for the feeder, in order, and the feeder writes up to 16 queued frames per
+write, parking on writability without `gof_sendmsg`'s per-call `fcntl`. The
+client's socket buffer (unchanged budget) now absorbs a burst, as upstream's
+concurrently running writer lets it. Counters, outcomes, parking and drop
+semantics are unchanged.
+
+C-to-C at fixed rates, 4 s; loss, then the receiver's
+`native.drop_flow_queue_full`, of 125000 / 208333 / 291666 datagrams. Four
+runs each (two rounds in each of two passes); the rest of each loss is the
+sender's local refusals, which this change does not touch:
+
+| Offered | Base `810730485` | rpqvh |
+|---|---:|---:|
+| 100 Mbit/s (of 52083) | 764/669, 217/158, 225/225, 557/557 | 752/276, 647/113, 0/0, 0/0 |
+| 300 Mbit/s | 652/626, 10534/8786, 81/81, 7094/4692 | 5792/1551, 1465/455, 749/203, 365/11 |
+| 500 Mbit/s | 7265/5535, 5106/4862, 44238/33378, 46100/35912 | 2717/733, 7821/3690, 865/424, 2747/1287 |
+| 700 Mbit/s | 55455/45599, 66852/48659, 44867/42313, 37737/33126 | 1735/610, 2786/1298, 23030/7302, 626/209 |
+
+A first pair at 500 Mbit/s: base 21591/18096, rpqvh 46/0. A diagnostic build
+that counted a full dispatcher-to-API sink separately (not committed) found
+no sink overflow at 500 (2 queue drops), 700 or unpaced: every remaining
+receiver drop is at the flow queue behind a client that fell behind. The
+receiver is no longer saturated (`sample`, unpaced: busiest worker 824/1271
+samples), and the perf client's per-datagram `poll` + two `recv` + payload
+check is now the slower side; at moderate rates the residue is a client
+descheduled for longer than ~64 KiB of socket plus the queue hold.
+
+| | Base | rpqvh |
+|---|---:|---:|
+| c-c unpaced Mbit/s (loss %) | 545.5 (47.1), 599.5 (47.9), 303.8 (65.6) | 1023.5 (9.4), 992.2 (10.7), 1004.5 (6.5) |
+| c-c unpaced receiver CPU us/delivered datagram | 21.6, 21.4, 33.7 | 12.1, 11.6, 12.4 |
+| c-c unpaced daemon CPU % one core, tx / rx | 176/121, 194/132, 156/105 | 187/128, 177/118, 192/128 |
+| c-c sustainable (<1% loss) Mbit/s | 293.7, 64.1 (load 40) | 750.0, 606.2 |
+| c-c one-way p50 fwd/rev us, pre-load (unpaced runs) | 70/70, 63/66, 71/70 | 70/69, 85/85, 65/64 |
+| c-c loaded one-way p50 us at 500 / 700 Mbit/s | 204, 181, 522, 415 / 377, 569, 538, 222 | 205, 181, 283, 459 / 313, 222, 615, 185 |
+| c-c CPU us/datagram at 100 Mbit/s, rx (final code) | 39.6, 45.9, 41.5 | 47.6, 38.0, 43.5 |
+| c-rust unpaced Mbit/s (loss %) | 330.1 (70.6), 604.5 (57.9), 281.0 (70.4) | 434.4 (65.2), 326.1 (69.9), 335.9 (64.5) |
+| c-rust at 500 Mbit/s, loss / Rust receiver drops | 6979/6727, 6053/6051, 2956/2906, 2627/1483, 18658/17055, 58541/54195 | 22518/21795, 25433/24430, 2953/2677, 2039/2029, 1337/871, 101666/85973 |
+
+C-to-Rust exercises only the unchanged C sender and the Rust receiver, whose
+drops swung with host load in both builds. The first two 500 Mbit/s pairs ran
+base first, each time into rising load, and looked worse for rpqvh; four
+more pairs alternating the order (the last into a load spike that hit both)
+did not repeat it. Its sustainable searches: base 96.9 and 11.5, rpqvh 181.2
+and 106.2. No change is attributed there.
+CPU per datagram at 100 Mbit/s before the last change (zero-filling a 2 KiB
+iovec batch per write, now removed) was 43.1-48.4 base against 39.1-57.0
+rpqvh over seven interleaved pairs; the final code's three pairs are in the
+table, inside that noise.
+
+Verification, Debug `-DGO_WARNINGS_AS_ERRORS=ON`, `FIPSD_UDP_INTEROP_RUST_BINARY`
+and `FIPSD_TCP_INTEROP_RUST_BINARY` set (the unrelated `nips/nip57` target,
+missing `bolt11/bolt11.h`, does not build in either tree; no FIPS target
+depends on it):
+
+- ASan+UBSan `ctest -R '^Fips' -E 'Soak|Perf'`: 222/222 (8 capability skips).
+- TSan (nsync from source), `-E 'Soak|Perf|^FipsCore'`: 183/183 (8 skips), no
+  ThreadSanitizer report; `ctest -R Native --repeat until-fail:5`: 45/45.
+- `FipsdNativeApiTest` gains the direct-write stage (a stream flow behind a
+  stalled 2 KiB client, `arrive` to the first refusal with an `inject`
+  midway, all read whole and in order; it fails if the feeder ignores a
+  partially written frame's offset). `test_perf_loopback.py`: 9/9.
+
+Deferred, with beads:
+
+- The C client's receive cost, now the unpaced C-to-C limit (nostrc-u19cz.8).
+- A flow's burst headroom under host load (nostrc-u19cz.9).
+- libgo running a busy daemon's fibers on one worker (nostrc-u19cz.10).
+- Linux `SOCK_SEQPACKET` verification and `sendmmsg` (nostrc-u19cz.11).
 
 ## Dataplane correction: nostrc-pxwaj
 

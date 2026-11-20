@@ -3908,10 +3908,12 @@ Linux the field is accepted and answered with the usual `SOCK_SEQPACKET` pair,
 which already waits, and libfipsnative does not send it there; nothing in the
 Linux daemon or client paths changes.
 
-On a stream flow the feeder is the only writer (debug `inject` joins the
-flow's queue rather than writing beside it): it parks on writability, which
-the kernel raises when the client reads, finishes a frame across as many wakes
-as it takes, and so never drops. Darwin raises a stream writer's readiness
+On a stream flow one writer starts a frame at a time: the node's delivery,
+directly, while the feeder holds nothing, otherwise the feeder (debug `inject`
+joins the flow's queue rather than writing beside it; see `nostrc-rpqvh`
+below). The feeder parks on writability, which the kernel raises when the
+client reads, finishes a frame across as many wakes as it takes, and so never
+drops. Darwin raises a stream writer's readiness
 only when the peer's receive space reaches the writer's low-water mark (a
 client buffer below the default 2048-byte mark would never wake it), so the
 daemon's half has `SO_SNDLOWAT` 1, and both directions' send and receive
@@ -4020,6 +4022,58 @@ parked feeder by client close and by shutdown, and the switch.
 daemon relies on, printing the rest). Upstream's Rust client, unmodified, as
 a stalled slow reader on macOS read 3200 of 3200 datagrams with no drop
 (4 of 16 with the switch off); the ungated `native-echo` interop is green.
+
+### Inbound delivery keeps pace with the dispatcher (`nostrc-rpqvh`)
+
+The node hands an authenticated datagram for a native port to the API's sink
+(`handlers/native.c`), and the API's receive fiber delivers it to its flow.
+That delivery used to be one non-waiting send into the flow's queue
+(`pending_per_flow`, default 16, as upstream), drained by the flow's feeder
+fiber. Upstream's writer task runs beside its `rx_loop` on a thread pool; in
+fipsd a woken fiber runs on its waker's libgo worker, so the dispatcher, the
+receive fiber and every feeder of a busy daemon share one OS thread (a
+`sample` of a saturated receiver: one worker 1422 of 1431 samples busy, the
+other idle). The feeder then ran only between dispatcher batches of up to 64
+datagrams and could drain at most one queue's worth each time: under load
+most of what the node decrypted was counted as `native.drop_flow_queue_full`
+(601k of 1.15M datagrams in a sampled unpaced C-to-C run), after all of its
+AEAD work.
+
+**Design** (`native/api.c`, "inbound delivery"). The receive fiber takes up
+to 64 notices off the sink at once and delivers them as one batch: routing,
+holding and counting stay under the API lock as before (`link.c`
+`fipsd_native_link_route` is `fipsd_native_link_deliver` without the send to
+an established flow), the writes happen outside it with a reference on each
+flow. A datagram for a flow whose feeder holds nothing is written straight
+onto the client's descriptor, a batch's frames for one stream flow in a single
+`sendmsg`; on a datagram flow one send each. What the client cannot take yet
+is queued, in order, for the feeder, which writes it as before (parking on
+writability, the macOS datagram park of `nostrc-e3ps5`, or the counted drop
+where nothing can wake it). Per flow, a mutex held only across non-waiting
+sends and a count of datagrams the feeder still owns (its queue and what it
+holds, debug `inject` included) decide who writes: a direct write happens only
+when that count is zero, so nothing overtakes a queued datagram and no stream
+frame is interleaved. A frame a direct write took in part is queued next, and
+the feeder resumes it at the offset left with the flow. A direct write that
+fails hard leaves its datagram queued, so the feeder meets the failure and
+ends as before (on Darwin/FreeBSD datagram flows that also releases the
+reader, which a taken `so_error` would otherwise strand). The feeder gathers
+up to 16 queued frames per write, and these are outside the queue, so a flow
+holds at most `pending_per_flow` + 16 datagrams beyond the client's socket
+(upstream: the queue plus one). The same batch serves debug `arrive`.
+
+Unchanged: the counters and their meaning (a datagram a full queue refuses is
+still `drop_flow_queue_full`, one a full client costs where nothing wakes the
+writer still `received` plus `drop_client_buffer_full`), every outcome text,
+the socket buffer budget, the park/shed semantics and switch of `e3ps5`, the
+stream framing, `SCM_RIGHTS`, the registry limits and the quarter share.
+
+**Tests.** `FipsdNativeApiTest` delivers through `arrive` to an accepted
+stream flow behind a stalled 2 KiB client until the queue refuses one, with an
+`inject` midway, then reads every delivered datagram whole and in order (it
+fails if the feeder ignores a partial frame's offset). The burst, datagram
+park and two-node tests cover the rest unchanged. Measurements are in
+`fipsd/docs/perf.md`.
 
 ### Multi-node UDP convergence verification (nostrc-f66sr.2)
 
