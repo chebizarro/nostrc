@@ -1,0 +1,18 @@
+schema_version: "1.1"
+name: fix-export-dialog-copy
+context:
+  scaffold_script: place-files.sh
+expected_outcome: |
+  export-dialog.ui keeps the same widget tree but the text now follows the
+  HIG: the title is a header-capitalized heading without an ellipsis or
+  trailing period ("Export Notes"), the affirmative button is a specific
+  verb ("Export") instead of "OK", Cancel is placed at the start and the
+  affirmative at the end, "cancel" is capitalized, switch titles are
+  header-capitalized nouns phrased positively ("Media Attachments" rather
+  than "Don't Include…"), subtitles/descriptions use sentence capitalization
+  with no trailing period, "FORMAT" is not all-caps, "e.g." is replaced by
+  plain words, the entry uses a placeholder (not pre-filled text), the
+  tooltip is short header-capitalized text, the ellipsis uses the "…"
+  character wherever one is kept, and the icon-only folder button gets an
+  accessible label/tooltip and loses the destructive-action style.
+  CHANGES.md lists each change with a reason grounded in the HIG.

@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.12"/>
+  <requires lib="libadwaita" version="1.5"/>
+  <template class="GnostrExportDialog" parent="AdwDialog">
+    <property name="title">Export your notes to a file...</property>
+    <property name="content-width">480</property>
+    <property name="child">
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <property name="show-start-title-buttons">false</property>
+            <property name="show-end-title-buttons">false</property>
+            <child type="start">
+              <object class="GtkButton" id="ok_button">
+                <property name="label">OK</property>
+                <property name="tooltip-text">Click here to start exporting your notes.</property>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
+              </object>
+            </child>
+            <child type="end">
+              <object class="GtkButton" id="cancel_button">
+                <property name="label">cancel</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <property name="content">
+          <object class="AdwPreferencesPage">
+            <child>
+              <object class="AdwPreferencesGroup">
+                <property name="title">Options.</property>
+                <property name="description">Choose what you want to export, e.g. only your own notes, and click OK.</property>
+                <child>
+                  <object class="AdwSwitchRow" id="include_replies_row">
+                    <property name="title">include replies to other users</property>
+                    <property name="subtitle">Replies You Have Written Will Be Exported Too.</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwSwitchRow" id="exclude_media_row">
+                    <property name="title">Don't Include Media Attachments</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwComboRow" id="format_row">
+                    <property name="title">FORMAT</property>
+                    <property name="model">
+                      <object class="GtkStringList">
+                        <items>
+                          <item>JSON (nostr event format)</item>
+                          <item>plain text</item>
+                        </items>
+                      </object>
+                    </property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwEntryRow" id="path_row">
+                    <property name="title">Where to save</property>
+                    <property name="text">e.g. ~/Documents/notes-export.json</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="AdwPreferencesGroup">
+                <child>
+                  <object class="GtkButton" id="choose_folder_button">
+                    <property name="halign">center</property>
+                    <property name="icon-name">folder-open-symbolic</property>
+                    <style>
+                      <class name="pill"/>
+                      <class name="destructive-action"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </property>
+      </object>
+    </property>
+  </template>
+</interface>
