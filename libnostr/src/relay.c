@@ -1880,6 +1880,9 @@ int nsync_go_context_is_canceled(const void *ctx) {
 
 GoChannel *nostr_relay_write(NostrRelay *r, char *msg) {
     if (!r) return NULL;
+    /* nostrc-7i6w: callers that write their own AUTH frames keep the
+     * session (OK correlation, pool AUTH recovery) informed. */
+    if (msg && strncmp(msg, "[\"AUTH\",{", 9) == 0) nostr_relay_auth_observe_frame(r, msg);
     GoChannel *chan = go_channel_create(1);
 
     // hq-e3ach: Bump refcount to 2 so both the caller and write_operations

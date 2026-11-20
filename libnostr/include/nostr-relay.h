@@ -785,8 +785,10 @@ NOSTR_API bool nostr_relay_set_auth_signer_full(NostrRelay *relay,
  *
  * The explicit action that answers the current challenge with the
  * registered signer now, whatever the policy, including after a REJECTED
- * or FAILED attempt for the same challenge. Refused with no challenge, no
- * signer, an attempt already in flight, or the challenge already accepted.
+ * or FAILED attempt for the same challenge, or an AUTH the relay has not
+ * answered yet (its late OK is then ignored). Refused with no challenge, no
+ * signer, an attempt being signed, or the challenge already accepted for
+ * this signer's identity generation.
  */
 NOSTR_API bool nostr_relay_auth_start(NostrRelay *relay, Error **err);
 

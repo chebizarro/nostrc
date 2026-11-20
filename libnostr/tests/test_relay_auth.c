@@ -9,12 +9,14 @@
  *                 a re-challenge is answered again
  *   cancel        cancellation mid-sign: re-challenge, reconnect, signer
  *                 replaced, relay freed; a stale completion is never sent
+ *   unanswered    an OK for another id is ignored; explicit start supersedes
  *   legacy        deprecated nostr_relay_auth_wait() and nostr_relay_send_auth()
  *                 go through the session (correlated OK, stale refusal)
  *   pool-auth     CLOSED auth-required -> ON_DEMAND AUTH -> exactly one reissue
  *   pool-reject   rejected AUTH holds the CLOSED REQ; explicit retry releases it
  *   pool-refused  auth-required after accepted AUTH: AUTH_REFUSED, one reissue
  *                 per later AUTH OK; ordering stamps
+ *   pool-handrolled a caller's own AUTH frame (nostr_relay_write) is correlated
  *   pool-reconnect new connection generation: AUTH again, REQ recovered
  *   pool-blocked  blocked: yields one REQ per connection over N reconnects
  *   pool-backoff  rate-limited: reissued after the ladder delay
@@ -33,6 +35,7 @@
 #define LWS_PROTOCOL_LIST_TERM { .name = NULL, .callback = NULL }
 #endif
 
+#include "channel.h"
 #include "error.h"
 #include "json.h"
 #include "nostr-envelope.h"
@@ -69,6 +72,7 @@ typedef struct {
     /* configuration, set by the test thread between protocol barriers */
     atomic_int policy;
     atomic_bool accept_auth;
+    atomic_bool foreign_ok;    /* answer AUTH with an OK for another event id */
     atomic_int pending_cmd;
     /* observations */
     atomic_int connections;
@@ -132,6 +136,12 @@ static void on_auth_frame(struct lws *wsi, Conn *c, const char *text) {
                  tag(ev, "challenge") && !strcmp(tag(ev, "challenge"), c->challenge) &&
                  tag(ev, "relay") && !strcmp(tag(ev, "relay"), fx.url);
     if (valid) atomic_fetch_add(&fx.auths_valid, 1);
+    if (valid && atomic_load(&fx.foreign_ok)) {
+        push(wsi, c, fmt("[\"OK\",\"%s\",true,\"%s\"]",
+                         "0000000000000000000000000000000000000000000000000000000000000001", ""));
+        nostr_envelope_free(env);
+        return;
+    }
     bool ok = valid && atomic_load(&fx.accept_auth);
     if (ok) c->authed = true;
     if (ev)
@@ -245,6 +255,7 @@ static int free_port(void) {
 static void fixture_start(ReqPolicy policy, bool accept) {
     atomic_store(&fx.policy, (int)policy);
     atomic_store(&fx.accept_auth, accept);
+    atomic_store(&fx.foreign_ok, false);
     atomic_store(&fx.pending_cmd, 0);
     atomic_store(&fx.connections, 0);
     atomic_store(&fx.reqs, 0);
@@ -360,6 +371,7 @@ static void on_ok(const char *event_id, bool ok, const char *reason, void *data)
     pthread_mutex_lock(&obs.mu);
     obs.last_ok_frame = f;
     obs.ok_frames++;
+    pthread_cond_broadcast(&obs.cv);
     pthread_mutex_unlock(&obs.mu);
 }
 
@@ -520,6 +532,28 @@ static void test_reject_hold(void) {
     nostr_subscription_unsubscribe(sub);
     nostr_subscription_free(sub);
     nostr_filters_free(filters);
+    nostr_relay_close(relay, NULL);
+    nostr_relay_free(relay);
+    fixture_stop();
+}
+
+/* An OK for another event id is not this AUTH's answer: the session stays
+ * SENT. The explicit action supersedes an AUTH the relay never answers. */
+static void test_unanswered(void) {
+    fixture_start(REQ_GATED, true);
+    atomic_store(&fx.foreign_ok, true);
+    NostrRelay *relay = relay_connect();
+    CHECK(nostr_relay_set_auth_signer_full(relay, NOSTR_RELAY_AUTH_ON_CHALLENGE, 1, NULL,
+                                           sign_fn, NULL, NULL));
+    WAIT_FOR(obs.ok_frames == 1);
+    CHECK(obs.n_results == 0);
+    CHECK(status_of(relay).state == NOSTR_RELAY_AUTH_STATE_SENT);
+    atomic_store(&fx.foreign_ok, false);
+    Error *err = NULL;
+    CHECK(nostr_relay_auth_start(relay, &err));
+    WAIT_FOR(obs.n_results == 1);
+    CHECK(obs.results[0].state == NOSTR_RELAY_AUTH_STATE_ACCEPTED);
+    CHECK(atomic_load(&fx.auths) == 2);
     nostr_relay_close(relay, NULL);
     nostr_relay_free(relay);
     fixture_stop();
@@ -746,6 +780,40 @@ static void test_pool_refused(void) {
     pool_case_end(&pc);
 }
 
+/* A caller that writes its own ["AUTH",...] (metadesk md-xcy today) still
+ * gets the pool's recovery: the session observes the frame it wrote. */
+static void test_pool_handrolled(void) {
+    PoolCase pc = pool_case(REQ_GATED, true, NOSTR_RELAY_AUTH_ON_CHALLENGE, false);
+    pool_subscribe(&pc);
+    WAIT_FOR(obs.n_boundaries == 1 && obs.challenges == 1);
+    CHECK(boundary(0).info.recovery == NOSTR_POOL_RECOVERY_AWAIT_AUTH);
+    char *ch = nostr_relay_get_auth_challenge(pc.relay, NULL);
+    CHECK(ch);
+    NostrEvent *ev = nostr_event_new();
+    nostr_event_set_kind(ev, 22242);
+    nostr_event_set_created_at(ev, (int64_t)time(NULL));
+    nostr_event_set_content(ev, "");
+    nostr_event_set_tags(ev, nostr_tags_new(2, nostr_tag_new("relay", fx.url, NULL),
+                                            nostr_tag_new("challenge", ch, NULL)));
+    CHECK(nostr_event_sign(ev, obs.sk) == 0);
+    NostrAuthEnvelope auth = { .base.type = NOSTR_ENVELOPE_AUTH, .event = ev };
+    char *wire = nostr_envelope_serialize((NostrEnvelope *)&auth);
+    CHECK(wire);
+    GoChannel *answer = nostr_relay_write(pc.relay, wire);
+    CHECK(answer);
+    go_channel_close(answer);
+    void *e = NULL;
+    while (go_channel_try_receive(answer, &e) == 0) { if (e) free_error(e); e = NULL; }
+    go_channel_unref(answer);
+    WAIT_FOR(count_boundaries("EOSE") == 1 && obs.n_results == 1);
+    CHECK(obs.results[0].state == NOSTR_RELAY_AUTH_STATE_ACCEPTED && obs.results[0].identity == 0);
+    CHECK(atomic_load(&fx.reqs) == 2 && atomic_load(&fx.auths) == 1);
+    free(wire);
+    free(ch);
+    nostr_event_free(ev);
+    pool_case_end(&pc);
+}
+
 static void test_pool_reconnect(void) {
     PoolCase pc = pool_case(REQ_GATED, true, NOSTR_RELAY_AUTH_ON_CHALLENGE, true);
     pool_subscribe(&pc);
@@ -815,8 +883,9 @@ int main(int argc, char **argv) {
     struct { const char *name; void (*fn)(void); } cases[] = {
         { "accept", test_accept }, { "reject-hold", test_reject_hold },
         { "cancel", test_cancel }, { "legacy", test_legacy },
+        { "unanswered", test_unanswered },
         { "pool-auth", test_pool_auth }, { "pool-reject", test_pool_reject },
-        { "pool-refused", test_pool_refused }, { "pool-reconnect", test_pool_reconnect },
+        { "pool-refused", test_pool_refused }, { "pool-handrolled", test_pool_handrolled }, { "pool-reconnect", test_pool_reconnect },
         { "pool-blocked", test_pool_blocked }, { "pool-backoff", test_pool_backoff },
     };
     int ran = 0;

@@ -19,6 +19,7 @@
  * still positive. The signer thread holds a request reference only, never the
  * relay. */
 #include "nostr-relay.h"
+#include "nostr-envelope.h"
 #include "nostr-event.h"
 #include "nostr-tag.h"
 #include "nostr-kinds.h"
@@ -335,6 +336,32 @@ static bool admit_locked(NostrRelay *r, NostrRelayAuthRequest *request, uint64_t
     return true;
 }
 
+void nostr_relay_auth_observe_frame(NostrRelay *r, const char *frame) {
+    if (!r || !r->priv || !frame) return;
+    NostrEnvelope *env = nostr_envelope_parse(frame);
+    NostrEvent *ev = env && env->type == NOSTR_ENVELOPE_AUTH ? ((NostrAuthEnvelope *)env)->event : NULL;
+    nsync_mu_lock(&r->priv->mutex);
+    char *challenge = r->priv->challenge ? strdup(r->priv->challenge) : NULL;
+    uint64_t generation = r->priv->auth_generation;
+    nsync_mu_unlock(&r->priv->mutex);
+    char id[65];
+    if (ev && challenge && !auth_event_problem(ev, r->url, challenge, NULL, id)) {
+        nsync_mu_lock(&r->priv->mutex);
+        bool known = r->priv->auth_state == NOSTR_RELAY_AUTH_STATE_SENT &&
+                     strcmp(r->priv->auth_event_id, id) == 0; /* our own transmit */
+        if (!known && !r->priv->closing && generation == r->priv->auth_generation) {
+            r->priv->auth_state = NOSTR_RELAY_AUTH_STATE_SENT;
+            memcpy(r->priv->auth_event_id, id, 65);
+            free(r->priv->auth_event_challenge);
+            r->priv->auth_event_challenge = strdup(challenge);
+            r->priv->auth_identity_generation = 0;
+        }
+        nsync_mu_unlock(&r->priv->mutex);
+    }
+    free(challenge);
+    if (env) nostr_envelope_free(env);
+}
+
 bool nostr_relay_send_auth(NostrRelay *relay, const NostrEvent *signed_event,
                            uint64_t auth_generation, Error **err) {
     if (!relay || !relay->priv || !signed_event) {
@@ -473,8 +500,11 @@ static bool maybe_start(NostrRelay *r, bool explicit_start, const char **why) {
     int state = r->priv->auth_state;
     bool allowed = state == NOSTR_RELAY_AUTH_STATE_CHALLENGED;
     if (explicit_start)
+        /* SENT too: an AUTH the relay never answers must not wedge the
+         * connection; the new attempt's id supersedes it. */
         allowed = allowed || state == NOSTR_RELAY_AUTH_STATE_REJECTED ||
                   state == NOSTR_RELAY_AUTH_STATE_FAILED ||
+                  state == NOSTR_RELAY_AUTH_STATE_SENT ||
                   (state == NOSTR_RELAY_AUTH_STATE_ACCEPTED && signer &&
                    signer->identity_generation != r->priv->auth_identity_generation);
     else if (signer && signer->policy == NOSTR_RELAY_AUTH_ON_DEMAND)
@@ -482,7 +512,8 @@ static bool maybe_start(NostrRelay *r, bool explicit_start, const char **why) {
     if (r->priv->closing) *why = "relay closing";
     else if (!signer) *why = "no AUTH signer for this relay";
     else if (!r->priv->challenge) *why = "no AUTH challenge on this connection";
-    else if (r->priv->auth_request || state == NOSTR_RELAY_AUTH_STATE_SENT) *why = "AUTH already in flight";
+    else if (r->priv->auth_request || (!explicit_start && state == NOSTR_RELAY_AUTH_STATE_SENT))
+        *why = "AUTH already in flight";
     else if (!allowed) *why = state == NOSTR_RELAY_AUTH_STATE_ACCEPTED ? "already authenticated"
                                                                        : "AUTH held for this challenge";
     NostrRelayAuthRequest *request = NULL;

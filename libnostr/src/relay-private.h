@@ -248,6 +248,10 @@ bool nostr_relay_auth_on_ok(struct NostrRelay *relay, const char *event_id, bool
                             const char *reason, const NostrRelayFrameInfo *frame);
 /* A CLOSED or OK false; acts on an "auth-required:" refusal. */
 void nostr_relay_auth_on_refusal(struct NostrRelay *relay, const char *reason);
+/* nostr_relay_write() of an ["AUTH",{...}] frame written by the caller
+ * itself (hand-rolled AUTH): if it answers the current challenge, the session
+ * tracks it as SENT so its OK is correlated like nostr_relay_send_auth(). */
+void nostr_relay_auth_observe_frame(struct NostrRelay *relay, const char *frame);
 /* First step of relay teardown: cancels the attempt, drops the signer. */
 void nostr_relay_auth_teardown(struct NostrRelay *relay);
 /* relay.c: the public AUTH result callback, then listeners. No locks held. */

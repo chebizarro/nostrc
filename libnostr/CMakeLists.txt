@@ -473,8 +473,8 @@ if(LIBNOSTR_BUILD_TESTS)
   if(COMMAND apply_sanitizers)
     apply_sanitizers(test_relay_auth)
   endif()
-  foreach(_case accept reject-hold cancel legacy pool-auth pool-reject pool-refused
-      pool-reconnect pool-blocked pool-backoff)
+  foreach(_case accept reject-hold cancel legacy unanswered pool-auth pool-reject pool-refused
+      pool-handrolled pool-reconnect pool-blocked pool-backoff)
     add_test(NAME libnostr_relay_auth_${_case} COMMAND test_relay_auth ${_case})
     set_tests_properties(libnostr_relay_auth_${_case} PROPERTIES TIMEOUT 60 LABELS "libnostr;pool;auth")
     if(COMMAND nostrc_describe_test)
