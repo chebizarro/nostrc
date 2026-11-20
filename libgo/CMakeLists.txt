@@ -835,6 +835,7 @@ endif()
 # (CTest omits commands whose executable does not exist yet).
 foreach(_pair
     "GoContextCancelTest|go_context_cancel_test" "GoChannelTest|go_channel_test"
+    "GoContextBackgroundTest|go_context_background_test"
     "GoContextTimeoutTest|go_context_timeout_test" "GoTickerTest|go_ticker_test"
     "GoSelectTest|go_select_test" "GoWaitGroupTest|go_wait_group_test"
     "GoChannelCloseTest|go_channel_close_test" "GoSelectMultiTest|go_select_multi_test"

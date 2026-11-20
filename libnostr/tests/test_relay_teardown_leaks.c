@@ -399,7 +399,8 @@ static void test_destroy_frees_unread_results(void) {
  * go of its own context. */
 static void test_contexts_are_released(void) {
     GoContext *bg = go_context_background();
-    CHECK(bg && go_context_done(bg) == NULL); /* vtable-less, as before */
+    CHECK(bg && go_context_done(bg) != NULL);
+    CHECK(!go_context_is_canceled(bg));
     go_context_unref(bg);
 
     NostrRelay *relay = relay_for_port(1); /* never connected */

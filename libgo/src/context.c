@@ -102,10 +102,9 @@ void go_context_free(GoContext *ctx) {
         if (ctx->vtable->free) ctx->vtable->free(ctx);
         return;
     }
-    /* nostrc-jw23: go_context_background() sets no vtable, so neither its
-     * last go_context_unref() nor go_context_free() ever freed it (nor its
-     * done channel): every background context leaked. It is a plain base
-     * context; free it as one. */
+    /* Plain base contexts initialized without a vtable still need cleanup
+     * (nostrc-jw23). Background contexts use the vtable path above, whose
+     * destructor owns both the context and its vtable. */
     base_context_free(ctx);
 }
 
