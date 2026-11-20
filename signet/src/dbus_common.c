@@ -43,16 +43,6 @@ static void bytes_to_hex(const uint8_t *bytes, size_t len, char *out_hex) {
   out_hex[len * 2] = '\0';
 }
 
-static bool hex_to_bytes32(const char *hex, uint8_t out[32]) {
-  if (!hex || strlen(hex) != 64) return false;
-  for (int i = 0; i < 32; i++) {
-    unsigned int byte;
-    if (sscanf(hex + i * 2, "%2x", &byte) != 1) return false;
-    out[i] = (uint8_t)byte;
-  }
-  return true;
-}
-
 static void sha256_hex(const char *input,
                        char out_hex[crypto_hash_sha256_BYTES * 2 + 1]) {
   uint8_t hash_raw[crypto_hash_sha256_BYTES];

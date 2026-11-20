@@ -271,6 +271,14 @@ add_test(NAME nostr_auth COMMAND test_nostr_auth)
 add_test(NAME capability COMMAND test_capability)
   add_test(NAME relay_pool_protocol COMMAND test_relay_pool_protocol)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(NAME linux_hardening COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/check_linux_hardening.py $<TARGET_FILE:signetd>)
+    if(COMMAND nostrc_describe_test)
+      nostrc_describe_test(linux_hardening OWNER signet
+        INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/check_linux_hardening.py")
+    endif()
+  endif()
   add_test(NAME relay_pool_wire COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/test_relay_pool_wire.py
     $<TARGET_FILE:test_relay_pool_protocol> $<TARGET_FILE:signetctl>)
