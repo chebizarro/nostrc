@@ -7,6 +7,8 @@
 #include "nostr-event.h"
 #include "nostr-keys.h"
 #include "json.h"
+#include "nostr-utils.h"
+#include "nostr/nip44/nip44.h"
 
 static char *unique_sock_path(void) {
   char buf[256];
@@ -15,20 +17,17 @@ static char *unique_sock_path(void) {
 }
 
 static char *make_min_event_json(const char *content, int kind, int64_t created_at) {
-  char *esc = NULL;
-  size_t len = strlen(content);
-  esc = (char*)malloc(len*2 + 1);
+  char *esc = nostr_escape_string(content);
   if (!esc) return NULL;
-  size_t j=0; for (size_t i=0;i<len;i++){ char c=content[i]; if (c=='"' || c=='\\') esc[j++]='\\'; esc[j++]=c; }
-  esc[j]='\0';
-  char *json = (char*)malloc(j + 128);
-  if (!json) { free(esc); return NULL; }
-  snprintf(json, j+128, "{\"kind\":%d,\"created_at\":%lld,\"tags\":[],\"content\":\"%s\"}", kind, (long long)created_at, esc);
+  size_t L = strlen(esc) + 128;
+  char *json = (char*)malloc(L);
+  if (json) snprintf(json, L, "{\"kind\":%d,\"created_at\":%lld,\"tags\":[],\"content\":\"%s\"}", kind, (long long)created_at, esc);
   free(esc);
   return json;
 }
 
 static int test_builtin_roundtrip(void);
+static int test_escaped_payloads(void);
 static int test_with_authorized_client(void);
 static int test_with_unauthorized_client(void);
 
@@ -44,6 +43,14 @@ int main(void) {
     failures++;
   } else {
     printf("PASSED: built-in round-trip test\n");
+  }
+
+  printf("\n=== Test 1b: JSON-escaped payloads round-trip ===\n");
+  if (test_escaped_payloads() != 0) {
+    fprintf(stderr, "FAILED: escaped payloads test\n");
+    failures++;
+  } else {
+    printf("PASSED: escaped payloads test\n");
   }
 
   /* Test 2: With proper authorization (no test mode) */
@@ -204,6 +211,91 @@ fail:
   if (sk) free(sk);
   unsetenv("NOSTR_SIGNER_SECKEY_HEX");
   return 1;
+}
+
+/* Plaintexts whose JSON string form needs escaping (md-ebm). The client must hand
+ * back exactly these bytes, not their escaped wire form. */
+static const char *const escaped_samples[] = {
+  /* A NIP-17 seal: every gift wrap decrypts to JSON like this. */
+  "{\"id\":\"00ff\",\"pubkey\":\"ab\",\"kind\":13,\"tags\":[],\"content\":\"x\\\"y\"}",
+  /* Member names a text scanner could mistake for the response's own. */
+  "\"error\":{\"code\":1},\"result\":\"spoof\",\"id\":\"999\"",
+  "back\\slash \\\\ \\\" \\u0041 \\n literal",
+  "ctl \x01\x02\b\f\n\r\t\x1f\x7f end",
+  "unicode h\xc3\xa9llo \xe2\x80\x94 \xe4\xb8\x96\xe7\x95\x8c \xf0\x9f\x9a\x80 \xe2\x80\xa8\xe2\x80\xa9",
+};
+
+static int test_escaped_payloads(void) {
+  int rc = 1;
+  char *sk = nostr_key_generate_private();
+  char *pub = sk ? nostr_key_get_public(sk) : NULL;
+  char *sock_path = unique_sock_path();
+  void *srv = NULL, *cli = NULL;
+  unsigned char skb[32], pkb[32];
+  if (!pub || !nostr_hex2bin(skb, sk, 32) || !nostr_hex2bin(pkb, pub, 32)) {
+    fprintf(stderr, "key setup failed\n");
+    goto out;
+  }
+  setenv("NOSTR_SIGNER_SECKEY_HEX", sk, 1);
+  if (nostr_nip5f_server_start(sock_path, &srv) != 0 ||
+      nostr_nip5f_client_connect(sock_path, &cli) != 0) {
+    fprintf(stderr, "server/client setup failed\n");
+    goto out;
+  }
+
+  for (size_t i = 0; i < sizeof(escaped_samples) / sizeof(escaped_samples[0]); i++) {
+    const char *pt = escaped_samples[i];
+    char *cipher = NULL, *dec = NULL, *evjson = NULL, *signed_json = NULL;
+    uint8_t *local = NULL; size_t local_len = 0;
+    NostrEvent *ev = NULL;
+    int ok = 0;
+
+    /* Request direction: the server must encrypt the unescaped plaintext. */
+    if (nostr_nip5f_client_nip44_encrypt(cli, pub, pt, &cipher) != 0 || !cipher) {
+      fprintf(stderr, "sample %zu: nip44_encrypt failed\n", i);
+    } else if (nostr_nip44_decrypt_v2(skb, pkb, cipher, &local, &local_len) != 0 ||
+               local_len != strlen(pt) || memcmp(local, pt, local_len) != 0) {
+      fprintf(stderr, "sample %zu: server encrypted different bytes\n", i);
+    /* Response direction: the client must unescape the result string. */
+    } else if (nostr_nip5f_client_nip44_decrypt(cli, pub, cipher, &dec) != 0 || !dec) {
+      fprintf(stderr, "sample %zu: nip44_decrypt failed\n", i);
+    } else if (strcmp(dec, pt) != 0) {
+      fprintf(stderr, "sample %zu: decrypt mismatch: got [%s]\n", i, dec);
+    /* Object results: the signed event keeps the same content. */
+    } else if (!(evjson = make_min_event_json(pt, 1, (int64_t)time(NULL)))) {
+      fprintf(stderr, "sample %zu: event json failed\n", i);
+    } else if (nostr_nip5f_client_sign_event(cli, evjson, NULL, &signed_json) != 0 || !signed_json) {
+      fprintf(stderr, "sample %zu: sign_event failed\n", i);
+    } else if (!(ev = nostr_event_new()) || nostr_event_deserialize(ev, signed_json) != 0 ||
+               !nostr_event_check_signature(ev) ||
+               strcmp(nostr_event_get_content(ev), pt) != 0) {
+      fprintf(stderr, "sample %zu: signed event content/signature mismatch\n", i);
+    } else {
+      ok = 1;
+    }
+    if (ev) nostr_event_free(ev);
+    free(cipher); free(dec); free(local); free(evjson); free(signed_json);
+    if (!ok) goto out;
+  }
+
+  /* A server error must still be reported as an error, not a result. */
+  char *bad = NULL;
+  if (nostr_nip5f_client_nip44_decrypt(cli, pub, "not-a-ciphertext", &bad) == 0 || bad) {
+    fprintf(stderr, "decrypt of an invalid payload succeeded\n");
+    free(bad);
+    goto out;
+  }
+  rc = 0;
+
+out:
+  if (cli) nostr_nip5f_client_close(cli);
+  if (srv) nostr_nip5f_server_stop(srv);
+  unlink(sock_path);
+  free(sock_path);
+  free(pub);
+  free(sk);
+  unsetenv("NOSTR_SIGNER_SECKEY_HEX");
+  return rc;
 }
 
 static int test_with_authorized_client(void) {
