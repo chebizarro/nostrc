@@ -128,6 +128,12 @@ extern void *fipsd_test_wipe_user;
 /* Publication observation only, in the test-local provider.c copy. */
 extern GoChannel *fipsd_test_published;
 #endif
+/* fips_rekey_outputs_clear wipes all FIPS_REKEY_OUTPUTS_MAX items (58 KB)
+ * whatever count says. Outputs append at items[count++] and compaction wipes
+ * the tail it drops, so an empty list holds nothing to wipe: skip re-wiping
+ * it, which the dataplane did several times per packet (nostrc-u19cz.3). */
+static inline void hs_outputs_clear(fips_rekey_outputs *out)
+{ if (out->count) fips_rekey_outputs_clear(out); }
 static inline void hs_wipe(handlers *h, fipsd_wipe_event ev, void *bytes, size_t size)
 {
 #ifdef FIPSD_TEST_HOOKS

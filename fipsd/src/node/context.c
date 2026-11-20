@@ -9,6 +9,7 @@
 #include "blocking_executor.h"
 #include "select.h"
 #include <sodium.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -49,6 +50,18 @@ GoRefPtr fipsd_node_peers(const fipsd_node_context *c) { return fipsd_peer_table
 GoChannel *fipsd_node_peer_commands(const fipsd_node_context *c) { return c->peers.inbox; }
 int fipsd_node_dispatch_crypto(const fipsd_node_context *c, fipsd_crypto_job *j)
 { return fipsd_worker_set_dispatch(c->workers, j); }
+int fipsd_node_run_crypto_inline(const fipsd_node_context *c, fipsd_crypto_job *j)
+{ return fipsd_worker_set_run_inline(c->workers, j); }
+_Static_assert(offsetof(struct fipsd_node, context) == 0, "context is the node's first member");
+bool fipsd_node_dispatch_backlog(const fipsd_node_context *c)
+{
+    const fipsd_node *n = (const fipsd_node *)c;
+    GoChannel *queues[] = {fipsd_worker_set_results(c->workers), n->transport_events, c->peers.inbox,
+        n->options.command ? n->options.commands : NULL};
+    for (size_t i = 0; i < sizeof queues / sizeof *queues; ++i)
+        if (queues[i] && go_channel_get_depth(queues[i])) return true;
+    return false;
+}
 static void noop(void *arg) { (void)arg; }
 static int config_start(void *arg, fipsd_runtime *rt)
 {

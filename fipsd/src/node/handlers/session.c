@@ -151,11 +151,11 @@ static fips_session_entry *open_session(handlers *h, const fips_node_addr *dest)
     fips_peer_key key;
     if (!peer_key_for(h, dest, &key)) return NULL;
     fips_rekey_env env; hs_env(h, &env, 0);
-    fips_rekey_outputs_clear(&h->session_out);
+    hs_outputs_clear(&h->session_out);
     fips_session_entry *entry = NULL;
     if (fips_session_table_open(&h->sessions, key, h->me, h->session_params, hs_now(h), &env, &h->session_out, &entry) != FIPS_OK) {
         METRIC(h, session, table_full);
-        fips_rekey_outputs_clear(&h->session_out); return NULL;
+        hs_outputs_clear(&h->session_out); return NULL;
     }
     session_ext *x = ext_init(h, entry, dest, true);
     (void)dest_coords(h, dest, x);
@@ -234,7 +234,7 @@ static void setup_received(handlers *h, peer_rec *rec, const fips_session_datagr
         /* Overdue work first, then re-admit the setup to the surviving entry. */
         fips_instant wake = fips_rekey_next_wake(&entry->machine);
         if (wake.ops && wake.ops->compare(hs_now(h), wake) >= 0) {
-            fips_rekey_outputs_clear(&h->session_out);
+            hs_outputs_clear(&h->session_out);
             if (fips_rekey_step(&entry->machine, hs_now(h), (fips_rekey_input){.kind = FIPS_REKEY_IN_Poll}, &env, &h->session_out) == FIPS_OK)
                 (void)hs_session_execute(h, entry, NULL, 0);
             entry = fips_session_table_by_peer(&h->sessions, dg->src_addr);
@@ -243,21 +243,21 @@ static void setup_received(handlers *h, peer_rec *rec, const fips_session_datagr
     if (entry) {
         session_ext *x = hs_session_ext(h, entry);
         x->carrier = rec->addr;
-        fips_rekey_outputs_clear(&h->session_out);
+        hs_outputs_clear(&h->session_out);
         size_t held = fips_rekey_get_view(&entry->machine).candidates;
         if (fips_fsp_rekey_receive(&entry->machine, hs_now(h), rec->addr, route_of(h, rec), frame, len, &env, &h->session_out) == FIPS_OK) {
             if (x->established && fips_rekey_get_view(&entry->machine).candidates > held) METRIC(h, session, rekey_armed);
             (void)hs_session_execute(h, entry, frame, len);
         }
-        else fips_rekey_outputs_clear(&h->session_out);
+        else hs_outputs_clear(&h->session_out);
         return;
     }
     fips_rekey_input in = {.kind = FIPS_REKEY_IN_Setup, .bytes = msg.handshake_payload.data, .len = msg.handshake_payload.len,
         .carrier = rec->addr, .route = route_of(h, rec)};
-    fips_rekey_outputs_clear(&h->session_out);
+    hs_outputs_clear(&h->session_out);
     if (fips_session_table_answer(&h->sessions, dg->src_addr, h->me, h->session_params, hs_now(h), in, &env, &h->session_out, &entry) != FIPS_OK) {
         METRIC(h, session, table_full);
-        fips_rekey_outputs_clear(&h->session_out); return;
+        hs_outputs_clear(&h->session_out); return;
     }
     session_ext *x = ext_init(h, entry, &dg->src_addr, false);
     x->carrier = rec->addr;
@@ -296,10 +296,10 @@ void hs_session_datagram_received(handlers *h, peer_rec *rec, const uint8_t *bod
         return;
     }
     fips_rekey_env env; hs_env(h, &env, 0);
-    fips_rekey_outputs_clear(&h->session_out);
+    hs_outputs_clear(&h->session_out);
     if (fips_fsp_rekey_receive(&entry->machine, hs_now(h), rec->addr, route_of(h, rec), frame, flen, &env, &h->session_out) == FIPS_OK)
         (void)hs_session_execute(h, entry, frame, flen);
-    else fips_rekey_outputs_clear(&h->session_out);
+    else hs_outputs_clear(&h->session_out);
 }
 void hs_session_message(handlers *h, fips_session_entry *entry, const uint8_t *plaintext, size_t len)
 {
@@ -377,7 +377,7 @@ static void close_entry(handlers *h, fips_session_entry *entry, fips_rekey_close
     fipsd_dp_mtu_release(h->dataplane, &peer);
     h->dataplane->needs_publish = true;
     fips_rekey_carry carry = {0};
-    fips_rekey_outputs_clear(&h->session_out);
+    hs_outputs_clear(&h->session_out);
     if (fips_session_table_remove(&h->sessions, entry, why, &h->session_out, &carry)) {
         /* The entry is wiped; its released leases still need executing. */
         for (size_t i = 0; i < h->session_out.count; ++i)
@@ -386,7 +386,7 @@ static void close_entry(handlers *h, fips_session_entry *entry, fips_rekey_close
                 if (fips_rekey_index_lease_release(&h->session_out.items[i].lease, &index)) (void)fips_index_allocator_free(&h->indices, (fips_session_index){index});
             }
     }
-    fips_rekey_outputs_clear(&h->session_out);
+    hs_outputs_clear(&h->session_out);
     if (x) {
         if (x->pending_len) hs_wipe(h, FIPSD_WIPE_PENDING_CLOSED, x->pending, x->pending_len * sizeof *x->pending);
         x->used = false; x->established = false; x->pending_len = 0;
@@ -413,10 +413,10 @@ void hs_session_poll(handlers *h, fips_instant now)
         if (!entry->occupied || !entry->machine.live) continue;
         fips_instant wake = fips_rekey_next_wake(&entry->machine);
         if (!wake.ops || wake.ops->compare(now, wake) < 0) continue;
-        fips_rekey_outputs_clear(&h->session_out);
+        hs_outputs_clear(&h->session_out);
         if (fips_rekey_step(&entry->machine, now, (fips_rekey_input){.kind = FIPS_REKEY_IN_Poll}, &env, &h->session_out) == FIPS_OK)
             (void)hs_session_execute(h, entry, NULL, 0);
-        else fips_rekey_outputs_clear(&h->session_out);
+        else hs_outputs_clear(&h->session_out);
     }
     FIPSD_INSTR_END(timer_on, timer_start, POLL_SESSION_REKEYS);
 }
@@ -435,9 +435,9 @@ void hs_session_tick(handlers *h, fips_instant now)
         if (x && x->mmp_live && fips_mmp_metrics_srtt_ms(&x->mmp.roles.metrics, &srtt)) {
             facts.has_srtt = true; facts.srtt = fips_duration_from_millis((uint64_t)srtt);
         }
-        fips_rekey_outputs_clear(&h->session_out);
+        hs_outputs_clear(&h->session_out);
         if (fips_rekey_step(&entry->machine, now, facts, &env, &h->session_out) == FIPS_OK) (void)hs_session_execute(h, entry, NULL, 0);
-        else fips_rekey_outputs_clear(&h->session_out);
+        else hs_outputs_clear(&h->session_out);
         if (!entry->occupied) continue;
         FIPSD_INSTR_GATE(purge_on);
         FIPSD_INSTR_BEGIN(purge_on, purge_start);

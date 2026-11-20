@@ -48,7 +48,7 @@ bool fipsd_dp_result(handlers *h, const fipsd_crypto_job *j)
             session_ext *x = hs_session_ext(h, entry);
             if (ok && x && x->mmp_live) fips_mmp_sender_record_sent(&x->mmp.roles.sender, j->counter, p->timestamp, len);
             if (ok && !p->prompt) {
-                fips_rekey_env env; hs_env(h, &env, 0); fips_rekey_outputs_clear(&h->session_out);
+                fips_rekey_env env; hs_env(h, &env, 0); hs_outputs_clear(&h->session_out);
                 if (fips_rekey_step(m, hs_now(h), (fips_rekey_input){.kind = FIPS_REKEY_IN_DataSent}, &env, &h->session_out) == FIPS_OK)
                     (void)hs_session_execute(h, entry, NULL, 0);
             }
@@ -103,7 +103,7 @@ bool fipsd_dp_result(handlers *h, const fipsd_crypto_job *j)
         peer_rec *carrier = hs_rec_find(h, &p->carrier);
         if (!carrier) { ++h->dataplane->stats.stale; FIPSD_PERF_RETURN(perf_start, LINK_DISPATCH, true); }
         session_ext *x = hs_session_ext(h, entry); if (x) x->carrier = carrier->addr;
-        fips_rekey_env env; hs_env(h, &env, 0); fips_rekey_outputs_clear(&h->session_out);
+        fips_rekey_env env; hs_env(h, &env, 0); hs_outputs_clear(&h->session_out);
         if (fips_rekey_step(m, hs_now(h), in, &env, &h->session_out) == FIPS_OK) {
             (void)hs_session_execute(h, entry, p->output, len);
         }

@@ -268,12 +268,12 @@ static peer_rec *establish(handlers *h, const fips_peer_identity *identity, fips
     if (!facts.link_since.ops) facts.link_since = now;
     if (!facts.started.ops) facts.started = now;
     if (!facts.last_rx.ops) facts.last_rx = now;
-    fips_rekey_outputs_clear(&h->link_out);
+    hs_outputs_clear(&h->link_out);
     fips_status s = fipsd_active_peer_link_established(peer, &fips_fmp_rekey_profile, h->link_params, h->me,
         done, &ids, &facts, now, &env, &h->link_out);
     if (s != FIPS_OK) {
         FIPSD_WARN(HMOD, "link import refused");
-        fips_rekey_outputs_clear(&h->link_out);
+        hs_outputs_clear(&h->link_out);
         if (ids.lease.live) { uint32_t index; if (fips_rekey_index_lease_release(&ids.lease, &index)) (void)fips_index_allocator_free(&h->indices, (fips_session_index){index}); }
         *lease = (fips_rekey_index_lease){0};
         (void)fipsd_active_peer_destroy(peer);
@@ -285,7 +285,7 @@ static peer_rec *establish(handlers *h, const fips_peer_identity *identity, fips
         FIPSD_WARN(HMOD, "peer admission refused after handshake");
         if (rec) hs_rec_free(h, rec);
         fips_rekey_carry unused;
-        fips_rekey_outputs_clear(&h->link_out);
+        hs_outputs_clear(&h->link_out);
         fipsd_active_peer_link_close(peer, FIPS_REKEY_CLOSE_Admin, &h->link_out, &unused);
         hs_release_outputs(h, &identity->node_addr, &h->link_out);
         (void)fipsd_active_peer_destroy(peer);
@@ -352,7 +352,7 @@ static void remove_peer_carry(handlers *h, peer_rec *rec, fips_rekey_close why, 
     if (transport && transport->ops->close_connection && !kept) transport->ops->close_connection(transport, &info->addr);
     hs_session_peer_removed(h, &addr);
     fips_rekey_carry local = {0};
-    fips_rekey_outputs_clear(&h->link_out);
+    hs_outputs_clear(&h->link_out);
     fipsd_active_peer_link_close(peer, why, &h->link_out, carry ? carry : &local);
     hs_release_outputs(h, &addr, &h->link_out);
     hs_rec_free(h, rec);
@@ -520,6 +520,7 @@ bool hs_restart_frame(handlers *h, fipsd_transport *t, const fips_transport_addr
         p->job.ad = p->ad; p->job.ad_size = aad; p->job.input = p->input; p->job.input_size = len - aad;
         p->job.output = p->output + aad; p->job.capacity = FIPSD_DP_WIRE - aad;
         p->job.worker_counts = h->dataplane->stats.opened;
+        p->job.shard = fipsd_dp_shard(&rec->addr, false);
         (void)fipsd_dp_submit(h, p);
         return true;
     }

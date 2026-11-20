@@ -1,5 +1,82 @@
 # FIPS performance baseline
 
+## Dataplane threads: nostrc-u19cz.3
+
+Measured **2026-11-19** on the M4 Max below (Release `-O3 -g`, local macOS, not
+hosted/Linux qualification). The machine was shared with other benchmarking
+agents and two VMs (load average 10-17), so absolute numbers are noisy: the
+baseline (`5b3c987c8`) and each stage were measured **back to back in one
+session**, every run is reported (no best-of selection), and run 1's c-c pair
+carried a 4 s `sample` of both daemons, which depresses its numbers.
+Saturation is `perf_loopback.py --runs 2 --seconds 5 --latency-samples 300`.
+CPU per delivered datagram comes from the paced harness of
+`perf/u19cz-1-paced-harness` (`4ff8ca4f2`, its CPU-window client built from
+that commit) at a fixed 100 Mbit/s: `--paced --paced-seconds 5
+--paced-max-mbps 100`, about 10.4k datagrams/s.
+
+### Stage 1: crypto on OS threads
+
+Before, the "crypto workers" were scheduler fibers. libgo wakes a fiber on its
+last worker and steals only from deep queues, so in each daemon one OS thread
+did all packet work (sender `sample`: 2104 of 2136 samples active on one
+thread, the second scheduler worker idle).
+
+- `worker_set.c` runs each worker on its own pthread (winpthreads on Windows,
+  as libgo's blocking executor). Each has a bounded FIFO ring under a
+  mutex/condvar. A producer signals only when it makes a waiting worker's empty
+  queue non-empty (upstream `MacWorkerSender`), and an idle worker blocks: no
+  timer, no spin. Completions use the existing bounded results channel. A
+  blocking `go_channel_send` from a plain thread waits on OS primitives and
+  wakes the dispatcher's select through `gof_hook_make_runnable`, as the
+  blocking executor does. Workers drain batches of 32; the dispatcher keeps its
+  64-event batch.
+- Jobs carry a shard. A peer's link jobs stay on one worker and its session
+  jobs on the next, so a flow completes in order and a session datagram's two
+  AEADs (or an arrival's two opens) pipeline over two workers.
+- A handoff buys parallelism only while other input waits. When the results
+  channel, transport events, peer inbox and command mailbox are all empty, and
+  the shard's worker has nothing in flight, the dispatcher runs the job itself.
+  Its completion still goes through the results channel, behind that worker's.
+  Without this, CPU per datagram at 100 Mbit/s rose from ~56 to ~88 us: two
+  thread wakes per job cost several times the AEAD.
+- Wipes. `recycle` used to wipe all three 2 KB slabs after
+  `fipsd_crypto_job_destroy` had already wiped them. It now wipes once, only
+  the bytes a tenant can have written: the header in `ad`, the copied input, and
+  in `output` the header plus at most input + tag. The dataplane also called
+  `fips_rekey_outputs_clear` on already-empty output lists, which wipes all 48
+  items (58 KB) whatever `count` says, and executed steps that produced no
+  output. fipsd now skips both; outputs only append at `count`, and compaction
+  wipes the tail it drops.
+
+| Stage 1, back to back | Baseline `5b3c987c8` (two sessions) | Stage 1 |
+|---|---:|---:|
+| c-c Mbit/s, run 1 (sampled) / run 2 | 517.2 / 714.4; 474.7 / 707.1 | 323.3 / 877.0 |
+| c-c loss %, run 1 / run 2 | 0.6 / 0.1; 1.1 / 0.1 | 46.4 / 15.1 |
+| c-c one-way p50 fwd/rev us, run 2 | 98 / 99; 85 / 88 | 64 / 66 |
+| c-rust Mbit/s, run 1 / run 2 | 660.0 / 709.9; 683.7 / 718.7 | 1011.5 / 1000.5 |
+| c-rust loss %, run 1 / run 2 | 5.7 / 1.2; 2.0 / 0.5 | 1.8 / 4.4 |
+| daemon CPU % one core, c-c run 2, tx / rx | 102.5 / 112.9; 102.8 / 116.8 | 167.6 / 183.4 |
+| CPU us/datagram at 100 Mbit/s, c-c tx / rx | 56.6/55.2, 62.0/55.0, 56.5/55.7, 71.6/66.4, 56.6/56.2, 61.1/56.6 | 38.4/39.7, 39.0/40.3, 36.3/37.5 |
+| CPU us/datagram at 100 Mbit/s, c-rust C sender | 55.3, 64.6, 62.8, 66.3, 52.8, 68.8 | 36.5, 36.5, 35.3 |
+
+Rust at 100 Mbit/s in the same probes: 20.7-29.1 us (sender) and 34.6-56.0 us
+(receiver) per datagram. Thread split (`sample`, c-c run 1):
+
+- Baseline sender: one thread 2104/2136 active (`__sendmsg` 719, ChaCha20 403,
+  `__bzero` 157, Poly1305 110, `memset` 109). Receiver: one thread 1697/1864
+  active.
+- Stage 1 sender: dispatcher thread 1567/1614 active, `fipsd-crypto-0` and
+  `fipsd-crypto-1` 412 each. Receiver: dispatcher 916/1467, crypto 286 + 269.
+- At 100 Mbit/s the Stage 1 workers are nearly idle (inline runs). The
+  dispatcher threads hold `__sendmsg`, the per-iteration timer scans and clock
+  reads.
+
+The sender now offers more than one C receiver absorbs unpaced. c-c loss is
+receiver overload: run 2 sent 538k and delivered 457k. Rust-rust drops 39-86%
+the same way. It is not a send-side regression, and c-rust stays near 2-4%.
+The sender's dispatcher thread is saturated with `__sendmsg`; stage 2 moves
+that send.
+
 ## Dataplane correction: nostrc-pxwaj
 
 Measured **2026-11-16** on the same Apple M4 Max workstation as the original

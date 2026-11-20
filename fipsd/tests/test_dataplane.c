@@ -267,6 +267,30 @@ static void concurrent_recycle(void)
     assert(atomic_load(d.current.ref_count) == 1);
     go_channel_free(jobs); go_refptr_release(&d.current); free(d.packets);
 }
+static bool zero(const uint8_t *b, size_t n) { for (size_t i = 0; i < n; ++i) if (b[i]) return false; return true; }
+/* nostrc-u19cz.3: recycle wipes each byte a tenant can have written, once, and
+ * nothing past it (it used to wipe all three 2 KB slabs after destroy had
+ * already wiped them). Seal-shaped and refused-open-shaped tenants. */
+static void exact_wipe(void)
+{
+    fipsd_dataplane d = {.packet_count = 1};
+    d.packets = calloc(1, sizeof *d.packets); assert(d.packets);
+    d.current = make_go_refptr(calloc(1, sizeof(fipsd_dp_snapshot)), free); assert(d.current.ptr);
+    for (int shape = 0; shape < 2; ++shape) {
+        fipsd_dp_packet *p = fipsd_dp_packet_take(&d); assert(p && !p->body && !p->wire_size);
+        size_t body = 12, in = 300, out = body + in + FIPS_NOISE_TAG_SIZE;
+        memset(p->ad, 0xA5, FIPSD_DP_WIRE); memset(p->input, 0xA5, FIPSD_DP_WIRE); memset(p->output, 0xA5, FIPSD_DP_WIRE);
+        p->body = body;
+        if (shape == 0) p->job.input_size = in; /* seal: plaintext length */
+        else p->wire_size = body + in; /* open refused before its job was set up */
+        fipsd_crypto_job_destroy(&p->job);
+        assert(!atomic_load(&p->busy) && atomic_load(&d.in_flight) == 0);
+        assert(zero(p->ad, body) && p->ad[body] == 0xA5);
+        assert(zero(p->input, in) && p->input[in] == 0xA5);
+        assert(zero(p->output, out) && p->output[out] == 0xA5);
+    }
+    go_refptr_release(&d.current); free(d.packets);
+}
 typedef struct blocked_send { handlers *h; GoChannel *cancel, *started; int result; } blocked_send;
 static void *send_until_cancelled(void *arg)
 {
@@ -336,7 +360,7 @@ static void coalesced_snapshots(void)
 }
 int main(void)
 {
-    concurrent_recycle(); cancelled_mailbox();
+    concurrent_recycle(); cancelled_mailbox(); exact_wipe();
     forwarding(); errors(); clamps(); backpressure_and_counters(); authenticate_then_mark(); saturated_trial_retry(); delayed_transport_consumer(); coalesced_snapshots();
     puts("dataplane: forwarding/local/TTL/CE, reject limiter, clamp release, 4-worker unique reserved counters, bounded refusal: ok");
     return 0;

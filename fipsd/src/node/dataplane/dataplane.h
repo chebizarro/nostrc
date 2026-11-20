@@ -160,6 +160,8 @@ bool fipsd_dp_init(struct fipsd_node_handlers *);
 void fipsd_dp_destroy(fipsd_dataplane *);
 bool fipsd_dp_publish(struct fipsd_node_handlers *);
 fipsd_dp_packet *fipsd_dp_packet_take(fipsd_dataplane *);
+/* Worker shard of a peer's link (session=false) or session jobs. */
+uint64_t fipsd_dp_shard(const fips_node_addr *peer, bool session);
 /* Admission gate for originated sends: false while the pool lacks headroom
  * for FIPSD_DP_SEND_RESERVE inbound opens. The dispatcher leaves the command
  * mailbox unread until completions return slabs, so pressure reaches the
