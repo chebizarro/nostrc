@@ -24,7 +24,7 @@
 # Named fipsd, not fips: Fedora's `fips` is an unrelated FITS image viewer
 # that owns /usr/bin/fips. The daemon's binary is fipsd, so nothing collides.
 
-%global upstream_version 0.1.0
+%global upstream_version 0.1.1
 %bcond_with system_nsync
 %global fips_group fips
 # libnostr-json under %%{_libdir}/fipsd is private to the daemon (an RPATH
@@ -259,5 +259,10 @@ fi
 %{_libdir}/pkgconfig/libfipsnative.pc
 
 %changelog
+* Fri Nov 20 2026 Biz <chebizarro@protonmail.com> - 0.1.1-1
+- fips.yaml.example: the commented peer example uses the schema the daemon
+  accepts (addresses: [{transport, addr}]) instead of peer-level
+  address/transport, which the daemon rejected.
+
 * Mon Nov 16 2026 Biz <chebizarro@protonmail.com> - 0.1.0-1
 - Initial packaging of the nostrc C port, translated from the Debian recipe.

@@ -46,69 +46,52 @@ static int rpc_write_and_read(struct Nip5fConn *c, const char *req, char **out_r
   if (out_len) *out_len = rlen; *out_resp = resp; return 0;
 }
 
-/* Minimal extractor: returns newly-allocated copy of the JSON value at top-level key "result".
- * Handles string, object, array, numbers, true/false/null. Returns NULL on parse failure. */
-static char *extract_result_raw(const char *json) {
-  if (!json) return NULL;
-  const char *p = strstr(json, "\"result\"");
-  if (!p) return NULL;
-  p = strchr(p, ':'); if (!p) return NULL; p++;
-  while (*p==' '||*p=='\n'||*p=='\t'||*p=='\r') p++;
-  if (*p=='\0') return NULL;
-  const char *start = p;
-  if (*p=='\"') {
-    // string: find ending quote handling escapes
-    p++; int esc=0; while (*p) { if (!esc && *p=='\"') { p++; break; } esc = (!esc && *p=='\\'); if (esc) { p++; esc=0; } else p++; }
-    size_t len = (size_t)(p - start);
-    char *out = (char*)malloc(len+1); if (!out) return NULL;
-    memcpy(out, start, len); out[len]='\0'; return out;
-  } else if (*p=='{' || *p=='[') {
-    char open = *p; char close = (open=='{'?'}':']'); int depth=0; int in_str=0; int esc=0;
-    while (*p) {
-      char c = *p++;
-      if (in_str) {
-        if (!esc && c=='\\') { esc=1; continue; }
-        if (!esc && c=='\"') { in_str=0; }
-        esc=0; continue;
-      }
-      if (c=='\"') { in_str=1; continue; }
-      if (c==open) depth++;
-      else if (c==close) { depth--; if (depth==0) break; }
-    }
-    size_t len = (size_t)(p - start);
-    char *out = (char*)malloc(len+1); if (!out) return NULL;
-    memcpy(out, start, len); out[len]='\0'; return out;
-  } else {
-    // literal (null,true,false,number) until ',' or '}'
-    while (*p && *p!=',' && *p!='}') p++;
-    size_t len = (size_t)(p - start);
-    char *out = (char*)malloc(len+1); if (!out) return NULL;
-    memcpy(out, start, len); out[len]='\0'; return out;
-  }
+/* Validate a response frame with the JSON parser: its "id" must echo @expect_id
+ * and its "error" member must be present and null. Scanning the frame text for
+ * "error"/"result" is not safe: a string result containing the escaped text
+ * \"error\" would be mistaken for the member. */
+static int check_response(const char *resp, const char *expect_id) {
+  char *rid = NULL;
+  if (nostr_json_get_string(resp, "id", &rid) != 0 || !rid) return -1;
+  int same = strcmp(rid, expect_id) == 0;
+  free(rid);
+  return same && nostr_json_get_type(resp, "error") == NOSTR_JSON_NULL ? 0 : -1;
 }
 
-/* Return 0 and fill out_result_raw with newly-allocated JSON node for result when error==null.
- * Return non-zero on protocol/parse error or if server returned error. */
-static int parse_ok_and_get_result(const char *resp, const char *expect_id, char **out_result_raw) {
-  if (!resp || !expect_id || !out_result_raw) return -1;
-  *out_result_raw = NULL;
-  // Validate id
-  char *rid = NULL; (void)nostr_json_get_string(resp, "id", &rid);
-  if (!rid || strcmp(rid, expect_id)!=0) { if (rid) free(rid); return -1; }
-  free(rid);
-  // Validate error is null
-  const char *e = strstr(resp, "\"error\"");
-  if (!e) return -1;
-  const char *col = strchr(e, ':'); if (!col) return -1; col++;
-  while (*col==' '||*col=='\n'||*col=='\t'||*col=='\r') col++;
-  if (strncmp(col, "null", 4)!=0) {
-    return -2; // server error present
+/* Send one request and return its result, which must have JSON type @want:
+ * a string result is returned fully unescaped, an object/array result as
+ * compact JSON. */
+static int rpc_call(struct Nip5fConn *c, const char *method, const char *params,
+                    NostrJsonType want, char **out) {
+  *out = NULL;
+  char *req = NULL; char idbuf[32];
+  if (jsonrpc_build_req(c, method, params, &req, idbuf) != 0) return -1;
+  char *resp = NULL; size_t rlen = 0;
+  int rc = rpc_write_and_read(c, req, &resp, &rlen);
+  free(req);
+  if (rc != 0) return -1;
+  rc = check_response(resp, idbuf);
+  if (rc == 0 && want == NOSTR_JSON_STRING)
+    rc = nostr_json_get_string(resp, "result", out);
+  else if (rc == 0)
+    rc = nostr_json_get_type(resp, "result") == want ? nostr_json_get_raw(resp, "result", out) : -1;
+  free(resp);
+  if (rc == 0 && *out) return 0;
+  free(*out); *out = NULL;
+  return -1;
+}
+
+/* params {"peer_pub":<peer>,"<key>":<value>} with both values JSON-escaped. */
+static char *peer_params(const char *peer_pub_hex, const char *key, const char *value) {
+  char *peer = json_str(peer_pub_hex), *val = json_str(value);
+  char *params = NULL;
+  if (peer && val) {
+    int n = snprintf(NULL, 0, "{\"peer_pub\":%s,\"%s\":%s}", peer, key, val);
+    if (n >= 0 && (params = (char*)malloc((size_t)n + 1)) != NULL)
+      snprintf(params, (size_t)n + 1, "{\"peer_pub\":%s,\"%s\":%s}", peer, key, val);
   }
-  // Extract "result" raw JSON value
-  char *raw = extract_result_raw(resp);
-  if (!raw) return -1;
-  *out_result_raw = raw;
-  return 0;
+  free(peer); free(val);
+  return params;
 }
 
 int nostr_nip5f_client_connect(const char *socket_path, void **out_conn) {
@@ -173,106 +156,45 @@ int nostr_nip5f_client_close(void *conn) {
 }
 
 int nostr_nip5f_client_get_public_key(void *conn, char **out_pub_hex) {
-  if (!conn || !out_pub_hex) return -1;
-  struct Nip5fConn *c = (struct Nip5fConn*)conn;
-  char *req = NULL; char idbuf[32]; if (jsonrpc_build_req(c, "get_public_key", "null", &req, idbuf)!=0) return -1;
-  char *resp = NULL; size_t rlen = 0; if (rpc_write_and_read(c, req, &resp, &rlen)!=0) { free(req); return -1; }
-  free(req);
-  // Validate response id and error == null, then extract result string
-  int rc = 0; char *raw = NULL;
-  rc = parse_ok_and_get_result(resp, idbuf, &raw);
-  if (rc!=0) { free(resp); return -1; }
-  // raw may be a JSON string like "hex..."; strip quotes if present and unescape minimal
-  if (raw[0]=='\"') {
-    // remove surrounding quotes
-    size_t L = strlen(raw);
-    if (L<2 || raw[L-1] != '\"') { free(raw); free(resp); return -1; }
-    char *val = (char*)malloc(L-1);
-    if (!val) { free(raw); free(resp); return -1; }
-    memcpy(val, raw+1, L-2); val[L-2]='\0';
-    free(raw);
-    *out_pub_hex = val;
-  } else {
-    // Unexpected non-string
-    free(raw); free(resp); return -1;
-  }
-  free(resp);
-  return 0;
+  if (!conn || !out_pub_hex) return -1; *out_pub_hex = NULL;
+  return rpc_call((struct Nip5fConn*)conn, "get_public_key", "null", NOSTR_JSON_STRING, out_pub_hex);
 }
 
 int nostr_nip5f_client_sign_event(void *conn, const char *event_json, const char *pubkey_hex, char **out_signed_event_json) {
   if (!conn || !event_json || !out_signed_event_json) return -1; *out_signed_event_json=NULL;
-  struct Nip5fConn *c = (struct Nip5fConn*)conn;
-  int plen = pubkey_hex ? snprintf(NULL,0, "{\"event\":%s,\"pubkey\":\"%s\"}", event_json, pubkey_hex)
-                        : snprintf(NULL,0, "{\"event\":%s}", event_json);
-  if (plen < 0) return -1; size_t pL = (size_t)plen + 1; char *params = (char*)malloc(pL); if (!params) return -1;
-  if (pubkey_hex) snprintf(params, pL, "{\"event\":%s,\"pubkey\":\"%s\"}", event_json, pubkey_hex);
-  else snprintf(params, pL, "{\"event\":%s}", event_json);
-  char *req=NULL; char idbuf[32]; if (jsonrpc_build_req(c, "sign_event", params, &req, idbuf)!=0) { free(params); return -1; }
+  char *pk = pubkey_hex ? json_str(pubkey_hex) : NULL;
+  if (pubkey_hex && !pk) return -1;
+  int plen = pk ? snprintf(NULL,0, "{\"event\":%s,\"pubkey\":%s}", event_json, pk)
+                : snprintf(NULL,0, "{\"event\":%s}", event_json);
+  char *params = plen < 0 ? NULL : (char*)malloc((size_t)plen + 1);
+  if (!params) { free(pk); return -1; }
+  if (pk) snprintf(params, (size_t)plen + 1, "{\"event\":%s,\"pubkey\":%s}", event_json, pk);
+  else snprintf(params, (size_t)plen + 1, "{\"event\":%s}", event_json);
+  free(pk);
+  int rc = rpc_call((struct Nip5fConn*)conn, "sign_event", params, NOSTR_JSON_OBJECT, out_signed_event_json);
   free(params);
-  char *resp=NULL; size_t rlen=0; if (rpc_write_and_read(c, req, &resp, &rlen)!=0) { free(req); return -1; }
-  free(req);
-  char *raw=NULL; int prc = parse_ok_and_get_result(resp, idbuf, &raw);
-  free(resp);
-  if (prc!=0 || !raw) return -1;
-  *out_signed_event_json = raw; return 0;
+  return rc;
 }
 
 int nostr_nip5f_client_nip44_encrypt(void *conn, const char *peer_pub_hex, const char *plaintext, char **out_cipher_b64) {
   if (!conn || !peer_pub_hex || !plaintext || !out_cipher_b64) return -1; *out_cipher_b64=NULL;
-  struct Nip5fConn *c = (struct Nip5fConn*)conn;
-  char *pt_esc = json_str(plaintext); if (!pt_esc) return -1;
-  int plen = snprintf(NULL,0, "{\"peer_pub\":\"%s\",\"plaintext\":%s}", peer_pub_hex, pt_esc);
-  if (plen < 0) { free(pt_esc); return -1; }
-  size_t pL = (size_t)plen + 1; char *params = (char*)malloc(pL); if (!params) { free(pt_esc); return -1; }
-  snprintf(params, pL, "{\"peer_pub\":\"%s\",\"plaintext\":%s}", peer_pub_hex, pt_esc);
-  free(pt_esc);
-  char *req=NULL; char idbuf[32]; if (jsonrpc_build_req(c, "nip44_encrypt", params, &req, idbuf)!=0) { free(params); return -1; }
+  char *params = peer_params(peer_pub_hex, "plaintext", plaintext);
+  if (!params) return -1;
+  int rc = rpc_call((struct Nip5fConn*)conn, "nip44_encrypt", params, NOSTR_JSON_STRING, out_cipher_b64);
   free(params);
-  char *resp=NULL; size_t rlen=0; if (rpc_write_and_read(c, req, &resp, &rlen)!=0) { free(req); return -1; }
-  free(req);
-  char *raw=NULL; int prc = parse_ok_and_get_result(resp, idbuf, &raw);
-  free(resp);
-  if (prc!=0 || !raw) return -1;
-  // Expect string
-  if (raw[0]=='\"') {
-    size_t L = strlen(raw); if (L<2 || raw[L-1] != '\"') { free(raw); return -1; }
-    char *val = (char*)malloc(L-1); if (!val) { free(raw); return -1; }
-    memcpy(val, raw+1, L-2); val[L-2]='\0'; free(raw); *out_cipher_b64 = val; return 0;
-  }
-  free(raw); return -1;
+  return rc;
 }
 
 int nostr_nip5f_client_nip44_decrypt(void *conn, const char *peer_pub_hex, const char *cipher_b64, char **out_plaintext) {
   if (!conn || !peer_pub_hex || !cipher_b64 || !out_plaintext) return -1; *out_plaintext=NULL;
-  struct Nip5fConn *c = (struct Nip5fConn*)conn;
-  char *ct_esc = json_str(cipher_b64); if (!ct_esc) return -1;
-  int plen = snprintf(NULL,0, "{\"peer_pub\":\"%s\",\"cipher_b64\":%s}", peer_pub_hex, ct_esc);
-  if (plen < 0) { free(ct_esc); return -1; }
-  size_t pL = (size_t)plen + 1; char *params = (char*)malloc(pL); if (!params) { free(ct_esc); return -1; }
-  snprintf(params, pL, "{\"peer_pub\":\"%s\",\"cipher_b64\":%s}", peer_pub_hex, ct_esc);
-  free(ct_esc);
-  char *req=NULL; char idbuf[32]; if (jsonrpc_build_req(c, "nip44_decrypt", params, &req, idbuf)!=0) { free(params); return -1; }
+  char *params = peer_params(peer_pub_hex, "cipher_b64", cipher_b64);
+  if (!params) return -1;
+  int rc = rpc_call((struct Nip5fConn*)conn, "nip44_decrypt", params, NOSTR_JSON_STRING, out_plaintext);
   free(params);
-  char *resp=NULL; size_t rlen=0; if (rpc_write_and_read(c, req, &resp, &rlen)!=0) { free(req); return -1; }
-  free(req);
-  char *raw=NULL; int prc = parse_ok_and_get_result(resp, idbuf, &raw);
-  free(resp);
-  if (prc!=0 || !raw) return -1;
-  if (raw[0]=='\"') {
-    size_t L = strlen(raw); if (L<2 || raw[L-1] != '\"') { free(raw); return -1; }
-    char *val = (char*)malloc(L-1); if (!val) { free(raw); return -1; }
-    memcpy(val, raw+1, L-2); val[L-2]='\0'; free(raw); *out_plaintext = val; return 0;
-  }
-  free(raw); return -1;
+  return rc;
 }
 
 int nostr_nip5f_client_list_public_keys(void *conn, char **out_keys_json) {
   if (!conn || !out_keys_json) return -1; *out_keys_json=NULL;
-  struct Nip5fConn *c = (struct Nip5fConn*)conn;
-  char *req=NULL; char idbuf[32]; if (jsonrpc_build_req(c, "list_public_keys", "null", &req, idbuf)!=0) return -1;
-  char *resp=NULL; size_t rlen=0; if (rpc_write_and_read(c, req, &resp, &rlen)!=0) { free(req); return -1; }
-  free(req);
-  char *raw=NULL; int prc = parse_ok_and_get_result(resp, idbuf, &raw); free(resp);
-  if (!raw) return -1; *out_keys_json = raw; return 0;
+  return rpc_call((struct Nip5fConn*)conn, "list_public_keys", "null", NOSTR_JSON_ARRAY, out_keys_json);
 }

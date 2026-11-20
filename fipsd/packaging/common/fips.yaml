@@ -70,5 +70,6 @@ peers: []
 # peers:
 #   - npub: "npub1..."
 #     alias: "friend"
-#     address: "203.0.113.10:2121"
-#     transport: udp
+#     addresses:
+#       - transport: udp
+#         addr: "203.0.113.10:2121"

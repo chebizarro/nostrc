@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 project(fipsd C)
 
-declare_component_version(FIPSD 0 1 0)
+declare_component_version(FIPSD 0 1 1)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FIPSD_SODIUM REQUIRED IMPORTED_TARGET libsodium)
 

@@ -8,7 +8,7 @@
 # the submodules GitHub's tag archives leave out; a branch build rewrites
 # _version to the archive it has, as the Groundhog release does.
 
-_version=0.1.0
+_version=0.1.1
 pkgname=fipsd
 pkgver=${_version//-/_}
 pkgrel=1

@@ -312,6 +312,75 @@ static int corpus(const char *path)
     }
     free(data); return 0;
 }
+/* A shipped example must load through the daemon's own loader without a
+ * warning both as shipped and with every commented-out setting enabled, so
+ * the schema its comments suggest is the one the daemon accepts (md-uzf). */
+static size_t lead(const char *line) { return strspn(line," "); }
+/* Length of "key:" when @s starts with a lowercase key followed by ':' and a
+ * space or the end of the line, else 0. */
+static size_t key_len(const char *s)
+{
+    size_t n=strspn(s,"abcdefghijklmnopqrstuvwxyz_");
+    return n && s[n]==':' && (s[n+1]==' ' || !s[n+1]) ? n+1 : 0;
+}
+/* The line with its comment marker removed when it comments out a setting
+ * ("# key: ...", "#   key:", "#   - item"); NULL for prose and live lines. */
+static char *uncomment(const char *line)
+{
+    size_t at=lead(line);
+    if (line[at]!='#') return NULL;
+    const char *body=line+at+1; if (*body==' ') ++body;
+    const char *item=body+lead(body);
+    if (!key_len(item) && strncmp(item,"- ",2)) return NULL;
+    size_t n=strlen(body); char *out=malloc(at+n+1); if (!out) return NULL;
+    memset(out,' ',at); memcpy(out+at,body,n+1); return out;
+}
+static int load_clean(const char *path,const char *what)
+{
+    fipsd_config_log log={0};
+    fipsd_config *c=fipsd_config_load(path,&log);
+    if (!c) fprintf(stderr,"%s: %s\n",what,log.error);
+    for (size_t i=0;i<log.count;++i) if (fipsd_config_log_level(&log,i)<=FIPSD_LOG_WARN)
+        fprintf(stderr,"%s: %s\n",what,fipsd_config_log_message(&log,i));
+    bool clean=c!=NULL;
+    for (size_t i=0;i<log.count;++i) clean=clean && fipsd_config_log_level(&log,i)>FIPSD_LOG_WARN;
+    fipsd_config_free(c); fipsd_config_log_clear(&log);
+    CHECK(clean);
+    return 0;
+}
+static int example(const char *path)
+{
+    CHECK(load_clean(path,"as shipped")==0);
+    size_t len; char *text=read_all(path,&len); CHECK(text);
+    size_t count=1; for (const char *p=text;*p;++p) count+=*p=='\n';
+    char **lines=calloc(count,sizeof(*lines)); bool *on=calloc(count,sizeof(*on));
+    CHECK(lines && on);
+    size_t n=0, enabled=0;
+    for (char *save=NULL,*l=strtok_r(text,"\n",&save);l;l=strtok_r(NULL,"\n",&save),++n) {
+        char *u=uncomment(l);
+        lines[n]=u ? u : strdup(l); on[n]=u!=NULL; enabled+=on[n];
+        CHECK(lines[n]);
+    }
+    CHECK(enabled>0);
+    char enabled_path[4096];
+    snprintf(enabled_path,sizeof(enabled_path),"%s/fips.yaml",fipsd_test_tmpdir(NULL));
+    FILE *out=fopen(enabled_path,"w"); CHECK(out);
+    for (size_t i=0;i<n;++i) {
+        /* A live empty placeholder ("peers: []") yields to the enabled
+         * example of the same key at the same indentation. */
+        size_t at=lead(lines[i]), k=on[i] ? 0 : key_len(lines[i]+at);
+        const char *v=k ? lines[i]+at+k : NULL;
+        bool replaced=false;
+        if (v && (!strcmp(v," []") || !strcmp(v," {}")))
+            for (size_t j=0;j<n && !replaced;++j)
+                replaced=on[j] && lead(lines[j])==at && !strncmp(lines[j]+at,lines[i]+at,k);
+        if (!replaced) CHECK(fprintf(out,"%s\n",lines[i])>=0);
+        free(lines[i]);
+    }
+    CHECK(fclose(out)==0);
+    free(lines); free(on); free(text);
+    return load_clean(enabled_path,"commented settings enabled");
+}
 static int alias_bytes(void)
 {
     size_t scalar=128u*1024u, cap=scalar+1024;
@@ -337,6 +406,7 @@ int main(int argc,char **argv)
 {
     if (argc==4 && !strcmp(argv[1],"fixture")) return fixture(argv[2],argv[3]);
     if (argc==3 && !strcmp(argv[1],"corpus")) return corpus(argv[2]);
+    if (argc==3 && !strcmp(argv[1],"example")) return example(argv[2]);
     if (argc!=1) return 2;
     CHECK(alias_bytes()==0);
     CHECK(defaults()==0); CHECK(floors()==0); CHECK(invalid()==0); CHECK(reload()==0); CHECK(layers()==0);
