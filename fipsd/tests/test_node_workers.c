@@ -20,21 +20,23 @@ static void inline_order(void)
 {
     fipsd_runtime_config cfg; fipsd_runtime_config_default(&cfg); cfg.workers = 2; cfg.handle_signals = false;
     fipsd_runtime *rt = fipsd_runtime_create(&cfg); assert(rt && fipsd_runtime_start(rt) == 0);
-    fipsd_worker_set *s = fipsd_worker_set_create(2, 1); assert(s);
+    fipsd_worker_set *s = fipsd_worker_set_create(2, 2); assert(s);
     fipsd_crypto_job unstarted = {.operation = FIPSD_CRYPTO_SEAL};
     assert(fipsd_worker_set_run_inline(s, &unstarted) == -1); /* no live worker yet */
     assert(fipsd_worker_set_start(s, rt) == 2);
     uint8_t bytes[32] = {3}; fips_aead_key key; assert(fips_aead_key_init(&key, bytes) == FIPS_AEAD_OK);
     uint64_t busy = FIPSD_JOB_SHARD(0), idle = FIPSD_JOB_SHARD(1);
-    /* A sentinel fills the one-slot results channel: worker 0's job stays in
-     * flight (blocked delivering) until the sentinel is received. */
-    static int sentinel;
-    assert(go_channel_try_send(fipsd_worker_set_results(s), &sentinel) == 0);
+    /* Sentinels fill the results channel: worker 0's job stays in flight
+     * (blocked delivering) until they are received. */
+    static int sentinel; size_t sentinels = 0;
+    while (go_channel_try_send(fipsd_worker_set_results(s), &sentinel) == 0) ++sentinels;
+    assert(sentinels);
     assert(fipsd_worker_set_dispatch(s, seal_job(&key, 0, busy)) == 0);
     fipsd_crypto_job *refused = seal_job(&key, 1, busy);
     assert(fipsd_worker_set_run_inline(s, refused) == -1 && refused->output_size == 0);
     void *value; fipsd_crypto_job *j;
-    assert(go_channel_receive(fipsd_worker_set_results(s), &value) == 0 && value == &sentinel);
+    for (size_t i = 0; i < sentinels; ++i)
+        assert(go_channel_receive(fipsd_worker_set_results(s), &value) == 0 && value == &sentinel);
     assert(go_channel_receive(fipsd_worker_set_results(s), &value) == 0); j = value;
     assert(j->token == 0 && j->worker == 0 && j->result == FIPS_NOISE_OK); fipsd_crypto_job_destroy(j);
     fipsd_crypto_job_destroy(refused);
@@ -49,9 +51,37 @@ static void inline_order(void)
     assert(fipsd_runtime_run(rt) == FIPSD_RUN_OK);
     fips_aead_key_destroy(&key); fipsd_worker_set_destroy(s); fipsd_runtime_destroy(rt);
 }
+static int after_runs;
+static void count_after(fipsd_crypto_job *j) { (void)j; ++after_runs; }
+/* nostrc-u19cz.3 review: an inline run must own a completion slot before it
+ * runs. With the results channel full and the worker idle, it is refused
+ * untouched (not sealed, its after-step - a worker send - not run), so no
+ * frame can leave without its completion reaching the dispatcher; with a
+ * slot free it runs and its completion is queued. Nothing here blocks. */
+static void inline_reserves_completion(void)
+{
+    fipsd_worker_set *s = fipsd_worker_set_create(1, 1); assert(s);
+    assert(fipsd_worker_set_start(s, NULL) == 1);
+    GoChannel *results = fipsd_worker_set_results(s);
+    static int sentinel; size_t sentinels = 0;
+    while (go_channel_try_send(results, &sentinel) == 0) ++sentinels;
+    assert(sentinels);
+    uint8_t bytes[32] = {5}; fips_aead_key key; assert(fips_aead_key_init(&key, bytes) == FIPS_AEAD_OK);
+    fipsd_crypto_job *j = seal_job(&key, 7, FIPSD_JOB_SHARD(0)); j->after = count_after;
+    assert(fipsd_worker_set_run_inline(s, j) == -1);
+    assert(after_runs == 0 && j->output_size == 0 && j->result == FIPS_NOISE_OK);
+    void *value;
+    for (size_t i = 0; i < sentinels; ++i) assert(go_channel_receive(results, &value) == 0 && value == &sentinel);
+    assert(fipsd_worker_set_run_inline(s, j) == 0 && after_runs == 1 && j->output_size == 24);
+    assert(go_channel_try_receive(results, &value) == 0 && value == j);
+    fipsd_crypto_job_destroy(j);
+    fipsd_worker_set_stop(s);
+    assert(go_channel_receive(results, &value) != 0); /* EOF */
+    fips_aead_key_destroy(&key); fipsd_worker_set_destroy(s);
+}
 int main(void)
 {
-    inline_order();
+    inline_order(); inline_reserves_completion();
     fipsd_runtime_config cfg; fipsd_runtime_config_default(&cfg); cfg.workers = 2; cfg.handle_signals = false;
     fipsd_runtime *rt = fipsd_runtime_create(&cfg); assert(rt && fipsd_runtime_start(rt) == 0);
     fipsd_worker_set *s = fipsd_worker_set_create(2, 64); assert(s);

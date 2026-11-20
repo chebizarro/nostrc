@@ -3,6 +3,7 @@
 #endif
 #include "node/worker_set.h"
 #include "node/crypto_worker.h"
+#include <assert.h>
 #include <pthread.h>
 #include <sodium.h>
 #include <stdio.h>
@@ -195,9 +196,23 @@ int fipsd_worker_set_run_inline(fipsd_worker_set *s, fipsd_crypto_job *j)
     /* Zero in flight (acquire): each of this worker's completions is already
      * on the channel, so this one queues behind them. */
     if (!atomic_load(&w->live) || atomic_load_explicit(&w->flight, memory_order_acquire)) return -1;
+    /* Reserve the completion's slot before running: the job's after-step may
+     * send, so its completion must reach the dispatcher, and the dispatcher
+     * must never wait on its own results queue. The dispatcher is the only
+     * inline producer and the only consumer, so only accepted jobs can take
+     * slots meanwhile: count every worker's in flight before the queue depth
+     * (a job moving between the two is then counted at least once), against
+     * the requested capacity, which the channel's never undercuts. */
+    size_t claimed = 0;
+    for (size_t i = 0; i < s->count; ++i)
+        claimed += atomic_load_explicit(&s->workers[i].flight, memory_order_acquire);
+    claimed += go_channel_get_depth(s->results);
+    if (claimed >= s->capacity || go_channel_is_closed(s->results)) return -1;
     FIPSD_PERF_JOB_QUEUE(j);
     run_job(w, j);
-    if (go_channel_try_send(s->results, j) != 0) fipsd_crypto_job_destroy(j);
+    int sent = go_channel_try_send(s->results, j);
+    assert(sent == 0); /* the slot was reserved above */
+    if (sent != 0) fipsd_crypto_job_destroy(j);
     return 0;
 }
 void fipsd_worker_set_stop(fipsd_worker_set *s)

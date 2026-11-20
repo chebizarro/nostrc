@@ -127,15 +127,22 @@ typedef enum fipsd_dp_reject {
     FIPSD_DP_SEND, FIPSD_DP_UNKNOWN_INDEX, FIPSD_DP_AUTH, FIPSD_DP_REPLAY
 } fipsd_dp_reject;
 /* Worker send gate, one per peer slot (nostrc-u19cz.3). A worker sends a
- * sealed frame only while holding mu and seeing the generation captured at
- * submit. The dispatcher bumps it, under mu, before any change that would make
- * a completion send differently or not at all: an active pair switch, slot
- * release, or the link's epoch set changing. So no worker sends on a pair or
- * epoch after the dispatcher has moved on; a frame it holds then comes back
- * unsent and the completion resolves it as before (9keoz.12). */
+ * sealed frame only while holding mu, seeing the generation captured at submit
+ * and no held frame. The dispatcher bumps the generation, under mu, before any
+ * change that would make a completion send differently or not at all: an
+ * active pair switch, slot release, or an epoch leaving the link's set. So no
+ * worker sends on a pair or epoch after the dispatcher has moved on; such a
+ * frame comes back unsent and the completion resolves it as before (9keoz.12).
+ * Wire order: held counts the slot's earlier data-lane frames that the
+ * dispatcher still has to send or drop (completion-sent ones from submit,
+ * bounced ones from their bounce, until recycle). While any is held, later
+ * frames bounce too, so they reach the wire in completion order behind them
+ * rather than overtaking them (a new-epoch frame ahead of old-epoch data
+ * would start the peer's drain early, nostrc-3vl7v). */
 typedef struct fipsd_dp_gate {
     pthread_mutex_t mu;
     _Atomic uint64_t generation; /* written under mu */
+    size_t held; /* mu */
 } fipsd_dp_gate;
 typedef struct fipsd_dp_packet {
     fipsd_crypto_job job;
@@ -151,7 +158,7 @@ typedef struct fipsd_dp_packet {
     fipsd_dp_gate *gate;
     uint64_t gate_generation;
     int send_rc;
-    bool worker_sent;
+    bool worker_sent, gate_held; /* gate_held: counted in gate->held until recycle */
     /* Inbound fusion (fipsd_dp_worker_preopen): a link open's session frame,
      * pre-opened on the executing thread; plaintext in input. fsp_tag is the
      * last epoch tried. Accepted only at completion (fipsd_dp_preopened). */

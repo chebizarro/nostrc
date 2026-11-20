@@ -39,6 +39,11 @@ static void recycle(fipsd_crypto_job *j)
     size_t ad = wire_bound(p->body);
     sodium_memzero(p->ad, ad); sodium_memzero(p->input, in);
     sodium_memzero(p->output, wire_bound(ad + in + FIPS_NOISE_TAG_SIZE));
+    if (p->gate_held) {
+        /* After the completion sent or dropped it (or it was never queued):
+         * later frames of the slot may leave from the worker again. */
+        pthread_mutex_lock(&p->gate->mu); --p->gate->held; pthread_mutex_unlock(&p->gate->mu);
+    }
     atomic_store_explicit(&p->busy, false, memory_order_release);
     /* busy=false transfers the slab: do not touch its fields after that. */
     atomic_fetch_sub_explicit(&d->in_flight, 1, memory_order_release);
@@ -60,7 +65,7 @@ fipsd_dp_packet *fipsd_dp_packet_take(fipsd_dataplane *d)
         p->job = (fipsd_crypto_job){.owner = p, .recycle = recycle};
         p->session = p->ce = p->prompt = p->farewell = p->path_message = p->restart = false;
         p->body = p->wire_size = 0; /* recycle's wipe extents start empty */
-        p->via = NULL; p->gate = NULL; p->worker_sent = false;
+        p->via = NULL; p->gate = NULL; p->worker_sent = p->gate_held = false;
         p->fsp_tried = p->fsp_ok = false;
         return p;
     }
@@ -84,20 +89,31 @@ bool fipsd_dp_submit(handlers *h, fipsd_dp_packet *p)
     ++h->dataplane->stats.backpressure;
     fipsd_crypto_job_destroy(&p->job); return false;
 }
-/* On the executing thread (nostrc-u19cz.3). Sends only under the gate's lock
- * at the generation captured at submit: a dispatcher bump waits for this send
- * to finish, and every send after it defers to the completion. */
+/* On the executing thread (nostrc-u19cz.3). Sends only under the gate's lock,
+ * at the generation captured at submit and with no earlier frame of the slot
+ * held for the dispatcher: a bump waits for this send to finish, and a frame
+ * that may not leave here is held, so the frames behind it wait in turn. */
 void fipsd_dp_worker_send(fipsd_crypto_job *j)
 {
     fipsd_dp_packet *p = j->owner;
-    if (j->result != FIPS_NOISE_OK) return;
+    if (j->result != FIPS_NOISE_OK) return; /* nothing sealed: never on the wire */
     pthread_mutex_lock(&p->gate->mu);
-    if (atomic_load_explicit(&p->gate->generation, memory_order_relaxed) == p->gate_generation) {
+    if (!p->gate->held && atomic_load_explicit(&p->gate->generation, memory_order_relaxed) == p->gate_generation) {
         p->send_rc = fipsd_transport_send_lane(p->via, FIPSD_TRANSPORT_LANE_DATA, &p->endpoint,
             p->output, p->body + j->output_size);
         p->worker_sent = true;
-    }
+    } else { ++p->gate->held; p->gate_held = true; }
     pthread_mutex_unlock(&p->gate->mu);
+}
+/* A data-lane frame of the slot the completion will send (or drop): hold the
+ * worker's later sends of the slot behind it, from submit until recycle. */
+static void gate_hold(handlers *h, const peer_rec *rec, fipsd_dp_packet *p)
+{
+    fipsd_dataplane *d = h->dataplane;
+    size_t slot = (size_t)(rec - h->recs);
+    if (slot >= d->gate_count) return;
+    p->gate = &d->gates[slot]; p->gate_held = true;
+    pthread_mutex_lock(&p->gate->mu); ++p->gate->held; pthread_mutex_unlock(&p->gate->mu);
 }
 /* Worker send for a data-lane link frame, as upstream's encrypt workers do:
  * on a transport that allows it, to the active pair the completion would
@@ -221,9 +237,13 @@ bool fipsd_dp_seal(handlers *h, peer_rec *rec, fips_session_entry *entry,
         p->path_message = path_message(message, message_len);
     }
     /* Farewells (which outlive the table) and addressed path control stay
-     * on the completion's send. */
-    if (!session && rec && !p->farewell && !p->path_message)
-        worker_route(h, rec, p, p->body + len + FIPS_NOISE_TAG_SIZE);
+     * on the completion's send. A data-lane frame left to the completion
+     * holds the slot's later worker sends behind it (wire order). Path
+     * messages take the control lane, outside data-lane order. */
+    if (!session && rec && !p->path_message) {
+        if (!p->farewell) worker_route(h, rec, p, p->body + len + FIPS_NOISE_TAG_SIZE);
+        if (!p->job.after) gate_hold(h, rec, p);
+    }
     return fipsd_dp_submit(h, p);
 refuse:
     fipsd_crypto_job_destroy(&p->job); return false;
