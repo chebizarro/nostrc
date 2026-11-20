@@ -300,6 +300,7 @@ target_include_directories(nostrgo SYSTEM PUBLIC ${NSYNC_INCLUDE_DIR})
 
 # Create the test executables for channels and contexts
 add_executable(go_context_cancel_test tests/go_context_cancel_test.c)
+add_executable(go_context_background_test tests/go_context_background_test.c)
 add_executable(go_channel_test tests/go_channel_test.c)
 add_executable(go_context_timeout_test tests/go_context_timeout_test.c)
 add_executable(go_ticker_test tests/go_ticker_test.c)
@@ -321,6 +322,7 @@ add_executable(go_channel_mpmc_slot_test tests/go_channel_mpmc_slot_test.c)
 
 # Link the context library to each test
 target_link_libraries(go_context_cancel_test PRIVATE libgo ${NSYNC_LIB} pthread)
+target_link_libraries(go_context_background_test PRIVATE libgo ${NSYNC_LIB} pthread)
 target_link_libraries(go_channel_test PRIVATE libgo ${NSYNC_LIB} pthread)
 target_link_libraries(go_context_timeout_test PRIVATE libgo ${NSYNC_LIB} pthread)
 target_link_libraries(go_ticker_test PRIVATE libgo ${NSYNC_LIB} pthread)
@@ -353,6 +355,7 @@ apply_warnings(int_array_test)
 apply_warnings(string_array_test)
 apply_warnings(long_adder_stress_test)
 apply_sanitizers(go_context_cancel_test)
+apply_sanitizers(go_context_background_test)
 apply_sanitizers(go_channel_test)
 apply_sanitizers(go_context_timeout_test)
 apply_sanitizers(go_wait_group_test)
@@ -366,6 +369,7 @@ apply_sanitizers(go_select_closed_test)
 apply_sanitizers(go_select_cancel_test)
 apply_sanitizers(go_channel_mpmc_slot_test)
 apply_warnings(go_context_cancel_test)
+apply_warnings(go_context_background_test)
 apply_warnings(go_channel_test)
 apply_warnings(go_context_timeout_test)
 apply_warnings(go_wait_group_test)
@@ -392,6 +396,7 @@ endif()
 
 # Add tests to CTest
 add_test(NAME GoContextCancelTest COMMAND go_context_cancel_test)
+add_test(NAME GoContextBackgroundTest COMMAND go_context_background_test)
 add_test(NAME GoChannelTest COMMAND go_channel_test)
 add_test(NAME GoContextTimeoutTest COMMAND go_context_timeout_test)
 add_test(NAME GoTickerTest COMMAND go_ticker_test)
@@ -830,6 +835,7 @@ endif()
 # (CTest omits commands whose executable does not exist yet).
 foreach(_pair
     "GoContextCancelTest|go_context_cancel_test" "GoChannelTest|go_channel_test"
+    "GoContextBackgroundTest|go_context_background_test"
     "GoContextTimeoutTest|go_context_timeout_test" "GoTickerTest|go_ticker_test"
     "GoSelectTest|go_select_test" "GoWaitGroupTest|go_wait_group_test"
     "GoChannelCloseTest|go_channel_close_test" "GoSelectMultiTest|go_select_multi_test"
