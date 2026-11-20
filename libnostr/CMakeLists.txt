@@ -55,6 +55,7 @@ set(LIBNOSTR_SOURCES
   src/filter.c
   src/connection.c
   src/relay.c
+  src/relay_auth.c
   src/subscription.c
   src/keys.c
   src/json.c
@@ -463,6 +464,23 @@ if(LIBNOSTR_BUILD_TESTS)
   target_include_directories(test_reconnect_same_second PRIVATE include src)
   add_test(NAME libnostr_reconnect_same_second COMMAND test_reconnect_same_second)
   set_tests_properties(libnostr_reconnect_same_second PROPERTIES TIMEOUT 60)
+
+  # nostrc-7i6w: NIP-42 session and pool CLOSED recovery against a private
+  # in-process AUTH-required relay (loopback libwebsockets). No public relays.
+  add_executable(test_relay_auth tests/test_relay_auth.c)
+  target_link_libraries(test_relay_auth PRIVATE ${_nostr_internal_test_lib} Threads::Threads)
+  target_include_directories(test_relay_auth PRIVATE include src)
+  if(COMMAND apply_sanitizers)
+    apply_sanitizers(test_relay_auth)
+  endif()
+  foreach(_case accept reject-hold cancel legacy pool-auth pool-reject pool-refused
+      pool-reconnect pool-blocked pool-backoff)
+    add_test(NAME libnostr_relay_auth_${_case} COMMAND test_relay_auth ${_case})
+    set_tests_properties(libnostr_relay_auth_${_case} PROPERTIES TIMEOUT 60 LABELS "libnostr;pool;auth")
+    if(COMMAND nostrc_describe_test)
+      nostrc_describe_test(libnostr_relay_auth_${_case} OWNER libnostr TARGETS test_relay_auth)
+    endif()
+  endforeach()
 
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_executable(test_relay_handshake tests/test_relay_handshake.c)

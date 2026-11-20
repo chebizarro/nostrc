@@ -109,6 +109,9 @@ typedef struct _SubscriptionPrivate {
     bool ordered_eose_pending;
     uint64_t ordered_closed_position;
     bool ordered_closed_pending;
+    /* nostrc-7i6w: wire-order stamps of the pending EOSE/CLOSED. */
+    NostrRelayFrameInfo ordered_eose_frame;
+    NostrRelayFrameInfo ordered_closed_frame;
 
     LongAdder *stored_event_counter;
 
@@ -148,6 +151,7 @@ typedef struct {
     char *reason;     /* transferred on CLOSED */
     uint64_t generation;
     int64_t live_since; /* producer EOSE time, zero for history/retired frames */
+    NostrRelayFrameInfo frame; /* EOSE/CLOSED: the relay frame's stamp (nostrc-7i6w) */
 } NostrOrderedDelivery;
 bool nostr_subscription_enable_ordered(struct NostrSubscription *sub, GoChannel *notify);
 NostrOrderedKind nostr_subscription_next_ordered(struct NostrSubscription *sub,
@@ -156,6 +160,11 @@ int64_t nostr_subscription_ordered_live_since(struct NostrSubscription *sub,
                                              uint64_t generation, int64_t since);
 int64_t nostr_subscription_prepare_refire(struct NostrSubscription *sub);
 void nostr_subscription_dispatch_closed(struct NostrSubscription *sub, const char *reason);
+/* nostrc-7i6w: as above, carrying the relay frame's stamp (NULL: none). */
+void nostr_subscription_dispatch_closed_info(struct NostrSubscription *sub, const char *reason,
+                                             const NostrRelayFrameInfo *frame);
+void nostr_subscription_dispatch_eose_info(struct NostrSubscription *sub,
+                                           const NostrRelayFrameInfo *frame);
 bool nostr_subscription_refire_since(struct NostrSubscription *sub, int64_t since, Error **err);
 /* Insert @sub into its relay's dispatch map (idempotent, one-shot; takes the
  * relay priv mutex). Called by nostr_relay_prepare_subscription() and lazily

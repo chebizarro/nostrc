@@ -241,11 +241,83 @@ NOSTR_API void nostr_simple_pool_set_subscription_callback(NostrSimplePool *, No
  * admission/freshness window and durable replay guard; use unique=false when
  * retry deliveries need replies. Zero preserves default cursor recovery.
  * Returns false if the pool's private subscription registry is unavailable. */
-/* Opt-in CLOSED re-REQ backoff (not history completion): preserves the socket
- * and its NIP-42 authentication. EOSE resets each relay's exponential ladder.
- * Zero initial_ms preserves legacy behavior; max_ms must be >= initial_ms.
- * Private registry state only: the public pool layout is unchanged. */
+/* The exponential ladder for CLOSED reasons the pool retries on a timer
+ * (NOSTR_POOL_RECOVERY_BACKOFF: "rate-limited:", "error:"); preserves the
+ * socket and its NIP-42 authentication. EOSE resets each relay's ladder.
+ * Defaults: 1000 ms doubling to 60000 ms. Zero initial_ms restores the
+ * defaults (nostrc-7i6w: it used to mean "re-REQ on the next worker pass");
+ * max_ms must be >= initial_ms. Private registry state only. */
 NOSTR_API bool nostr_simple_pool_set_closed_backoff(NostrSimplePool *, unsigned initial_ms, unsigned max_ms);
+
+/**
+ * NostrPoolRecovery:
+ * @NOSTR_POOL_RECOVERY_NONE: nothing to recover (EOSE; or an auto-unsubscribe
+ *   pool, which never reissues)
+ * @NOSTR_POOL_RECOVERY_AWAIT_AUTH: "auth-required:" before this connection's
+ *   AUTH was accepted. Reissued exactly once, on the same connection, when
+ *   the relay answers an AUTH with OK true after this CLOSED (see
+ *   nostr_relay_set_auth_signer_full()); held while there is none, and after
+ *   a rejection.
+ * @NOSTR_POOL_RECOVERY_AUTH_REFUSED: "auth-required:" although this
+ *   connection's AUTH had been accepted when the relay sent it: the identity
+ *   is not enough. Held until a later AUTH OK on this connection (a new
+ *   challenge, or another identity) or a new connection.
+ * @NOSTR_POOL_RECOVERY_BACKOFF: "rate-limited:" or "error:". Reissued after
+ *   the relay's ladder delay (nostr_simple_pool_set_closed_backoff()).
+ * @NOSTR_POOL_RECOVERY_RECONNECT: any other reason ("blocked:",
+ *   "restricted:", "invalid:", unprefixed, ...): the relay's answer for this
+ *   connection. Reissued only on its next connection.
+ *
+ * What the pool does with a CLOSED subscription (nostrc-7i6w). The pool keeps
+ * the closed REQ's own filters and reissues them as stated above; every
+ * policy also reissues on a new connection. Nothing is re-sent on a timer
+ * except BACKOFF. A new nostr_simple_pool_subscribe() supersedes held REQs.
+ */
+typedef enum NostrPoolRecovery {
+    NOSTR_POOL_RECOVERY_NONE = 0,
+    NOSTR_POOL_RECOVERY_AWAIT_AUTH,
+    NOSTR_POOL_RECOVERY_AUTH_REFUSED,
+    NOSTR_POOL_RECOVERY_BACKOFF,
+    NOSTR_POOL_RECOVERY_RECONNECT
+} NostrPoolRecovery;
+
+NOSTR_API const char *nostr_simple_pool_recovery_name(NostrPoolRecovery recovery);
+
+/**
+ * nostr_simple_pool_classify_closed:
+ * @reason: (nullable): the CLOSED message
+ * @frame: (nullable): its stamp; tells AWAIT_AUTH from AUTH_REFUSED
+ *
+ * Returns: the recovery a reissuing pool applies to this CLOSED
+ */
+NOSTR_API NostrPoolRecovery nostr_simple_pool_classify_closed(const char *reason,
+                                                            const NostrRelayFrameInfo *frame);
+
+/**
+ * NostrPoolCallbackInfo:
+ * @frame: the EOSE/CLOSED frame's wire-order stamp (see #NostrRelayFrameInfo):
+ *   compare @frame.connection_generation with the relay's current one to
+ *   ignore a frame of a lost connection, and @frame.auth_state /
+ *   @frame.sequence with an AUTH result to order it against AUTH
+ * @recovery: what the pool does with a CLOSED (NONE for EOSE)
+ * @retry_after_ms: BACKOFF only: the delay before the reissue
+ */
+typedef struct NostrPoolCallbackInfo {
+    NostrRelayFrameInfo frame;
+    NostrPoolRecovery recovery;
+    uint64_t retry_after_ms;
+} NostrPoolCallbackInfo;
+
+/**
+ * nostr_simple_pool_get_callback_info:
+ * @pool: pool
+ * @out: (out): the boundary being reported
+ *
+ * Inside this pool's subscription callback, the stamp and recovery of the
+ * EOSE/CLOSED it reports. Thread-local; false (and @out zeroed) elsewhere.
+ * Since: 2.4
+ */
+NOSTR_API bool nostr_simple_pool_get_callback_info(NostrSimplePool *pool, NostrPoolCallbackInfo *out);
 NOSTR_API bool nostr_simple_pool_set_recovery_window(NostrSimplePool *, unsigned seconds);
 NOSTR_API void nostr_simple_pool_subscribe(NostrSimplePool *pool, const char **urls, size_t url_count, NostrFilters filters, bool unique);
 /**
@@ -262,9 +334,10 @@ NOSTR_API void nostr_simple_pool_subscribe(NostrSimplePool *pool, const char **u
  *
  * The subscription is fired on every relay that is already connected and
  * recorded as the pool's shared filter set; relays that connect later pick it
- * up from the worker loop's reconcile pass (<=200ms cadence). Note that pass is
- * skipped for auto_unsub_on_eose pools -- call
- * nostr_simple_pool_set_auto_unsub_on_eose(pool, false) if you rely on it.
+ * up from the worker loop's reconcile pass, which runs when a relay connects
+ * (nostrc-7i6w: no longer on a 200ms cadence). Note that pass is skipped for
+ * auto_unsub_on_eose pools -- call nostr_simple_pool_set_auto_unsub_on_eose(pool,
+ * false) if you rely on it.
  */
 NOSTR_API void nostr_simple_pool_subscribe_async(NostrSimplePool *pool, const char **urls, size_t url_count, NostrFilters filters, bool unique);
 /**

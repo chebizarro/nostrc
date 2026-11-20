@@ -426,6 +426,53 @@ auth_challenge_on_main_thread(gpointer user_data)
     return G_SOURCE_REMOVE;
 }
 
+/* nostrc-7i6w: a NIP-42 session result, on the main loop. */
+typedef struct {
+    RelayCallbackData *cb_data;
+    gboolean accepted;
+    gchar *message;
+    guint64 connection_generation;
+} AuthResultData;
+
+static gboolean
+auth_result_on_main_thread(gpointer user_data)
+{
+    AuthResultData *data = user_data;
+    GNostrRelay *self = g_weak_ref_get(&data->cb_data->weak_relay);
+    if (self) {
+        /* Only the current connection's answer says whether it is
+         * authenticated; a result of a lost one is reported but not applied. */
+        NostrRelay *core = self->relay;
+        if (core && nostr_relay_get_connection_generation(core) == data->connection_generation)
+            self->authenticated = data->accepted;
+        g_signal_emit(self, gnostr_relay_signals[GNOSTR_RELAY_SIGNAL_AUTH_RESULT], 0,
+                      data->accepted, data->message);
+        g_object_unref(self);
+    }
+    relay_callback_data_unref(data->cb_data);
+    g_free(data->message);
+    g_free(data);
+    return G_SOURCE_REMOVE;
+}
+
+/* Core NIP-42 result (relay reader or signer thread). */
+static void
+on_core_auth_result(NostrRelay *relay G_GNUC_UNUSED, const NostrRelayAuthResult *result,
+                    void *user_data)
+{
+    RelayCallbackData *cb_data = user_data; /* kept alive by libnostr for this call */
+    GNostrRelay *self = g_weak_ref_get(&cb_data->weak_relay);
+    if (!self)
+        return;
+    g_object_unref(self);
+    AuthResultData *data = g_new0(AuthResultData, 1);
+    data->cb_data = relay_callback_data_ref(cb_data);
+    data->accepted = result->state == NOSTR_RELAY_AUTH_STATE_ACCEPTED;
+    data->message = g_strdup(result->reason);
+    data->connection_generation = result->frame.connection_generation;
+    g_idle_add_full(G_PRIORITY_DEFAULT, auth_result_on_main_thread, data, NULL);
+}
+
 static gboolean
 ok_response_on_main_thread(gpointer user_data)
 {
@@ -579,6 +626,11 @@ gnostr_relay_constructed(GObject *object)
                                                relay_callback_data_ref(cb_data),
                                                relay_callback_data_release);
 
+            /* NIP-42 results of the core session (nostrc-7i6w) */
+            nostr_relay_set_auth_result_callback_full(self->relay, on_core_auth_result,
+                                                      relay_callback_data_ref(cb_data),
+                                                      relay_callback_data_release);
+
             /* OK publish responses, bridged onto the GObject signal surface */
             nostr_relay_set_ok_callback_full(self->relay, on_core_ok_response,
                                              relay_callback_data_ref(cb_data),
@@ -618,6 +670,7 @@ gnostr_relay_dispose(GObject *object)
             nostr_relay_set_state_callback(relay, NULL, NULL);
             nostr_relay_set_auth_callback(relay, NULL, NULL);
             nostr_relay_set_ok_callback(relay, NULL, NULL);
+            nostr_relay_set_auth_result_callback_full(relay, NULL, NULL, NULL);
             nostr_relay_request_close(relay);
             /* The runtime owns this reference until free/join is complete.
              * Connect workers hold independent core refs, never a borrowed self. */
@@ -874,6 +927,23 @@ gnostr_relay_class_init(GNostrRelayClass *klass)
                      G_SIGNAL_RUN_FIRST,
                      0, NULL, NULL, NULL,
                      G_TYPE_NONE, 1, G_TYPE_STRING);
+
+    /**
+     * GNostrRelay::auth-result:
+     * @self: the relay
+     * @accepted: whether the relay answered the AUTH with OK true
+     * @message: the relay's OK message, or why the AUTH failed locally
+     *
+     * The end of a NIP-42 AUTH on this relay's connection, correlated by the
+     * AUTH event id (nostrc-7i6w). A rejection is held: nothing is signed
+     * again until the relay sends a new challenge.
+     */
+    gnostr_relay_signals[GNOSTR_RELAY_SIGNAL_AUTH_RESULT] =
+        g_signal_new("auth-result",
+                     G_TYPE_FROM_CLASS(klass),
+                     G_SIGNAL_RUN_FIRST,
+                     0, NULL, NULL, NULL,
+                     G_TYPE_NONE, 2, G_TYPE_BOOLEAN, G_TYPE_STRING);
 
     /* Legacy signals for backward compatibility */
     nostr_relay_signals[SIGNAL_CONNECTED] =
@@ -1174,7 +1244,23 @@ gnostr_relay_publish(GNostrRelay *self, NostrEvent *event, GError **error)
     if (self->nip11_info && self->nip11_info->limitation) {
         RelayLimitationDocument *lim = self->nip11_info->limitation;
 
-        if (lim->auth_required && !self->authenticated) {
+        NostrRelayAuthStatus auth = {0};
+        (void)nostr_relay_get_auth_status(self->relay, &auth);
+        /* nostrc-7i6w: an AUTH already signing or awaiting its OK (or
+         * accepted) on this connection is not answered again per publish;
+         * the relay processes our AUTH before this EVENT. A rejected one is
+         * held until the relay sends a new challenge. */
+        gboolean in_flight = auth.state == NOSTR_RELAY_AUTH_STATE_SIGNING ||
+                             auth.state == NOSTR_RELAY_AUTH_STATE_SENT ||
+                             auth.state == NOSTR_RELAY_AUTH_STATE_ACCEPTED;
+        if (lim->auth_required && !self->authenticated &&
+            (auth.state == NOSTR_RELAY_AUTH_STATE_REJECTED ||
+             auth.state == NOSTR_RELAY_AUTH_STATE_FAILED)) {
+            g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_AUTH_REQUIRED,
+                        "relay %s refused this connection's NIP-42 AUTH", self->url);
+            return FALSE;
+        }
+        if (lim->auth_required && !self->authenticated && !in_flight) {
             /* Try auto-auth if handler is configured (nostrc-7og) */
             if (relay_has_auth_handler(self)) {
                 g_autoptr(GError) auth_err = NULL;
@@ -1387,7 +1473,7 @@ gnostr_relay_authenticate(GNostrRelay *self, GError **error)
         return FALSE;
     }
 
-    self->authenticated = TRUE;
+    /* nostrc-7i6w: sent, not accepted; auth-result reports the OK. */
     return TRUE;
 }
 

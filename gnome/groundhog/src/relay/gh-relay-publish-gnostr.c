@@ -21,8 +21,9 @@
  * thread and report a failure back on the owning context.
  *
  * GNostrRelay's own auto-auth (gnostr_relay_set_auth_handler) is never
- * installed: it signs synchronously and sends the 22242 event in an EVENT
- * envelope. The publish drives NIP-42 through send_auth/resend. */
+ * installed: it answers every challenge with one synchronous identity. The
+ * publish drives NIP-42 through send_auth/resend; send_auth hands the signed
+ * event to the core NIP-42 session (nostrc-7i6w). */
 
 typedef struct {
   gint refs;
@@ -204,6 +205,17 @@ write_frame(PublishHandle *handle, const gchar *frame, const gchar *what)
                               on_written, op);
 }
 
+/* nostrc-7i6w: AUTH goes through the core NIP-42 session, not a raw frame. */
+static void
+write_auth(PublishHandle *handle, const gchar *signed_event_json)
+{
+  WriteOp *op = g_new0(WriteOp, 1);
+  op->handle = handle_ref(handle);
+  op->what = "AUTH";
+  gh_relay_gnostr_send_auth_async(handle->relay, signed_event_json, handle->cancellable,
+                                  on_written, op);
+}
+
 static void
 on_connected(GObject *source, GAsyncResult *result, gpointer data)
 {
@@ -273,13 +285,12 @@ send_auth(gpointer data, const gchar *signed_event_json, gpointer transport_data
 {
   (void)transport_data;
   PublishHandle *handle = data;
-  g_autofree gchar *frame = gh_relay_gnostr_event_frame("AUTH", signed_event_json);
-  if (!frame || !handle->established) {
+  if (!signed_event_json || !handle->established) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
                         "AUTH frame not sendable");
     return FALSE;
   }
-  write_frame(handle, frame, "AUTH");
+  write_auth(handle, signed_event_json);
   return TRUE;
 }
 

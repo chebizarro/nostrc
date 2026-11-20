@@ -661,12 +661,14 @@ NostrOrderedKind nostr_subscription_next_ordered(NostrSubscription *sub,
          * notification backlog, not any EVENTs, under the producer mutex. */
         while (go_channel_try_receive(sub->end_of_stored_events, NULL) == 0) {}
         out->live_since = p->ordered_eose_time;
+        out->frame = p->ordered_eose_frame;
         kind = NOSTR_ORDERED_EOSE;
     } else if (p->ordered_closed_pending && p->ordered_consumed >= p->ordered_closed_position) {
         p->ordered_closed_pending = false;
         void *reason = NULL;
         (void)go_channel_try_receive(sub->closed_reason, &reason);
         out->reason = reason;
+        out->frame = p->ordered_closed_frame;
         kind = NOSTR_ORDERED_CLOSED;
     } else {
         void *event = NULL;
@@ -701,6 +703,10 @@ int64_t nostr_subscription_ordered_live_since(NostrSubscription *sub,
 }
 
 void nostr_subscription_dispatch_eose(NostrSubscription *sub) {
+    nostr_subscription_dispatch_eose_info(sub, NULL);
+}
+
+void nostr_subscription_dispatch_eose_info(NostrSubscription *sub, const NostrRelayFrameInfo *frame) {
     if (!sub)
         return;
 
@@ -718,6 +724,8 @@ void nostr_subscription_dispatch_eose(NostrSubscription *sub) {
             sub->priv->ordered_eose_position = sub->priv->ordered_enqueued;
             sub->priv->ordered_eose_time = (int64_t)time(NULL);
             sub->priv->ordered_eose_pending = true;
+            if (frame) sub->priv->ordered_eose_frame = *frame;
+            else memset(&sub->priv->ordered_eose_frame, 0, sizeof(sub->priv->ordered_eose_frame));
         }
         sub->priv->match = nostr_filters_match_ignoring_timestamp;
 
@@ -756,6 +764,11 @@ void nostr_subscription_dispatch_eose(NostrSubscription *sub) {
 }
 
 void nostr_subscription_dispatch_closed(NostrSubscription *sub, const char *reason) {
+    nostr_subscription_dispatch_closed_info(sub, reason, NULL);
+}
+
+void nostr_subscription_dispatch_closed_info(NostrSubscription *sub, const char *reason,
+                                             const NostrRelayFrameInfo *frame) {
     if (!sub || !reason)
         return;
 
@@ -765,6 +778,8 @@ void nostr_subscription_dispatch_closed(NostrSubscription *sub, const char *reas
         if (sub->priv->ordered_notify) {
             sub->priv->ordered_closed_position = sub->priv->ordered_enqueued;
             sub->priv->ordered_closed_pending = true;
+            if (frame) sub->priv->ordered_closed_frame = *frame;
+            else memset(&sub->priv->ordered_closed_frame, 0, sizeof(sub->priv->ordered_closed_frame));
             ordered_wake_locked(sub);
         }
         // Make a copy of the reason string to avoid use-after-free

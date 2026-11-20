@@ -183,6 +183,7 @@ struct NostrRelayCallbackSlot {
         NostrRelayStateCallback state;
         NostrRelayAuthCallback auth;
         NostrRelayOkResponseCallback ok;
+        NostrRelayAuthResultCallback auth_result;
     } fn;
     void *user_data;
     NostrRelayDestroyNotify destroy;
@@ -312,8 +313,113 @@ static void relay_fail_pending_ok(NostrRelay *r, const char *reason) {
     }
 }
 
+/* nostrc-7i6w: the frame an OK/AUTH callback reports (nostr_relay_get_callback_frame). */
+static _Thread_local NostrRelay *callback_frame_relay;
+static _Thread_local NostrRelayFrameInfo callback_frame;
+
+void nostr_relay_stamp_frame(NostrRelay *r, NostrRelayFrameInfo *out) {
+    memset(out, 0, sizeof(*out));
+    if (!r || !r->priv) return;
+    nsync_mu_lock(&r->priv->mutex);
+    out->sequence = ++r->priv->control_sequence;
+    out->connection_generation = r->priv->connection_generation;
+    out->auth_generation = r->priv->auth_generation;
+    out->auth_state = (NostrRelayAuthState)r->priv->auth_state;
+    nsync_mu_unlock(&r->priv->mutex);
+}
+
+bool nostr_relay_get_callback_frame(NostrRelay *relay, NostrRelayFrameInfo *out) {
+    if (!out) return false;
+    if (!relay || relay != callback_frame_relay) {
+        memset(out, 0, sizeof(*out));
+        return false;
+    }
+    *out = callback_frame;
+    return true;
+}
+
+uint64_t nostr_relay_get_connection_generation(NostrRelay *relay) {
+    if (!relay || !relay->priv) return 0;
+    nsync_mu_lock(&relay->priv->mutex);
+    uint64_t generation = relay->priv->connection_generation;
+    nsync_mu_unlock(&relay->priv->mutex);
+    return generation;
+}
+
+/* nostrc-7i6w: internal listeners (SimplePool). Each is a callback slot
+ * (same lifetime protocol as the public callbacks) in a list under @mutex. */
+struct NostrRelayListener {
+    struct NostrRelayCallbackSlot *slot;
+    NostrRelayListenFunc fn;
+    struct NostrRelayListener *next;
+};
+
+void *nostr_relay_add_listener(NostrRelay *relay, NostrRelayListenFunc fn,
+                               void *user_data, NostrRelayDestroyNotify destroy) {
+    struct NostrRelayListener *l = relay && relay->priv && fn ? calloc(1, sizeof(*l)) : NULL;
+    struct NostrRelayCallbackSlot *slot = l ? relay_callback_slot_new(user_data, destroy) : NULL;
+    if (!slot) {
+        free(l);
+        if (destroy) destroy(user_data);
+        return NULL;
+    }
+    l->slot = slot;
+    l->fn = fn;
+    nsync_mu_lock(&relay->priv->mutex);
+    l->next = relay->priv->listeners;
+    relay->priv->listeners = l;
+    nsync_mu_unlock(&relay->priv->mutex);
+    return l;
+}
+
+void nostr_relay_remove_listener(NostrRelay *relay, void *handle) {
+    if (!relay || !relay->priv || !handle) return;
+    struct NostrRelayListener *found = NULL;
+    nsync_mu_lock(&relay->priv->mutex);
+    for (struct NostrRelayListener **p = &relay->priv->listeners; *p; p = &(*p)->next) {
+        if (*p == handle) { found = *p; *p = found->next; break; }
+    }
+    nsync_mu_unlock(&relay->priv->mutex);
+    if (!found) return;
+    relay_callback_slot_unref(found->slot);
+    free(found);
+}
+
+void nostr_relay_notify_listeners(NostrRelay *relay, NostrRelayListenEvent event) {
+    if (!relay || !relay->priv) return;
+    struct NostrRelayCallbackSlot *slots[8];
+    NostrRelayListenFunc fns[8];
+    size_t n = 0;
+    nsync_mu_lock(&relay->priv->mutex);
+    for (struct NostrRelayListener *l = relay->priv->listeners; l && n < 8; l = l->next) {
+        slots[n] = relay_callback_slot_ref_locked(l->slot);
+        fns[n++] = l->fn;
+    }
+    nsync_mu_unlock(&relay->priv->mutex);
+    for (size_t i = 0; i < n; i++) {
+        fns[i](relay, event, slots[i]->user_data);
+        relay_callback_slot_unref(slots[i]);
+    }
+}
+
+void nostr_relay_emit_auth_result(NostrRelay *relay, const NostrRelayAuthResult *result) {
+    if (!relay || !relay->priv || !result) return;
+    nsync_mu_lock(&relay->priv->mutex);
+    struct NostrRelayCallbackSlot *slot = relay_callback_slot_ref_locked(relay->priv->auth_result_slot);
+    nsync_mu_unlock(&relay->priv->mutex);
+    if (slot) {
+        slot->fn.auth_result(relay, result, slot->user_data);
+        relay_callback_slot_unref(slot);
+    }
+    nostr_relay_notify_listeners(relay, NOSTR_RELAY_LISTEN_AUTH_RESULT);
+}
+
 void nostr_relay_dispatch_control_envelope(NostrRelay *r, NostrEnvelope *envelope) {
     if (!r || !r->priv || !envelope) return;
+
+    /* nostrc-7i6w: every control frame gets its wire-order stamp first. */
+    NostrRelayFrameInfo frame;
+    nostr_relay_stamp_frame(r, &frame);
 
     switch (envelope->type) {
     case NOSTR_ENVELOPE_NOTICE: {
@@ -341,7 +447,7 @@ void nostr_relay_dispatch_control_envelope(NostrRelay *r, NostrEnvelope *envelop
                         fprintf(stderr, "[EOSE_DISPATCH] relay=%s sid=%s serial=%d - dispatching to subscription\n",
                                 r->url ? r->url : "unknown", env->message, serial);
                     }
-                    nostr_subscription_dispatch_eose(subscription);
+                    nostr_subscription_dispatch_eose_info(subscription, &frame);
                     nostr_subscription_unref(subscription);
                 } else {
                     if (getenv("NOSTR_DEBUG_EOSE") || getenv("NOSTR_DEBUG_LIFECYCLE")) {
@@ -363,30 +469,48 @@ void nostr_relay_dispatch_control_envelope(NostrRelay *r, NostrEnvelope *envelop
         struct NostrRelayCallbackSlot *auth_slot = NULL;
         char *challenge_copy = ch ? strdup(ch) : NULL;
 
+        struct NostrRelayAuthRequest *stolen = NULL;
         nsync_mu_lock(&r->priv->mutex);
         if (((r->priv->challenge == NULL) != (challenge_copy == NULL)) ||
-            (r->priv->challenge && challenge_copy && strcmp(r->priv->challenge, challenge_copy)))
+            (r->priv->challenge && challenge_copy && strcmp(r->priv->challenge, challenge_copy))) {
             r->priv->auth_generation++;
+            /* nostrc-7i6w: a different challenge starts a new session; an
+             * attempt or pending OK for the old one is dropped. */
+            stolen = nostr_relay_auth_reset_locked(r, false, frame.sequence);
+        }
         if (r->priv->challenge) free(r->priv->challenge);
         r->priv->challenge = challenge_copy;
         challenge_copy = NULL;
+        frame.auth_generation = r->priv->auth_generation;
         auth_slot = relay_callback_slot_ref_locked(r->priv->auth_slot);
         nsync_mu_unlock(&r->priv->mutex);
+        nostr_relay_auth_request_cancel_stolen(stolen);
 
         /* Report and pass the envelope's own copy: r->priv->challenge may be
          * replaced (and freed) under the mutex once it is released. */
         char tmp[256]; snprintf(tmp, sizeof(tmp), "AUTH challenge=%s", ch ? ch : "");
         relay_debug_emit(r, tmp);
-        if (auth_slot && ch) auth_slot->fn.auth(r, ch, auth_slot->user_data);
+        if (auth_slot && ch) {
+            NostrRelay *prev_relay = callback_frame_relay;
+            NostrRelayFrameInfo prev_frame = callback_frame;
+            callback_frame_relay = r;
+            callback_frame = frame;
+            auth_slot->fn.auth(r, ch, auth_slot->user_data);
+            callback_frame_relay = prev_relay;
+            callback_frame = prev_frame;
+        }
         relay_callback_slot_unref(auth_slot);
+        if (ch) nostr_relay_auth_after_challenge(r);
         break; }
     case NOSTR_ENVELOPE_CLOSED: {
         NostrClosedEnvelope *env = (NostrClosedEnvelope *)envelope;
         NostrSubscription *subscription = relay_get_subscription_ref(r, nostr_sub_id_to_serial(env->subscription_id));
         if (subscription) {
-            nostr_subscription_dispatch_closed(subscription, env->reason);
+            nostr_subscription_dispatch_closed_info(subscription, env->reason, &frame);
             nostr_subscription_unref(subscription);
         }
+        /* nostrc-7i6w: an "auth-required:" refusal may trigger ON_DEMAND AUTH. */
+        nostr_relay_auth_on_refusal(r, env->reason);
         fprintf(stderr, "[RELAY_CLOSED] relay=%s subscription=%s reason=\"%s\"\n",
                 r->url ? r->url : "unknown",
                 env->subscription_id ? env->subscription_id : "",
@@ -407,6 +531,11 @@ void nostr_relay_dispatch_control_envelope(NostrRelay *r, NostrEnvelope *envelop
                     oe->reason ? oe->reason : "");
         }
 
+        /* nostrc-7i6w: correlate with this connection's AUTH before anyone
+         * else sees the OK, so its callback observes the settled session. */
+        bool auth_ok = nostr_relay_auth_on_ok(r, oe->event_id, oe->ok, oe->reason, &frame);
+        if (!oe->ok && !auth_ok) nostr_relay_auth_on_refusal(r, oe->reason);
+
         nsync_mu_lock(&r->priv->mutex);
         NostrRelayOkWaiter *waiter =
             r->priv->ok_callbacks ? go_hash_map_get_string(r->priv->ok_callbacks, oe->event_id) : NULL;
@@ -419,10 +548,16 @@ void nostr_relay_dispatch_control_envelope(NostrRelay *r, NostrEnvelope *envelop
         nsync_mu_unlock(&r->priv->mutex);
 
         if (ok_slot) {
+            NostrRelay *prev_relay = callback_frame_relay;
+            NostrRelayFrameInfo prev_frame = callback_frame;
+            callback_frame_relay = r;
+            callback_frame = frame;
             ok_slot->fn.ok(oe->event_id ? oe->event_id : "",
                            oe->ok,
                            oe->reason ? oe->reason : "",
                            ok_slot->user_data);
+            callback_frame_relay = prev_relay;
+            callback_frame = prev_frame;
             relay_callback_slot_unref(ok_slot);
         }
         char tmp[256]; snprintf(tmp, sizeof(tmp), "OK id=%s ok=%s reason=%s",
@@ -712,6 +847,8 @@ static void relay_write_queue_drain(GoChannel *queue) {
 
 static void relay_free_impl(NostrRelay *relay) {
     if (!relay) return;
+    /* nostrc-7i6w: first, so a signer completing now finds no relay. */
+    nostr_relay_auth_teardown(relay);
     nostr_relay_request_close(relay);
     // Signal background loops to stop
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] nostr_relay_free: cancel connection context\n");
@@ -776,14 +913,26 @@ static void relay_free_impl(NostrRelay *relay) {
          * here (or else when a call still in progress returns). */
         nsync_mu_lock(&relay->priv->mutex);
         struct NostrRelayCallbackSlot *slots[] = {
-            relay->priv->state_slot, relay->priv->auth_slot, relay->priv->ok_slot
+            relay->priv->state_slot, relay->priv->auth_slot, relay->priv->ok_slot,
+            relay->priv->auth_result_slot
         };
         relay->priv->state_slot = NULL;
         relay->priv->auth_slot = NULL;
         relay->priv->ok_slot = NULL;
+        relay->priv->auth_result_slot = NULL;
+        struct NostrRelayListener *listeners = relay->priv->listeners;
+        relay->priv->listeners = NULL;
         nsync_mu_unlock(&relay->priv->mutex);
         for (size_t i = 0; i < sizeof(slots) / sizeof(slots[0]); i++)
             relay_callback_slot_unref(slots[i]);
+        while (listeners) {
+            struct NostrRelayListener *next = listeners->next;
+            relay_callback_slot_unref(listeners->slot);
+            free(listeners);
+            listeners = next;
+        }
+        free(relay->priv->auth_event_challenge);
+        relay->priv->auth_event_challenge = NULL;
 
         if (relay->priv->write_queue) {
             relay_write_queue_drain(relay->priv->write_queue);
@@ -1297,6 +1446,8 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
     nsync_mu_unlock(&r->priv->mutex);
     relay_connection_unlease(r);
     relay_callback_slot_call_state(r, slot, old_state, new_state);
+    if (current && ready && old_state != new_state)
+        nostr_relay_notify_listeners(r, NOSTR_RELAY_LISTEN_CONNECTED);
     if (!ready) {
         if (current) relay_retire_connection(r, candidate);
         return false;
@@ -1780,6 +1931,19 @@ void nostr_relay_publish(NostrRelay *relay, NostrEvent *event) {
         return;
     }
 
+    /* nostrc-7i6w: a kind-22242 event is a NIP-42 answer, not an EVENT. It
+     * goes through this connection's session: verified against the current
+     * challenge, sent as ["AUTH",...] and correlated with its OK. */
+    if (event->kind == NOSTR_KIND_CLIENT_AUTHENTICATION) {
+        free(event_json);
+        Error *auth_err = NULL;
+        if (!nostr_relay_send_auth(relay, event, 0, &auth_err))
+            fprintf(stderr, "[nostr_relay_publish] AUTH for %s not sent: %s\n",
+                    relay->url ? relay->url : "(null)",
+                    auth_err && auth_err->message ? auth_err->message : "unknown");
+        if (auth_err) free_error(auth_err);
+        return;
+    }
     nostr_metric_counter_add("events_published", 1);
     /* NIP-42 authentication has its own envelope, but the same event-ID OK. */
     const char *verb = event->kind == NOSTR_KIND_CLIENT_AUTHENTICATION ? "AUTH" : "EVENT";
@@ -1924,9 +2088,14 @@ char *nostr_relay_get_auth_challenge(NostrRelay *relay, uint64_t *generation) {
     return challenge;
 }
 
+/* Legacy synchronous NIP-42 (deprecated): sign on the caller's thread, then
+ * send through the session (nostr_relay_send_auth), so the OK is correlated
+ * by event id and a challenge that changed while signing is not answered.
+ * @wait_ms > 0 additionally waits for that OK. */
 static void relay_auth_impl(NostrRelay *relay, void (*sign)(NostrEvent *, Error **),
                             uint64_t wait_ms, Error **err) {
-    char *challenge = relay ? nostr_relay_get_auth_challenge(relay, NULL) : NULL;
+    uint64_t generation = 0;
+    char *challenge = relay ? nostr_relay_get_auth_challenge(relay, &generation) : NULL;
     if (!challenge || !sign) {
         free(challenge);
         if (err) *err = new_error(1, "no current AUTH challenge or signer");
@@ -1943,12 +2112,49 @@ static void relay_auth_impl(NostrRelay *relay, void (*sign)(NostrEvent *, Error 
     free(challenge);
     Error *failure = NULL;
     sign(event, &failure);
-    if (!failure) {
-        if (wait_ms == 0)
-            nostr_relay_publish(relay, event); /* OK/false still arrives via the OK callback */
-        else if (!nostr_relay_publish_and_wait(relay, event, wait_ms, &failure) && !failure)
-            failure = new_error(1, "AUTH rejected");
+    char *event_id = failure ? NULL : nostr_event_get_id(event);
+    if (!failure && !event_id) failure = new_error(1, "AUTH event id unavailable");
+    NostrRelayOkWaiter *waiter = NULL;
+    if (!failure && wait_ms) {
+        waiter = (NostrRelayOkWaiter *)calloc(1, sizeof(*waiter));
+        if (waiter) waiter->done = go_channel_create(1);
+        if (!waiter || !waiter->done) {
+            relay_ok_waiter_free(waiter);
+            waiter = NULL;
+            failure = new_error(1, "failed to allocate OK waiter");
+        } else {
+            nsync_mu_lock(&relay->priv->mutex);
+            go_hash_map_insert_str(relay->priv->ok_callbacks, event_id, waiter);
+            nsync_mu_unlock(&relay->priv->mutex);
+        }
     }
+    if (!failure && !nostr_relay_send_auth(relay, event, generation, &failure) && !failure)
+        failure = new_error(1, "AUTH not sent");
+    if (waiter && !failure) {
+        NostrRelayOkResult *ok_res = NULL;
+        GoSelectCase cases[] = {
+            { .op = GO_SELECT_RECEIVE, .chan = waiter->done, .recv_buf = (void **)&ok_res },
+        };
+        GoSelectResult result = go_select_timeout(cases, 1, wait_ms);
+        if (result.selected_case == 0 && ok_res) {
+            if (!ok_res->ok)
+                failure = new_error(ok_res->disconnected ? ERR_WEBSOCKET_CLOSED : ERR_UNKNOWN,
+                                    "relay rejected AUTH %s: %s", event_id,
+                                    ok_res->reason ? ok_res->reason : "");
+            relay_ok_result_free(ok_res);
+        } else {
+            failure = new_error(1, "timed out waiting for relay OK for AUTH %s", event_id);
+        }
+    }
+    if (waiter) {
+        nsync_mu_lock(&relay->priv->mutex);
+        if (relay->priv->ok_callbacks &&
+            go_hash_map_get_string(relay->priv->ok_callbacks, event_id) == waiter)
+            go_hash_map_remove_str(relay->priv->ok_callbacks, event_id);
+        nsync_mu_unlock(&relay->priv->mutex);
+        relay_ok_waiter_free(waiter);
+    }
+    free(event_id);
     nostr_event_free(event);
     if (err) *err = failure;
     else if (failure) free_error(failure);
@@ -2223,6 +2429,9 @@ void nostr_relay_request_close(NostrRelay *r) {
     if (!r || !r->priv) return;
     nsync_mu_lock(&r->priv->mutex);
     r->priv->closing = true;
+    /* nostrc-7i6w: a closing relay signs and sends nothing more. */
+    struct NostrRelayAuthRequest *stolen = r->priv->auth_request;
+    r->priv->auth_request = NULL;
     if (r->priv->connection_context_cancel && r->priv->connection_context)
         r->priv->connection_context_cancel(r->priv->connection_context);
     if (r->priv->write_queue) go_channel_close(r->priv->write_queue);
@@ -2230,6 +2439,7 @@ void nostr_relay_request_close(NostrRelay *r) {
     if (r->priv->reconnect_now) go_channel_close(r->priv->reconnect_now);
     if (r->connection) nostr_connection_interrupt(r->connection);
     nsync_mu_unlock(&r->priv->mutex);
+    nostr_relay_auth_request_cancel_stolen(stolen);
 }
 
 bool nostr_relay_close(NostrRelay *r, Error **err) {
@@ -2367,22 +2577,30 @@ static void relay_set_state(NostrRelay *relay, NostrRelayConnectionState new_sta
     NostrRelayConnectionState old_state;
     struct NostrRelayCallbackSlot *slot = NULL;
 
+    struct NostrRelayAuthRequest *stolen = NULL;
     nsync_mu_lock(&relay->priv->mutex);
     old_state = relay->priv->connection_state;
     if (old_state != new_state) {
         relay->priv->connection_state = new_state;
         if (new_state == NOSTR_RELAY_STATE_CONNECTING) {
             relay->priv->auth_generation++;
+            relay->priv->connection_generation++; /* nostrc-7i6w */
             free(relay->priv->challenge);
             relay->priv->challenge = NULL;
+            stolen = nostr_relay_auth_reset_locked(relay, true, 0);
         }
         slot = relay_callback_slot_ref_locked(relay->priv->state_slot);
     }
     nsync_mu_unlock(&relay->priv->mutex);
+    nostr_relay_auth_request_cancel_stolen(stolen);
 
     /* Invoke outside the lock. The reference keeps the callback's user data
      * alive even if the callback is replaced or removed meanwhile. */
     relay_callback_slot_call_state(relay, slot, old_state, new_state);
+    if (old_state != new_state && new_state == NOSTR_RELAY_STATE_CONNECTED)
+        nostr_relay_notify_listeners(relay, NOSTR_RELAY_LISTEN_CONNECTED);
+    else if (old_state == NOSTR_RELAY_STATE_CONNECTED && old_state != new_state)
+        nostr_relay_notify_listeners(relay, NOSTR_RELAY_LISTEN_DISCONNECTED);
 }
 
 const char *nostr_relay_get_connection_state_name(NostrRelayConnectionState state) {
@@ -2617,6 +2835,20 @@ void nostr_relay_set_ok_callback_full(NostrRelay *relay,
     /* Under the mutex like the other callbacks; this setter used to write the
      * fields unlocked while the reader held the mutex. */
     relay_callback_register(relay, &relay->priv->ok_slot, slot, user_data, destroy);
+}
+
+void nostr_relay_set_auth_result_callback_full(NostrRelay *relay,
+                                               NostrRelayAuthResultCallback callback,
+                                               void *user_data,
+                                               NostrRelayDestroyNotify destroy) {
+    struct NostrRelayCallbackSlot *slot = NULL;
+    if (relay && relay->priv && callback) slot = relay_callback_slot_new(user_data, destroy);
+    if (slot) slot->fn.auth_result = callback;
+    if (!relay || !relay->priv) {
+        if (destroy) destroy(user_data);
+        return;
+    }
+    relay_callback_register(relay, &relay->priv->auth_result_slot, slot, user_data, destroy);
 }
 
 void nostr_relay_set_ok_callback(NostrRelay *relay,

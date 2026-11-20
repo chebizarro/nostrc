@@ -514,7 +514,9 @@ static NostrTag *tag_clone(const NostrTag *src) {
     if (!src) return NULL;
     size_t n = nostr_tag_size(src);
     NostrTag *dst = nostr_tag_new(nostr_tag_get_key(src), NULL);
-    for (size_t i = 0; i < n; i++) {
+    /* nostrc-7i6w: element 0 is the key nostr_tag_new() already stored;
+     * starting at 0 copied ["relay",url] as ["relay","relay",url]. */
+    for (size_t i = 1; i < n; i++) {
         const char *s = nostr_tag_get(src, i);
         if (s) nostr_tag_append(dst, s);
     }
@@ -549,6 +551,7 @@ NostrEvent *nostr_event_copy(const NostrEvent *src) {
     e->tags = tags_clone(src->tags);
     e->content = src->content ? strdup(src->content) : NULL;
     e->sig = src->sig ? strdup(src->sig) : NULL;
+    e->extra = NULL; /* never shared with @src; was left uninitialized */
     return e;
 }
 

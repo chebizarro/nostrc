@@ -58,6 +58,7 @@ enum {
     GNOSTR_RELAY_SIGNAL_ERROR,
     GNOSTR_RELAY_SIGNAL_NIP11_INFO,
     GNOSTR_RELAY_SIGNAL_AUTH_CHALLENGE,
+    GNOSTR_RELAY_SIGNAL_AUTH_RESULT, /* nostrc-7i6w; appended */
     GNOSTR_RELAY_SIGNALS_COUNT
 };
 
@@ -265,7 +266,11 @@ typedef void (*GNostrRelayAuthSignFunc)(NostrEvent *event,
  *
  * Sets the NIP-42 authentication handler. When an AUTH challenge is
  * received from the relay, the signing function will be called
- * automatically to produce a signed kind 22242 event response.
+ * automatically to produce a signed kind 22242 event response. It is sent
+ * as ["AUTH",event] through the core relay's NIP-42 session
+ * (nostr_relay_send_auth()): its OK is correlated by event id, reported by
+ * #GNostrRelay::auth-result, and only an accepted AUTH sets
+ * gnostr_relay_get_authenticated().
  *
  * If no handler is set, AUTH challenges are still emitted via the
  * "auth-challenge" signal but no automatic response is sent.
@@ -273,6 +278,12 @@ typedef void (*GNostrRelayAuthSignFunc)(NostrEvent *event,
  * @destroy runs when the handler is replaced or the relay finalized, or,
  * if gnostr_relay_authenticate() is signing with it on another thread at
  * that moment, when that call returns (on that thread).
+ *
+ * Deprecated: 3.1: @sign_func signs synchronously on the main loop and
+ * answers every challenge of every connection with the same identity. Use
+ * nostr_relay_set_auth_signer_full() on gnostr_relay_get_core_relay(): an
+ * asynchronous, cancellable signer chosen per connection, with on-demand
+ * policy and generation binding (nostrc-7i6w).
  */
 NOSTR_GOBJECT_API void gnostr_relay_set_auth_handler(GNostrRelay *self,
                                     GNostrRelayAuthSignFunc sign_func,
@@ -287,7 +298,8 @@ NOSTR_GOBJECT_API void gnostr_relay_set_auth_handler(GNostrRelay *self,
  * Manually triggers NIP-42 authentication using the stored challenge
  * and the previously configured auth handler.
  *
- * Returns: %TRUE if authentication event was sent, %FALSE on error
+ * Returns: %TRUE if the AUTH event was sent (its result follows as
+ * #GNostrRelay::auth-result), %FALSE on error
  */
 NOSTR_GOBJECT_API gboolean gnostr_relay_authenticate(GNostrRelay *self, GError **error);
 
@@ -295,7 +307,8 @@ NOSTR_GOBJECT_API gboolean gnostr_relay_authenticate(GNostrRelay *self, GError *
  * gnostr_relay_get_authenticated:
  * @self: a #GNostrRelay
  *
- * Returns: %TRUE if the relay has been successfully authenticated
+ * Returns: %TRUE once the relay answered this connection's AUTH with OK
+ *   true (nostrc-7i6w: no longer as soon as the AUTH was sent)
  */
 NOSTR_GOBJECT_API gboolean gnostr_relay_get_authenticated(GNostrRelay *self);
 

@@ -84,6 +84,53 @@ write_thread(GTask *task, gpointer source, gpointer task_data,
   }
 }
 
+static void
+send_auth_thread(GTask *task, gpointer source, gpointer task_data,
+                 GCancellable *cancellable)
+{
+  (void)cancellable;
+  const gchar *json = task_data;
+  NostrRelay *core = gnostr_relay_get_core_relay(GNOSTR_RELAY(source));
+  if (g_task_return_error_if_cancelled(task))
+    return;
+  if (!core || !nostr_relay_is_established(core)) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
+                            "relay connection not established");
+    return;
+  }
+  NostrEvent *event = nostr_event_new();
+  if (!event || nostr_event_deserialize_signed(event, json, NULL) != NOSTR_EVENT_VALIDATION_OK) {
+    nostr_event_free(event);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                            "AUTH event parse failed");
+    return;
+  }
+  Error *err = NULL;
+  gboolean sent = nostr_relay_send_auth(core, event, 0, &err);
+  nostr_event_free(event);
+  if (sent) {
+    g_task_return_boolean(task, TRUE);
+  } else {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "%s",
+                            err && err->message ? err->message : "AUTH not sent");
+  }
+  if (err)
+    free_error(err);
+}
+
+void
+gh_relay_gnostr_send_auth_async(GNostrRelay *relay, const gchar *signed_event_json,
+                                GCancellable *cancellable,
+                                GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(GNOSTR_IS_RELAY(relay) && signed_event_json != NULL);
+  GTask *task = g_task_new(relay, cancellable, callback, user_data);
+  g_task_set_source_tag(task, gh_relay_gnostr_write_async);
+  g_task_set_task_data(task, g_strdup(signed_event_json), g_free);
+  g_task_run_in_thread(task, send_auth_thread);
+  g_object_unref(task);
+}
+
 void
 gh_relay_gnostr_write_async(GNostrRelay *relay, const gchar *frame,
                             GCancellable *cancellable,
