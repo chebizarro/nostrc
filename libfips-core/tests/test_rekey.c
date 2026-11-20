@@ -1,6 +1,35 @@
 #include "rekey_test.h"
+#include "../src/proto/rekey/internal.h"
 rk_test_node a, b, c, d;
 unsigned tests;
+/* nostrc-02p6s: outputs_clear wipes items[0, count) and count instead of all
+ * 48 slots. Fill to every level with each output kind and payload bytes, then
+ * require the whole struct to read as {0}: a future writer past count, or a
+ * clear that misses a field, fails here. Delegate/Release carry ownership, so
+ * they hold a zero key copy and a dead lease (no leak accounting). */
+static void outputs_clear_wipes_whole_list(void) {
+    static fips_rekey_outputs out;
+    for (size_t n = 0; n <= FIPS_REKEY_OUTPUTS_MAX; ++n) {
+        for (size_t i = 0; i < n; ++i) {
+            fips_rekey_output_kind kind =
+                (fips_rekey_output_kind)(i % ((size_t)FIPS_REKEY_OUT_Teardown + 1));
+            fips_rekey_output *o = rk_output(&out, kind);
+            if (kind == FIPS_REKEY_OUT_Release)
+                o->lease = (fips_rekey_index_lease){.index = (uint32_t)i + 1, .live = false};
+            else if (kind != FIPS_REKEY_OUT_Delegate)
+                memset(&o->data, 0xA5, sizeof o->data);
+            o->tag = i + 1;
+            o->has_tag = true;
+            o->begin = i;
+            o->end = i + 7;
+            o->index = (uint32_t)i;
+            memset(o->epoch, 0x5A, sizeof o->epoch);
+        }
+        assert(out.count == n);
+        fips_rekey_outputs_clear(&out);
+        assert(sodium_is_zero((const unsigned char *)&out, sizeof out));
+    }
+}
 static void destroyed_machine_is_inert(void) {
     pair(&rk_test_ik);
     rk_test_poll(&a, T);
@@ -100,6 +129,7 @@ int main(void) {
     rekey_fsp_tests();
     rekey_next_tests();
     rekey_crossing_tests();
+    RUN(outputs_clear_wipes_whole_list);
     RUN(destroyed_machine_is_inert);
     RUN(pending_prompt_hard_limit);
     RUN(authenticated_worker_completion);

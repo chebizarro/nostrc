@@ -11,7 +11,9 @@ extern "C" {
 /* Every call appends at most 48 actions (4 candidates, 3 epochs, 3 expiry
  * passes); fixed storage makes an output-capacity failure impossible mid-commit.
  * Output owners execute Release and clear every Delegate key with outputs_clear.
- * Start with {0}; clear before reuse. Never copy an owning output list. */
+ * Start with {0}; clear before reuse. Never copy an owning output list.
+ * Only items[0, count) are live: hosts may act on those in place but never
+ * write past count, so outputs_clear wipes just that prefix and count. */
 #define FIPS_REKEY_OUTPUTS_MAX 48u
 typedef enum fips_rekey_msg_kind {
     FIPS_REKEY_MSG_Msg1,

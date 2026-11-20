@@ -23,14 +23,30 @@ void rk_abandoned(fips_rekey_outputs *out, fips_rekey_abandon why) {
 void rk_prompt(fips_rekey_outputs *out, fips_rekey_epoch_tag tag) {
     rk_output(out, FIPS_REKEY_OUT_Prompt)->tag = tag;
 }
+/* Only items[0, count) ever hold data: rk_output is the sole appender and
+ * writes items[count++]; in-place edits stay below count; step compaction wipes
+ * the tail it drops. So wiping that prefix and count leaves the list exactly as
+ * {0} (nostrc-02p6s; Noise audit addendum), and an empty list costs nothing
+ * instead of the 58 KB full-struct wipe per executed step. A corrupt count
+ * falls back to the full wipe. Debug builds check the slot after count is
+ * still zero (a write past count); test_rekey.c guards the whole struct. */
 void fips_rekey_outputs_clear(fips_rekey_outputs *out) {
-    for (size_t i = 0; i < out->count; ++i) {
+    assert(out->count <= FIPS_REKEY_OUTPUTS_MAX);
+    if (out->count > FIPS_REKEY_OUTPUTS_MAX) {
+        sodium_memzero(out, sizeof *out);
+        return;
+    }
+    size_t n = out->count;
+    assert(n == FIPS_REKEY_OUTPUTS_MAX ||
+           sodium_is_zero((const unsigned char *)&out->items[n], sizeof out->items[n]));
+    for (size_t i = 0; i < n; ++i) {
         if (out->items[i].kind == FIPS_REKEY_OUT_Delegate)
             fips_rekey_recv_copy_clear(&out->items[i].data.recv);
         if (out->items[i].kind == FIPS_REKEY_OUT_Release)
             fips_rekey_index_lease_drop(&out->items[i].lease);
     }
-    sodium_memzero(out, sizeof *out);
+    sodium_memzero(out->items, n * sizeof *out->items);
+    sodium_memzero(&out->count, sizeof out->count);
 }
 void fips_rekey_sealed_clear(fips_rekey_sealed *s) {
     fips_cipher_state_destroy(&s->key);

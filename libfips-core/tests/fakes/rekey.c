@@ -8,6 +8,12 @@
 #define WIRE_LEN 121u
 static _Thread_local uint64_t completions;
 uint64_t rk_test_completions(void) { return completions; }
+/* outputs_clear wipes only items[0, count) (nostrc-02p6s): every machine-driven
+ * clear here re-proves that nothing was ever written past count. */
+void rk_test_clear(rk_test_node *n) {
+    fips_rekey_outputs_clear(&n->out);
+    assert(sodium_is_zero((const unsigned char *)&n->out, sizeof n->out));
+}
 static void put32(uint8_t *p, uint32_t v) {
     for (unsigned i = 0; i < 4; ++i)
         p[i] = (uint8_t)(v >> (8 * i));
@@ -259,7 +265,7 @@ void rk_test_establish(rk_test_node *n, const rk_test_local *peer, fips_rekey_pa
         assert(fips_rekey_allocate(n->env.indices, &ids.lease));
         ids.theirs = (fips_rekey_index){100, true};
     }
-    fips_rekey_outputs_clear(&n->out);
+    rk_test_clear(n);
     assert(fips_rekey_established(&n->machine, &n->profile, params,
                                   (fips_rekey_bond){.kind = FIPS_REKEY_BOND_Key, .key = peer->key},
                                   mine, &first, &ids, facts, fips_test_instant(0), &n->env,
@@ -291,7 +297,7 @@ void rk_test_pair(rk_test_node *a, rk_test_node *b, const fips_rekey_profile *p,
 }
 void rk_test_open(rk_test_node *n, const rk_test_local *peer, fips_rekey_params params,
                   uint64_t now) {
-    fips_rekey_outputs_clear(&n->out);
+    rk_test_clear(n);
     assert(fips_rekey_opening_outbound(&n->machine, &n->profile, params, peer->key,
                                        rk_test_addr(n->local.key), fips_test_instant(now), &n->env,
                                        &n->out) == FIPS_OK);
@@ -299,7 +305,7 @@ void rk_test_open(rk_test_node *n, const rk_test_local *peer, fips_rekey_params 
 }
 void rk_test_inbound(rk_test_node *n, const rk_test_local *peer, fips_rekey_params params,
                      uint64_t now, const rk_test_packet *setup) {
-    fips_rekey_outputs_clear(&n->out);
+    rk_test_clear(n);
     fips_rekey_input in = {.kind = FIPS_REKEY_IN_Setup,
                            .bytes = setup->bytes,
                            .len = setup->len,
@@ -365,7 +371,7 @@ void rk_test_execute(rk_test_node *n, uint64_t now) {
     rk_test_conserved(n);
 }
 void rk_test_step(rk_test_node *n, uint64_t now, fips_rekey_input in) {
-    fips_rekey_outputs_clear(&n->out);
+    rk_test_clear(n);
     assert(fips_rekey_step(&n->machine, fips_test_instant(now), in, &n->env, &n->out) == FIPS_OK);
     rk_test_execute(n, now);
 }
@@ -373,7 +379,7 @@ void rk_test_poll(rk_test_node *n, uint64_t now) {
     rk_test_step(n, now, (fips_rekey_input){.kind = FIPS_REKEY_IN_Poll});
 }
 void rk_test_start(rk_test_node *n, uint64_t now) {
-    fips_rekey_outputs_clear(&n->out);
+    rk_test_clear(n);
 #ifdef FIPS_TEST_HOOKS
     fips_rekey_start_now(&n->machine, fips_test_instant(now), &n->env, &n->out);
 #else
@@ -417,7 +423,7 @@ void rk_test_recv_on(rk_test_node *n, uint64_t now, const rk_test_packet *packet
         switch (p.kind) {
         case FIPS_REKEY_MSG_Msg1:
             if (!rk_test_token(&p, &token)) {
-                fips_rekey_outputs_clear(&n->out);
+                rk_test_clear(n);
                 return;
             }
             in.kind = FIPS_REKEY_IN_PeerMsg1;
@@ -527,16 +533,16 @@ void rk_test_conserved(const rk_test_node *n) {
 }
 void rk_test_close(rk_test_node *n) {
     if (!n->machine.live) {
-        fips_rekey_outputs_clear(&n->out);
+        rk_test_clear(n);
         return;
     }
-    fips_rekey_outputs_clear(&n->out);
+    rk_test_clear(n);
     fips_rekey_carry carry = {0};
     (void)fips_rekey_close_machine(&n->machine, FIPS_REKEY_CLOSE_Shutdown, &n->out, &carry);
     rk_test_execute(n, 0);
     assert(!n->allocated);
     assert(sodium_is_zero((const uint8_t *)&n->machine, sizeof n->machine));
-    fips_rekey_outputs_clear(&n->out);
+    rk_test_clear(n);
 }
 size_t rk_test_count(const rk_test_node *n, fips_rekey_output_kind kind) {
     size_t count = 0;

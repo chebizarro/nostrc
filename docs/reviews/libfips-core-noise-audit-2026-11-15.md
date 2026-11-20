@@ -204,6 +204,65 @@ every length 0..300 and 511–65519 edges, nine AAD lengths, in-place and forged
 and three rounds of 8 concurrent threads; `fips_fuzz_aead`/`handshake`/`session` 30 s each (Homebrew
 clang 23 libFuzzer) with no findings; fipsd two-node and C↔Rust UDP/TCP interop green.
 
+## Addendum 2026-11-20 — count-bounded rekey output wipe (nostrc-02p6s)
+
+`fips_rekey_outputs` is 57,992 bytes (48 × 1,208-byte items plus `count`), and
+`fips_rekey_outputs_clear` used to `sodium_memzero` all of it whatever `count` said.
+`fips_session_execute` clears once per executed step, so every authenticated arrival
+paid two 58 KB wipes (link and session `AuthenticatedFrame`): ~10% of the receiving
+dispatcher's samples as `__bzero` under `hs_session_datagram_received`. Items carry key
+material (`Delegate`: a receive-key copy) and plaintext offsets, so the "wipe at end of
+tenure" rule (L4, `nostrc-f66sr.10`) still applies to every item that ever held data.
+
+| ID | Severity | Location | Issue | Resolution |
+| --- | --- | --- | --- | --- |
+| R-1 | Info (performance, wipe semantics preserved) | `src/proto/rekey/mod.c`, `fips_rekey_outputs_clear` | Full-struct wipe per step although only `items[0, count)` can hold data. | Clear now runs the existing Delegate/Release releases over `items[0, count)`, then `sodium_memzero`s exactly those items and `count`. A `count` above 48 (a broken invariant) asserts in debug builds and falls back to the full-struct wipe. Debug builds also assert the slot at `count` is still zero (a write one past the end). |
+
+Writer audit (why `items[count, 48)` is always zero for a list that started as `{0}`,
+the documented contract in `machine.h`):
+
+- **Appends.** `rk_output` (`mod.c`) is the only appender: it asserts capacity, takes
+  `items[count++]` and `memset`s that item before filling it. `rk_send`, `rk_reject`,
+  `rk_abandoned`, `rk_prompt` and every `rk_output` caller in `machine.c`, `cycle.c`
+  and `epoch.c` write through the returned pointer.
+- **In-place edits.** `rk_cycle_end` (`cycle.c`) writes `items[count - 1].close`;
+  `poll`'s dedup loop and the compaction in `fips_rekey_step` read below `count`.
+- **Compaction.** `fips_rekey_step` drops demoted `Prompt`s by moving survivors down
+  (`items[write] = items[i]`, `write <= i`). Every slot below the final `write` is
+  overwritten with a live item, so stale copies can exist only in `[write, count)`,
+  which it already wiped (`machine.c`, `sodium_memzero(items + write, …)`) before
+  lowering `count`.
+- **Hosts.** `fips_session_execute` and its callbacks get item pointers below
+  `count` (`send`, `effect` and `prompt` all take `const`; only its own Release
+  handling releases a lease in place). fipsd (`handlers/rekey.c`, `session.c`,
+  `probe.c`, `dataplane/dispatch.c`) only reads items below `count` and releases
+  their leases in place (`fips_rekey_index_lease_release`); none writes `count` or
+  items directly, copies a whole list, or declares a list on the stack. Its three lists
+  live in the calloc'd handler struct, which `fipsd_node_handlers_destroy` wipes
+  whole. libfips-core tests, the fuzzer and `test_peer_link.c` start lists as `{0}`
+  or inside a zeroed fake node.
+- **No other decrement.** Nothing lowers `count` except compaction (above) and clear.
+
+Wiping `items[0, count)` and `count` therefore leaves the struct byte-identical to the
+old full wipe (`{0}`), on every path. `machine.h` now states the rule hosts must keep
+(act on `items[0, count)` in place, never write past `count`). A list that was never
+zeroed is a caller contract violation, as before: the old clear already walked its
+garbage `count`.
+
+Guards: `outputs_clear_wipes_whole_list` (`test_rekey.c`) fills a list to every level
+0–48 with every output kind and non-zero payload bytes, clears, and requires the
+*whole* struct to read zero; the fake rekey node (`tests/fakes/rekey.c`,
+`rk_test_clear`) now asserts the whole struct is zero after every clear, so every
+machine-driven FMP/FSP/crossing/next case (93 cases) re-proves the invariant.
+Mutation: making `rk_cycle_end` write `items[count]` fails `FipsCoreRekeyTest` at the
+debug assertion.
+
+Cost (Apple M4 Max, Release, hot loop): `fips_rekey_outputs_clear` on a one-item list
+≈300–330 ns → ≈13 ns; in fipsd the wipe also evicted 58 KB of L1 per call. Under 100
+Mbit/s loopback, `sample` shows the `__bzero` frames under `fips_session_execute` gone.
+Remaining step-scratch wipes (`fips_rekey_step`'s ≈3.2 KB `change`, zeroed on entry and
+wiped on exit) are an order of magnitude smaller and unchanged; see the follow-up below.
+
 ## Version assessment
 
 `libfips-core` stays **0.1.0 Unreleased**: the N-1 clone semantics change is a
@@ -218,4 +277,5 @@ is affected. Recorded in `VERSION_MANIFEST.md`.
 - **F-3 (libfips-core, optional, low)** — add a `FIPS_TEST_HOOKS`-only poison so a destroyed `fips_symmetric_state` is detected as misuse instead of acting as upstream's pass-through empty cipher (N-7).
 - **F-4 (libfips-core, info)** — replace the literal offsets 33/49/82/24 in `handshake.c` with named expressions of `FIPS_NOISE_PUBKEY_SIZE`/`TAG_SIZE`/`EPOCH_ENCRYPTED_SIZE` (N-8).
 - **F-5 (Tier A4/B design note)** — worker clones now carry no issuable counter: the dispatcher reserves with `fips_noise_session_take_send_counter` and workers seal with `fips_cipher_state_seal_with_counter`; record this in the rekey/host design when porting `core/src/proto/rekey`.
+- **F-7 (libfips-core, low, nostrc-02p6s)** — `fips_rekey_step` zero-initialises and wipes its ≈3.2 KB `change` scratch (input, read, candidate, wire, proof) on every step, plus `completed_clear`/`hs_clear` on fields an `AuthenticatedFrame` judge never touches. Bounding those wipes by `change.kind` needs the same per-kind writer audit as R-1.
 - **F-6 (CI, optional)** — run `fips_core_ct_probe` on a quiet dedicated runner as a non-gating nightly, since wall-clock t-tests are unsuitable for shared PR runners.
