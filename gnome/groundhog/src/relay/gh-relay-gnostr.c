@@ -88,8 +88,9 @@ on_ok(GNostrRelay *relay, const gchar *event_id, gboolean accepted,
 }
 
 /* GNostrRelay's own auto-auth (gnostr_relay_set_auth_handler) is never
- * installed: it signs synchronously and sends the 22242 event in an EVENT
- * envelope. The scope decides whether to authenticate; see send_auth. */
+ * installed: it answers every challenge with one synchronous identity. The
+ * scope decides whether and as whom to authenticate; send_auth hands the
+ * signed event to the core NIP-42 session (nostrc-7i6w). */
 static void
 on_auth(GNostrRelay *relay, const gchar *challenge, gpointer data)
 {
@@ -344,15 +345,14 @@ send_auth(gpointer data, const gchar *signed_event_json, gpointer user_data,
 {
   (void)user_data;
   GhGnostrHandle *handle = data;
-  g_autofree gchar *frame = gh_relay_gnostr_event_frame("AUTH", signed_event_json);
-  if (handle->closed || !frame) {
+  if (handle->closed || !signed_event_json) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
                         "AUTH frame not sendable");
     return FALSE;
   }
   g_atomic_int_inc(&handle->refs); /* held by the write */
-  gh_relay_gnostr_write_async(handle->relay, frame, handle->cancellable,
-                              on_auth_written, handle);
+  gh_relay_gnostr_send_auth_async(handle->relay, signed_event_json, handle->cancellable,
+                                  on_auth_written, handle);
   return TRUE;
 }
 

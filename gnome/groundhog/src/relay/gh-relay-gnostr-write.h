@@ -19,5 +19,15 @@ void gh_relay_gnostr_write_async(GNostrRelay *relay, const gchar *frame,
                                  GAsyncReadyCallback callback, gpointer user_data);
 gboolean gh_relay_gnostr_write_finish(GAsyncResult *result, GError **error);
 
+/* nostrc-7i6w: sends a signed kind-22242 event as ["AUTH",...] through the
+ * core relay's NIP-42 session (nostr_relay_send_auth()): verified against
+ * the connection's current challenge, written without waiting for the socket
+ * and correlated with its OK by event id. Completes like a write; finish with
+ * gh_relay_gnostr_write_finish(). Fails (G_IO_ERROR_FAILED) when the session
+ * refuses it, e.g. the challenge changed since it was signed. */
+void gh_relay_gnostr_send_auth_async(GNostrRelay *relay, const gchar *signed_event_json,
+                                     GCancellable *cancellable,
+                                     GAsyncReadyCallback callback, gpointer user_data);
+
 G_END_DECLS
 #endif

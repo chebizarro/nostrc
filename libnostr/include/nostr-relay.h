@@ -172,10 +172,15 @@ NOSTR_API bool        nostr_relay_publish_and_wait(NostrRelay *relay, NostrEvent
  * @relay: (nullable): relay
  * @sign: (nullable): sign callback
  *
- * Signs the current challenge and publishes the NIP-42 AUTH event without
- * waiting for the relay's OK; the OK/false still reaches the relay's OK
- * callback. Safe to call from a GLib main context. A missing challenge or a
- * signing failure sets @err.
+ * Signs the current challenge synchronously and sends ["AUTH",event] without
+ * waiting for the relay's OK; the OK reaches the OK callback and, correlated
+ * by event id, the NIP-42 session (nostr_relay_get_auth_status(), the AUTH
+ * result callback, pool recovery). A missing challenge or a signing failure
+ * sets @err.
+ *
+ * Deprecated: 2.4: @sign has no user data or cancellation and runs on the
+ * caller's thread. Use nostr_relay_set_auth_signer_full() or
+ * nostr_relay_send_auth().
  *
  * @err: (out) (optional) (nullable): error out param
  */
@@ -191,6 +196,9 @@ NOSTR_API void        nostr_relay_auth(NostrRelay *relay, void (*sign)(NostrEven
  * Like nostr_relay_auth() but blocks until the relay answers the AUTH event
  * with OK. Call off the relay reader thread and off any UI main loop. A
  * missing challenge, signing failure, negative OK or deadline sets @err.
+ *
+ * Deprecated: 2.4: see nostr_relay_auth(); observe the result with
+ * nostr_relay_set_auth_result_callback_full() instead of blocking.
  *
  * Returns: true only when the relay sends OK with ok=true.
  */
@@ -576,6 +584,311 @@ NOSTR_API void nostr_relay_set_ok_callback_full(NostrRelay *relay,
                                       NostrRelayOkResponseCallback callback,
                                       void *user_data,
                                       NostrRelayDestroyNotify destroy);
+
+/* ========================================================================
+ * NIP-42 authentication session (nostrc-7i6w)
+ *
+ * Each connection has at most one NIP-42 session. Its state, the challenge
+ * it answers and the AUTH event in flight belong to that connection: a
+ * reconnect (a new connection generation) or a different challenge (a new
+ * auth generation) cancels a signature in progress and forgets an AUTH whose
+ * OK has not arrived. Nothing authenticates unless the caller registers a
+ * signer for this relay (nostr_relay_set_auth_signer_full()): there is no
+ * global or automatic identity, so the caller chooses per connection which
+ * identity, if any, a relay learns.
+ *
+ * An AUTH is sent as ["AUTH",<signed kind-22242 event>] and its result is
+ * the relay's OK for that event id only. OK true -> ACCEPTED; OK false ->
+ * REJECTED, which is held: nothing is signed again on this connection until
+ * the relay sends a new challenge or the caller calls nostr_relay_auth_start().
+ * A local failure (signer refused, event failed verification, write could
+ * not be queued) is FAILED and held the same way.
+ * ======================================================================== */
+
+/**
+ * NostrRelayAuthState:
+ * @NOSTR_RELAY_AUTH_STATE_NONE: no challenge on this connection
+ * @NOSTR_RELAY_AUTH_STATE_CHALLENGED: a challenge, no AUTH attempted for it
+ * @NOSTR_RELAY_AUTH_STATE_SIGNING: the registered signer is signing it
+ * @NOSTR_RELAY_AUTH_STATE_SENT: ["AUTH",...] queued, the relay's OK pending
+ * @NOSTR_RELAY_AUTH_STATE_ACCEPTED: the relay answered this challenge's AUTH with OK true
+ * @NOSTR_RELAY_AUTH_STATE_REJECTED: OK false; held until a new challenge or nostr_relay_auth_start()
+ * @NOSTR_RELAY_AUTH_STATE_FAILED: local failure; held like REJECTED
+ */
+typedef enum NostrRelayAuthState {
+    NOSTR_RELAY_AUTH_STATE_NONE = 0,
+    NOSTR_RELAY_AUTH_STATE_CHALLENGED,
+    NOSTR_RELAY_AUTH_STATE_SIGNING,
+    NOSTR_RELAY_AUTH_STATE_SENT,
+    NOSTR_RELAY_AUTH_STATE_ACCEPTED,
+    NOSTR_RELAY_AUTH_STATE_REJECTED,
+    NOSTR_RELAY_AUTH_STATE_FAILED
+} NostrRelayAuthState;
+
+NOSTR_API const char *nostr_relay_auth_state_name(NostrRelayAuthState state);
+
+/**
+ * NostrRelayFrameInfo:
+ * @sequence: receive order of this relay's control frames (AUTH, OK, CLOSED,
+ *   EOSE, NOTICE, COUNT), counted on the reader thread from 1 and never
+ *   reused, across reconnects. Of two frames from one relay, the one with
+ *   the larger sequence arrived later on the wire.
+ * @connection_generation: the connection the frame arrived on; see
+ *   nostr_relay_get_connection_generation()
+ * @auth_generation: the challenge generation in force when it arrived (the
+ *   generation nostr_relay_get_auth_challenge() reports)
+ * @auth_state: this connection's NIP-42 state when it arrived, before the
+ *   frame's own effect (an OK answering our AUTH sees SENT)
+ *
+ * Where a control frame sits in wire order relative to NIP-42. A consumer
+ * that sees results on different threads (CLOSED on a pool worker, OK on the
+ * reader) compares these instead of arrival order at its own callbacks: e.g.
+ * a CLOSED "auth-required:" with @auth_state ACCEPTED was the relay's answer
+ * to a REQ it received after accepting our AUTH, and a frame whose
+ * @connection_generation is older than the relay's current one belongs to a
+ * lost connection. Fields are only ever appended. Since: 2.4
+ */
+typedef struct NostrRelayFrameInfo {
+    uint64_t sequence;
+    uint64_t connection_generation;
+    uint64_t auth_generation;
+    NostrRelayAuthState auth_state;
+} NostrRelayFrameInfo;
+
+/**
+ * nostr_relay_get_connection_generation:
+ * @relay: (nullable): relay
+ *
+ * Returns: a counter that changes each time the relay starts a new
+ *   connection (initial dial or reconnect); 0 before the first one.
+ */
+NOSTR_API uint64_t nostr_relay_get_connection_generation(NostrRelay *relay);
+
+/**
+ * nostr_relay_get_callback_frame:
+ * @relay: (nullable): relay
+ * @out: (out): the frame being reported
+ *
+ * Inside this relay's OK callback or AUTH challenge callback, the
+ * #NostrRelayFrameInfo of the frame that callback reports. Thread-local;
+ * false (and @out zeroed) outside those callbacks.
+ */
+NOSTR_API bool nostr_relay_get_callback_frame(NostrRelay *relay, NostrRelayFrameInfo *out);
+
+/**
+ * NostrRelayAuthStatus:
+ * @state: current NIP-42 state of the current connection
+ * @connection_generation: current connection generation
+ * @auth_generation: current challenge generation
+ * @sequence: frame sequence of the last relay frame that changed @state
+ *   (the challenge or the OK); 0 if none on this connection
+ * @event_id: the AUTH event in flight or last answered, "" if none
+ */
+typedef struct NostrRelayAuthStatus {
+    NostrRelayAuthState state;
+    uint64_t connection_generation;
+    uint64_t auth_generation;
+    uint64_t sequence;
+    char event_id[65];
+} NostrRelayAuthStatus;
+
+/**
+ * nostr_relay_get_auth_status:
+ * @relay: (nullable): relay
+ * @out: (out): snapshot, taken under the relay's mutex
+ *
+ * Returns: false if @relay or @out is NULL
+ */
+NOSTR_API bool nostr_relay_get_auth_status(NostrRelay *relay, NostrRelayAuthStatus *out);
+
+/**
+ * NostrRelayAuthPolicy:
+ * @NOSTR_RELAY_AUTH_ON_CHALLENGE: answer each new challenge of a connection
+ * @NOSTR_RELAY_AUTH_ON_DEMAND: answer a connection's challenge only once the
+ *   relay has refused something with "auth-required:" (a CLOSED, or OK false
+ *   for an EVENT) on it; a challenge that arrives after the refusal still
+ *   triggers it. At most once per challenge. A refusal received while the
+ *   connection is already authenticated does not count (the identity is not
+ *   enough; see NOSTR_POOL_RECOVERY_AUTH_REFUSED): use nostr_relay_auth_start().
+ */
+typedef enum NostrRelayAuthPolicy {
+    NOSTR_RELAY_AUTH_ON_CHALLENGE = 0,
+    NOSTR_RELAY_AUTH_ON_DEMAND
+} NostrRelayAuthPolicy;
+
+/**
+ * NostrRelayAuthRequest:
+ *
+ * One attempt to answer one challenge of one connection, handed to the
+ * signer. Refcounted; the signer refs it to finish asynchronously. The
+ * relay cancels it when the attempt can no longer be sent: a new challenge,
+ * a reconnect, the signer replaced or cleared, nostr_relay_close() or the
+ * relay freed. After cancellation nostr_relay_auth_request_complete() does
+ * nothing, so a stale signature is never sent.
+ */
+typedef struct NostrRelayAuthRequest NostrRelayAuthRequest;
+
+/**
+ * NostrRelayAuthSignFunc:
+ * @request: (transfer none): the attempt; ref it to keep it past the call
+ * @user_data: the signer's user data
+ *
+ * Signs nostr_relay_auth_request_get_event() and reports the outcome with
+ * nostr_relay_auth_request_complete() (or _complete_json()), now or later,
+ * from any thread. Called on a thread the library starts for this attempt,
+ * never on the relay's reader thread or with a relay lock held, so it may
+ * block (a remote signer, a user prompt).
+ */
+typedef void (*NostrRelayAuthSignFunc)(NostrRelayAuthRequest *request, void *user_data);
+
+/**
+ * NostrRelayAuthCancelFunc:
+ * @request: (transfer none): the cancelled attempt
+ * @user_data: data given to nostr_relay_auth_request_set_cancel_handler()
+ *
+ * Called at most once, on the cancelling thread, without relay locks held.
+ */
+typedef void (*NostrRelayAuthCancelFunc)(NostrRelayAuthRequest *request, void *user_data);
+
+/**
+ * nostr_relay_set_auth_signer_full:
+ * @relay: (nullable): relay
+ * @policy: when to answer a challenge
+ * @identity_generation: the caller's identity/account generation; reported
+ *   back on requests and results so the caller can refuse a stale one
+ * @expected_pubkey: (nullable): 64-hex pubkey put in the template and
+ *   required of the signed event
+ * @sign: (nullable): signer, or NULL to authenticate no more
+ * @user_data: (nullable): owned by the relay
+ * @destroy: (nullable): releases @user_data once no attempt can call @sign
+ *
+ * The identity this connection authenticates with, chosen by the caller for
+ * this relay only. Replacing or clearing it cancels an attempt in flight and
+ * forgets an AUTH whose OK is pending. Registering a signer never re-answers
+ * the current challenge by itself with ON_DEMAND; with ON_CHALLENGE a
+ * challenge already received and not yet attempted is answered now.
+ *
+ * Returns: false if @relay is NULL or allocation failed (@destroy then ran)
+ */
+NOSTR_API bool nostr_relay_set_auth_signer_full(NostrRelay *relay,
+                                               NostrRelayAuthPolicy policy,
+                                               uint64_t identity_generation,
+                                               const char *expected_pubkey,
+                                               NostrRelayAuthSignFunc sign,
+                                               void *user_data,
+                                               NostrRelayDestroyNotify destroy);
+
+/**
+ * nostr_relay_auth_start:
+ * @relay: (nullable): relay
+ * @err: (out) (optional) (nullable): why nothing started
+ *
+ * The explicit action that answers the current challenge with the
+ * registered signer now, whatever the policy, including after a REJECTED
+ * or FAILED attempt for the same challenge, or an AUTH the relay has not
+ * answered yet (its late OK is then ignored). Refused with no challenge, no
+ * signer, an attempt being signed, or the challenge already accepted for
+ * this signer's identity generation.
+ */
+NOSTR_API bool nostr_relay_auth_start(NostrRelay *relay, Error **err);
+
+/**
+ * nostr_relay_send_auth:
+ * @relay: (nullable): relay
+ * @signed_event: (transfer none): a signed kind-22242 event
+ * @auth_generation: the challenge generation it answers (0: the current one)
+ * @err: (out) (optional) (nullable): why it was not sent
+ *
+ * For callers that sign themselves. Verifies @signed_event locally (valid id
+ * and signature, kind 22242, "relay" tag equal to this relay's URL,
+ * "challenge" tag equal to the current challenge, created_at within 10
+ * minutes), refuses a stale @auth_generation, then queues
+ * ["AUTH",event] and tracks its OK exactly like a signer's attempt (state,
+ * result callback, pool recovery). Caller-signed retries must use distinct
+ * event ids if late OKs from superseded attempts need to be distinguished.
+ * Cancels a registered signer's attempt in
+ * flight. Never waits for the socket write, the OK or queue space: a full
+ * write queue fails the attempt. Queue admission and the writer's connection
+ * lease both reject superseded attempts. Writes already admitted to a
+ * connection cannot be recalled.
+ */
+NOSTR_API bool nostr_relay_send_auth(NostrRelay *relay, const NostrEvent *signed_event,
+                                    uint64_t auth_generation, Error **err);
+
+/* Request accessors. Strings and the event are owned by the request. */
+NOSTR_API NostrRelayAuthRequest *nostr_relay_auth_request_ref(NostrRelayAuthRequest *request);
+NOSTR_API void nostr_relay_auth_request_unref(NostrRelayAuthRequest *request);
+/* The unsigned template: kind 22242, created_at now, empty content, tags
+ * ["relay",url], ["challenge",challenge] and a unique per-attempt ["nonce",...],
+ * pubkey only if expected. Preserve the nonce when signing: it prevents a
+ * same-second retry from reusing the superseded attempt's event id. */
+NOSTR_API const NostrEvent *nostr_relay_auth_request_get_event(const NostrRelayAuthRequest *request);
+NOSTR_API const char *nostr_relay_auth_request_get_relay_url(const NostrRelayAuthRequest *request);
+NOSTR_API const char *nostr_relay_auth_request_get_challenge(const NostrRelayAuthRequest *request);
+NOSTR_API uint64_t nostr_relay_auth_request_get_auth_generation(const NostrRelayAuthRequest *request);
+NOSTR_API uint64_t nostr_relay_auth_request_get_connection_generation(const NostrRelayAuthRequest *request);
+NOSTR_API uint64_t nostr_relay_auth_request_get_identity_generation(const NostrRelayAuthRequest *request);
+NOSTR_API bool nostr_relay_auth_request_is_cancelled(NostrRelayAuthRequest *request);
+/* @cancel runs once if the request is cancelled before it completes, at
+ * once if it already was; never after completion. */
+NOSTR_API void nostr_relay_auth_request_set_cancel_handler(NostrRelayAuthRequest *request,
+                                                         NostrRelayAuthCancelFunc cancel,
+                                                         void *user_data);
+/**
+ * nostr_relay_auth_request_complete:
+ * @request: the attempt
+ * @signed_event: (nullable) (transfer none): the signed template, or NULL
+ * @error_message: (nullable): why signing failed, with @signed_event NULL
+ *
+ * Finishes the attempt once; later calls do nothing. A cancelled or stale
+ * attempt is dropped silently. Otherwise the event is verified as by
+ * nostr_relay_send_auth() (and against the expected pubkey) and sent, or
+ * the attempt ends FAILED with a result callback.
+ *
+ * Returns: true if ["AUTH",...] was queued
+ */
+NOSTR_API bool nostr_relay_auth_request_complete(NostrRelayAuthRequest *request,
+                                                const NostrEvent *signed_event,
+                                                const char *error_message);
+NOSTR_API bool nostr_relay_auth_request_complete_json(NostrRelayAuthRequest *request,
+                                                     const char *signed_event_json,
+                                                     const char *error_message);
+
+/**
+ * NostrRelayAuthResult:
+ * @state: ACCEPTED, REJECTED or FAILED
+ * @event_id: the AUTH event, "" when it never existed (signing failed)
+ * @reason: the relay's OK message, or the local failure, "" if none
+ * @challenge: the challenge answered
+ * @identity_generation: of the signer that signed (0 for nostr_relay_send_auth())
+ * @frame: the OK frame for ACCEPTED/REJECTED; for FAILED the generations in
+ *   force when failure was committed (not callback delivery) and sequence 0
+ */
+typedef struct NostrRelayAuthResult {
+    NostrRelayAuthState state;
+    const char *event_id;
+    const char *reason;
+    const char *challenge;
+    uint64_t identity_generation;
+    NostrRelayFrameInfo frame;
+} NostrRelayAuthResult;
+
+/**
+ * NostrRelayAuthResultCallback:
+ *
+ * The end of an AUTH attempt that was not cancelled. Runs on the reader
+ * thread (relay OK) or on the thread that completed the request (local
+ * failure), without relay locks held. Strings are valid during the call.
+ */
+typedef void (*NostrRelayAuthResultCallback)(NostrRelay *relay,
+                                             const NostrRelayAuthResult *result,
+                                             void *user_data);
+
+/* Ownership rules of nostr_relay_set_state_callback_full(). Since: 2.4 */
+NOSTR_API void nostr_relay_set_auth_result_callback_full(NostrRelay *relay,
+                                                        NostrRelayAuthResultCallback callback,
+                                                        void *user_data,
+                                                        NostrRelayDestroyNotify destroy);
 
 #ifdef __cplusplus
 }

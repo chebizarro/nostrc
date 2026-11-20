@@ -455,6 +455,10 @@ NOSTR_GOBJECT_API void gnostr_pool_set_event_sink(GNostrPool              *self,
  * are replaced, or they are finalized). It may therefore
  * run later than that call, on whichever thread lets go last.
  *
+ * Deprecated: 3.1: one identity for every relay of the pool, answering every
+ * challenge (see gnostr_relay_set_auth_handler()). Choose the identity per
+ * relay with nostr_relay_set_auth_signer_full() (nostrc-7i6w).
+ *
  * Since: 1.0
  */
 NOSTR_GOBJECT_API void gnostr_pool_set_auth_handler(GNostrPool              *self,

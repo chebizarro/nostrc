@@ -7,30 +7,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* Connection state enum - also defined in nostr-relay.h with same guard */
-#ifndef NOSTR_RELAY_CONNECTION_STATE_DEFINED
-#define NOSTR_RELAY_CONNECTION_STATE_DEFINED
-typedef enum NostrRelayConnectionState_ {
-    NOSTR_RELAY_STATE_DISCONNECTED = 0,
-    NOSTR_RELAY_STATE_CONNECTING,
-    NOSTR_RELAY_STATE_CONNECTED,
-    NOSTR_RELAY_STATE_BACKOFF
-} NostrRelayConnectionState;
-#endif
+/* The public NIP-42 session and frame types (nostrc-7i6w); also the
+ * connection-state enum and callback typedefs, previously duplicated here. */
+#include "nostr-relay.h"
 
-/* Forward declaration */
-struct NostrRelay;
-
-/* Callback for connection state changes */
-typedef void (*NostrRelayStateCallback)(struct NostrRelay *relay,
-                                        NostrRelayConnectionState old_state,
-                                        NostrRelayConnectionState new_state,
-                                        void *user_data);
-
-/* Callback for NIP-42 AUTH challenge received (nostrc-7og) */
-typedef void (*NostrRelayAuthCallback)(struct NostrRelay *relay,
-                                       const char *challenge,
-                                       void *user_data);
+struct NostrRelayAuthSigner;   /* relay_auth.c */
+struct NostrRelayListener;     /* relay.c */
 
 struct _NostrRelayPrivate {
     nsync_mu mutex;
@@ -106,11 +88,42 @@ struct _NostrRelayPrivate {
     struct NostrRelayCallbackSlot *state_slot;
     struct NostrRelayCallbackSlot *auth_slot;
     struct NostrRelayCallbackSlot *ok_slot;
+    struct NostrRelayCallbackSlot *auth_result_slot; /* nostrc-7i6w */
+
+    /* nostrc-7i6w: the connection's NIP-42 session (relay_auth.c) and the
+     * wire-order stamp of control frames. All guarded by @mutex.
+     *  connection_generation - bumped when a connection starts (CONNECTING)
+     *  control_sequence      - last stamped control frame, never reset
+     *  auth_state            - NostrRelayAuthState of the current connection
+     *  auth_state_sequence   - frame that last changed it (challenge/OK)
+     *  auth_event_id         - AUTH in flight (SENT) or last answered
+     *  auth_identity_generation - of the signer that produced auth_event_id
+     *  auth_demanded         - ON_DEMAND: an auth-required refusal arrived
+     *  auth_signer           - registration (ref held); NULL: never AUTH
+     *  auth_request          - attempt being signed (ref held); its relay
+     *                          pointer is non-NULL exactly while this holds it
+     * Lock order: request mutex -> @mutex. Never call into a signer, cancel
+     * handler or callback with @mutex held. */
+    uint64_t connection_generation;
+    uint64_t control_sequence;
+    int auth_state;
+    uint64_t auth_state_sequence;
+    uint64_t auth_attempt; /* invalidates signed/queued AUTH on supersession */
+    char auth_event_id[65];
+    char *auth_event_challenge; /* challenge auth_event_id answers */
+    uint64_t auth_identity_generation;
+    bool auth_demanded;
+    struct NostrRelayAuthSigner *auth_signer;
+    struct NostrRelayAuthRequest *auth_request;
+    /* Internal listeners (SimplePool): connected / AUTH result. */
+    struct NostrRelayListener *listeners;
 };
 
 typedef struct _NostrRelayWriteRequest {
     char *msg;
     GoChannel *answer;
+    uint64_t auth_attempt; /* 0 for ordinary writes */
+    uint64_t connection_generation;
 } NostrRelayWriteRequest;
 
 typedef void (*NostrRelayOkCallback)(bool, char *);
@@ -214,5 +227,60 @@ void nostr_relay_wait_for_dial(struct NostrRelay *relay);
  * what nostr_relay_get_next_reconnect_ms() reports to the redial worker.
  */
 void nostr_relay_dial_release(struct NostrRelay *relay, bool connected);
+
+/* ========================================================================
+ * nostrc-7i6w: NIP-42 session internals (relay_auth.c) and relay listeners.
+ * ======================================================================== */
+
+/* Stamps one control frame on the reader thread: takes the next sequence and
+ * snapshots the generations and NIP-42 state, under the relay mutex. */
+void nostr_relay_stamp_frame(struct NostrRelay *relay, NostrRelayFrameInfo *out);
+
+/* Under relay->priv->mutex: forget the session for a new connection or a new
+ * challenge. Returns the attempt in flight, stolen; the caller cancels it
+ * with nostr_relay_auth_request_cancel_stolen() after unlocking. */
+struct NostrRelayAuthRequest *nostr_relay_auth_reset_locked(struct NostrRelay *relay,
+                                                           bool new_connection,
+                                                           uint64_t sequence);
+void nostr_relay_auth_request_cancel_stolen(struct NostrRelayAuthRequest *request);
+
+/* Reader-thread hooks, called without the relay mutex. */
+void nostr_relay_auth_after_challenge(struct NostrRelay *relay);
+/* True when @event_id was this connection's AUTH (consumed by the session). */
+bool nostr_relay_auth_on_ok(struct NostrRelay *relay, const char *event_id, bool ok,
+                            const char *reason, const NostrRelayFrameInfo *frame);
+/* A CLOSED or OK false; acts on an "auth-required:" refusal. */
+void nostr_relay_auth_on_refusal(struct NostrRelay *relay, const char *reason);
+/* nostr_relay_write() of an ["AUTH",{...}] frame written by the caller
+ * itself (hand-rolled AUTH): if it answers the current challenge, the session
+ * tracks it as SENT so its OK is correlated like nostr_relay_send_auth(). */
+uint64_t nostr_relay_auth_observe_frame(struct NostrRelay *relay, const char *frame,
+                                       uint64_t *connection_generation);
+/* Generation-fenced, nonblocking AUTH queue admission; does not observe raw
+ * frames again. The writer validates the same token when leasing a connection. */
+GoChannel *nostr_relay_write_auth(struct NostrRelay *relay, const char *frame,
+                                 uint64_t attempt, uint64_t connection_generation);
+/* Private deterministic test barrier between signature admission and enqueue. */
+void nostr_relay_test_set_auth_write_hook(NostrRelayDialHook hook, void *data);
+/* First step of relay teardown: cancels the attempt, drops the signer. */
+void nostr_relay_auth_teardown(struct NostrRelay *relay);
+/* relay.c: the public AUTH result callback, then listeners. No locks held. */
+void nostr_relay_emit_auth_result(struct NostrRelay *relay, const NostrRelayAuthResult *result);
+
+typedef enum {
+    NOSTR_RELAY_LISTEN_CONNECTED = 1,   /* a connection became CONNECTED */
+    NOSTR_RELAY_LISTEN_AUTH_RESULT = 2, /* an AUTH ended (accepted/rejected/failed) */
+    NOSTR_RELAY_LISTEN_DISCONNECTED = 3
+} NostrRelayListenEvent;
+typedef void (*NostrRelayListenFunc)(struct NostrRelay *relay, NostrRelayListenEvent event,
+                                     void *user_data);
+/* Adds a listener; @user_data is owned (refcounted by the caller, @destroy
+ * releases it after removal and after any call in progress returns).
+ * Returns an opaque handle for nostr_relay_remove_listener(), or NULL (then
+ * @destroy has run). Listeners run on relay worker threads, no locks held. */
+void *nostr_relay_add_listener(struct NostrRelay *relay, NostrRelayListenFunc fn,
+                               void *user_data, NostrRelayDestroyNotify destroy);
+void nostr_relay_remove_listener(struct NostrRelay *relay, void *handle);
+void nostr_relay_notify_listeners(struct NostrRelay *relay, NostrRelayListenEvent event);
 
 #endif // NOSTR_RELAY_PRIVATE_H

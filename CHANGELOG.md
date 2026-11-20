@@ -23,6 +23,16 @@ All notable changes to this project will be documented in this file.
   See `fipsd/docs/release-notes-0.1.0.md`.
 
 ### Added
+- libnostr 2.4.0 (Unreleased): library-owned NIP-42 sessions (nostrc-7i6w).
+  A per-relay, per-connection async signer (`nostr_relay_set_auth_signer_full`,
+  cancellable `NostrRelayAuthRequest`, ON_CHALLENGE/ON_DEMAND policy) answers
+  challenges off the reader thread with `["AUTH",...]`; the OK is correlated
+  by AUTH event id (`nostr_relay_set_auth_result_callback_full`), a rejection
+  is held until a new challenge or `nostr_relay_auth_start()`, and
+  `nostr_relay_send_auth()` serves callers that sign themselves. Control frames
+  carry a wire-order stamp (`NostrRelayFrameInfo`). SimplePool reissues a
+  CLOSED REQ by reason (`NostrPoolRecovery`, `nostr_simple_pool_get_callback_info`).
+  nostr-gobject 3.1.0 adds `GNostrRelay::auth-result`. See `docs/NIP42_SESSION.md`.
 - fips-gateway 0.1.0 (Unreleased): ship the Linux gateway and opt-in systemd
   unit in Debian/RPM `fips-gateway` packages with libnftables dependencies;
   Arch includes them in `fipsd`, following upstream. Hosted Linux FIPS CI
@@ -56,6 +66,22 @@ All notable changes to this project will be documented in this file.
   future algorithm value (nostrc-v04jd.2).
 
 ### Fixed
+- libnostr 2.4.0 (Unreleased): SimplePool no longer re-REQs CLOSED
+  subscriptions every <=200 ms: `auth-required:` is reissued once after a later
+  AUTH OK on the connection, `rate-limited:`/`error:` on a backoff ladder, and
+  terminal reasons (`blocked:`, `restricted:`, ...) only on reconnect
+  (nostrc-7i6w, metadesk md-odg). `nostr_simple_pool_set_closed_backoff(pool, 0, ...)`
+  now restores the default ladder. `nostr_event_copy()` no longer duplicates
+  each tag's key. `gnostr_relay_get_authenticated()` turns TRUE on the relay's
+  OK, not on send; `gnostr_relay_set_auth_handler()`/`gnostr_pool_set_auth_handler()`
+  and `nostr_relay_auth()`/`_wait()` are deprecated. Superseded AUTH attempts
+  are fenced at queue admission and connection leasing; signer templates use
+  per-attempt nonces so same-second retries cannot consume an old OK. The pool
+  snapshots subscriptions after waking and reconciling. Hand-written AUTH
+  correlation accepts insignificant JSON whitespace, and all registered pools
+  receive result wakes (no eight-listener limit). nostr-gobject discards stale
+  queued AUTH results; NIP-11 auth-required publishes return `AUTH_REQUIRED`
+  until AUTH is accepted, rather than sending EVENT ahead of signing/OK.
 - libporthome 0.7.1: the PCS v1 manifest decoder now reports
   `PORTHOME_ERR_EPOCH` for nonzero chunk key IDs and PCS v2 dir-nodes,
   including through sealed decode, with NULL output. The zero-only rule
