@@ -146,6 +146,9 @@ GO_FIBER_API gof_socket_t gof_accept(gof_socket_t fd, struct sockaddr *sa, sockl
 /**
  * @brief Message I/O that parks the calling fiber on EAGAIN/EWOULDBLOCK.
  * Sets O_NONBLOCK on fd (also affecting aliases of the same open file).
+ * POSIX: after gof_io_reset_fd, the first call checks and sets O_NONBLOCK and
+ * later calls skip that fcntl and pass MSG_DONTWAIT instead, until the next
+ * reset_fd (required before closing/reusing the descriptor, see below).
  * timeout_ms < 0 waits indefinitely; 0 attempts once without waiting; > 0
  * bounds readiness retries with one monotonic deadline. Expiry returns -1
  * with errno=ETIMEDOUT; scheduler stop cancels a pending wait with ECANCELED.

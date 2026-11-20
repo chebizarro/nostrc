@@ -48,6 +48,7 @@ void rk_test_open(rk_test_node *n, const rk_test_local *peer, fips_rekey_params 
 void rk_test_inbound(rk_test_node *n, const rk_test_local *peer, fips_rekey_params params,
                      uint64_t now, const rk_test_packet *setup);
 void rk_test_execute(rk_test_node *n, uint64_t now);
+void rk_test_clear(rk_test_node *n);
 void rk_test_step(rk_test_node *n, uint64_t now, fips_rekey_input in);
 void rk_test_poll(rk_test_node *n, uint64_t now);
 void rk_test_start(rk_test_node *n, uint64_t now);

@@ -61,14 +61,14 @@ static void msg1_resends_and_backoff(void) {
 }
 static void trigger_floors(void) {
     pair(&rk_test_ik);
-    fips_rekey_outputs_clear(&a.out);
+    rk_test_clear(&a);
     fips_rekey_trigger(&a.machine, fips_test_instant(30999), &a.env, &a.out);
     rk_test_execute(&a, 30999);
     assert(!a.out.count);
     fips_rekey_trigger(&a.machine, fips_test_instant(31000), &a.env, &a.out);
     rk_test_execute(&a, 31000);
     assert(sends(&a, FIPS_REKEY_MSG_Msg1));
-    fips_rekey_outputs_clear(&a.out);
+    rk_test_clear(&a);
     fips_rekey_trigger(&a.machine, fips_test_instant(31100), &a.env, &a.out);
     assert(!a.out.count);
 }
@@ -238,7 +238,7 @@ static void carry_preserves_anchors(void) {
     fips_instant started = VIEW(&a).current.started, link = VIEW(&a).link_since,
                  heard = VIEW(&a).last_rx;
     fips_rekey_carry carry = {0};
-    fips_rekey_outputs_clear(&a.out);
+    rk_test_clear(&a);
     assert(
         fips_rekey_close_machine(&a.machine, FIPS_REKEY_CLOSE_CrossConnectionMove, &a.out, &carry));
     rk_test_execute(&a, 0);
@@ -346,7 +346,7 @@ static void reoffered_worker_floor(void) {
     rk_test_poll(&a, 60);
     assert(a.out.count == 1 && a.out.items[0].kind == FIPS_REKEY_OUT_Delegate &&
            a.out.items[0].data.recv.has_floor && a.out.items[0].data.recv.floor == 5);
-    fips_rekey_outputs_clear(&a.out);
+    rk_test_clear(&a);
     assert(sodium_is_zero((const uint8_t *)&a.out, sizeof a.out));
 }
 static void young_and_off_link_msg1_rows(void) {

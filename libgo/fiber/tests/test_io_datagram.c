@@ -14,6 +14,8 @@
 #if !defined(_WIN32)
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <pthread.h>
+#include <sched.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
 #include <unistd.h>
@@ -375,8 +377,143 @@ static void test_writable_waits(void) {
 
 #endif
 
+#if !defined(_WIN32) && defined(MSG_DONTWAIT)
+/* nostrc-bmsti: message calls check O_NONBLOCK once per gof_io_reset_fd
+ * registration instead of an F_GETFL per call. A flag cleared behind libgo's
+ * back makes the elided fcntl observable. */
+static int fd_nonblocking(int fd) {
+  int flags = fcntl(fd, F_GETFL, 0);
+  assert(flags >= 0);
+  return (flags & O_NONBLOCK) != 0;
+}
+
+static void make_blocking(int fd) {
+  int flags = fcntl(fd, F_GETFL, 0);
+  assert(flags >= 0 && fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) == 0);
+}
+
+static ssize_t send_byte(int fd) {
+  char byte = 'n';
+  struct iovec iov = { .iov_base = &byte, .iov_len = 1 };
+  struct msghdr msg = {0};
+  msg.msg_iov = &iov;
+  msg.msg_iovlen = 1;
+  return gof_sendmsg(fd, &msg, 0, 0);
+}
+
+static void recv_byte(int fd) {
+  char byte = 0;
+  struct iovec iov = { .iov_base = &byte, .iov_len = 1 };
+  struct msghdr msg = {0};
+  msg.msg_iov = &iov;
+  msg.msg_iovlen = 1;
+  assert(gof_recvmsg(fd, &msg, 0, IO_TIMEOUT_MS) == 1 && byte == 'n');
+}
+
+/* An empty receive with a zero timeout returns at once even on a descriptor
+ * that is blocking again: a cached slot passes MSG_DONTWAIT (or re-checks). */
+static void recv_empty(int fd) {
+  char buf[1];
+  struct iovec iov = { .iov_base = buf, .iov_len = 1 };
+  struct msghdr msg = {0};
+  msg.msg_iov = &iov;
+  msg.msg_iovlen = 1;
+  assert(gof_recvmsg(fd, &msg, 0, 0) == -1 && test_errno() == ETIMEDOUT);
+  assert(gof_recvfrom(fd, buf, 1, 0, NULL, NULL, 0) == -1 && test_errno() == ETIMEDOUT);
+}
+
+/* A fresh socketpair whose first end is fd number `want` (-1: any). */
+static void pair_at(int want, int sp[2]) {
+  assert(socketpair(AF_UNIX, SOCK_DGRAM, 0, sp) == 0);
+  if (want < 0 || sp[0] == want) return;
+  if (sp[1] == want) { int t = sp[0]; sp[0] = sp[1]; sp[1] = t; return; }
+  assert(dup2(sp[0], want) == want);
+  close(sp[0]);
+  sp[0] = want;
+}
+
+struct nonblock_sender { int fd; atomic_int sent; };
+
+static void *nonblock_sender_thread(void *arg) {
+  struct nonblock_sender *s = arg;
+  for (int i = 0; i < 4; ++i) {
+    /* A plain thread cannot park: a zero timeout turns EAGAIN into ETIMEDOUT
+     * (XNU refuses a nonblocking send while another sender holds the socket
+     * buffer lock), so retry those. */
+    ssize_t n;
+    while ((n = send_byte(s->fd)) != 1) {
+      assert(n == -1 && test_errno() == ETIMEDOUT);
+      sched_yield();
+    }
+    atomic_fetch_add(&s->sent, 1);
+  }
+  return NULL;
+}
+
+static void test_nonblock_cache(void) {
+  /* Never registered (this runs first, on fresh numbers): every call checks. */
+  int sp[2];
+  pair_at(-1, sp);
+  for (int i = 0; i < 2; ++i) {
+    make_blocking(sp[0]);
+    assert(send_byte(sp[0]) == 1);
+    assert(fd_nonblocking(sp[0]));
+    recv_byte(sp[1]);
+  }
+  /* Registered: the first call after reset_fd checks, later ones skip it. */
+  assert(gof_io_reset_fd(sp[0]) == 0);
+  make_blocking(sp[0]);
+  assert(send_byte(sp[0]) == 1);
+  assert(fd_nonblocking(sp[0]));
+  make_blocking(sp[0]); /* an alias clears it: the cached path still never blocks */
+  assert(send_byte(sp[0]) == 1);
+  assert(!fd_nonblocking(sp[0]));
+  recv_empty(sp[0]);
+  assert(!fd_nonblocking(sp[0]));
+  recv_byte(sp[1]);
+  recv_byte(sp[1]);
+  /* Reset before close, then reuse the number: the new descriptor re-checks. */
+  int num = sp[0];
+  assert(gof_io_reset_fd(num) == 0);
+  test_close(sp[0]);
+  test_close(sp[1]);
+  pair_at(num, sp);
+  assert(!fd_nonblocking(num));
+  assert(send_byte(num) == 1);
+  assert(fd_nonblocking(num));
+  recv_byte(sp[1]);
+  /* Closed WITHOUT the required reset and reused: a stale verdict elides the
+   * fcntl, yet MSG_DONTWAIT keeps every message call nonblocking. */
+  test_close(sp[0]);
+  test_close(sp[1]);
+  pair_at(num, sp);
+  assert(!fd_nonblocking(num));
+  recv_empty(num);
+  assert(send_byte(num) == 1);
+  recv_byte(sp[1]);
+  /* Plain threads (fipsd's crypto workers) race the first check after reset. */
+  int space = 1 << 16; /* room for all 16 datagrams */
+  assert(setsockopt(sp[1], SOL_SOCKET, SO_RCVBUF, &space, sizeof space) == 0);
+  assert(gof_io_reset_fd(num) == 0);
+  make_blocking(num);
+  struct nonblock_sender sender = { .fd = num };
+  atomic_init(&sender.sent, 0);
+  pthread_t threads[4];
+  for (int i = 0; i < 4; ++i) assert(pthread_create(&threads[i], NULL, nonblock_sender_thread, &sender) == 0);
+  for (int i = 0; i < 4; ++i) assert(pthread_join(threads[i], NULL) == 0);
+  assert(atomic_load(&sender.sent) == 16 && fd_nonblocking(num));
+  for (int i = 0; i < 16; ++i) recv_byte(sp[1]);
+  assert(gof_io_reset_fd(num) == 0);
+  test_close(sp[0]);
+  test_close(sp[1]);
+}
+#endif
+
 static void run_tests(void *arg) {
   (void)arg;
+#if !defined(_WIN32) && defined(MSG_DONTWAIT)
+  test_nonblock_cache();
+#endif
   test_udp();
 #if !defined(_WIN32)
   test_rights();
