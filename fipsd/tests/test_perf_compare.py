@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from perf_compare import aggregate, compare, hosted_compare, hosted_gated, validate
+from perf_compare import aggregate, compare, hosted_compare, hosted_gated, validate, report_only
 
 
 class ComparisonTest(unittest.TestCase):
@@ -117,6 +117,51 @@ class ComparisonTest(unittest.TestCase):
         data['loopback']['runs'][0][0]['received'] = 1002
         with self.assertRaises(ValueError):
             aggregate(data)
+
+    def test_new_diagnostics_are_not_gate_metrics(self):
+        data = self.data()
+        original = aggregate(data)
+        paced = copy.deepcopy(data['loopback'])
+        paced['paced'] = {'loss_threshold': .01}
+        for run in paced['runs']:
+            for row in run:
+                row.update(sustainable_mbps=400, sustainable_loss=0,
+                           loaded_one_way={'p50_us': 10, 'p99_us': 100})
+                for cpu in row['cpu']:
+                    cpu['us_per_delivered_datagram'] = cpu['traffic_s'] * 1e6 / row['received']
+        data['paced_loopback'] = paced
+        self.assertEqual(aggregate(data), original)
+        report = report_only(data)
+        self.assertEqual(report['paced/c-c/sustainable_mbps'], 400)
+        self.assertEqual(report['paced/c-c/loss_fraction'], 0)
+        self.assertEqual(report['paced/c-c/loaded_one_way/p99_us'], 100)
+        self.assertEqual(report['loopback/c-c/cpu0_us_per_delivered_datagram'], 10)
+        for run in paced['runs']:
+            run[0]['sustainable_mbps'] = None
+        self.assertIsNone(report_only(data)['paced/c-c/sustainable_mbps'])
+        self.assertEqual(compare(aggregate(data), original), [])
+
+    def test_window_cpu_and_fixed_rate_remain_report_only(self):
+        data = self.data()
+        original = aggregate(data)
+        for run in data['loopback']['runs']:
+            for row in run:
+                for cpu in row['cpu']:
+                    cpu.update(traffic_cpu_s=.004, us_per_delivered_datagram=4,
+                               us_per_delivered_datagram_run=10)
+        paced = copy.deepcopy(data['loopback'])
+        paced['paced'] = {'paced_rate': 100}
+        for run in paced['runs']:
+            for row in run:
+                row.update(paced_rate_mbps=100, offered_mbps=100, loss_fraction=.2)
+        data['paced_loopback'] = paced
+        report = report_only(data)
+        self.assertEqual(report['loopback/c-c/cpu0_us_per_delivered_datagram'], 4)
+        self.assertEqual(report['loopback/c-c/cpu0_us_per_delivered_datagram_run'], 10)
+        self.assertEqual(report['paced/c-c/fixed_rate_mbps'], 100)
+        self.assertEqual(report['paced/c-c/loss_fraction'], .2)
+        self.assertEqual(report['paced/c-c/cpu0_us_per_delivered_datagram'], 4)
+        self.assertEqual(aggregate(data), original)
 
 
 class HostedPolicyTest(unittest.TestCase):

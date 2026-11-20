@@ -60,6 +60,13 @@ def main():
     p.add_argument('--work-dir', type=Path, required=True)
     p.add_argument('--runs', type=int, default=3)
     p.add_argument('--iterations', type=int, default=1000)
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument('--paced', action='store_true', help='also collect report-only sustainable-rate searches')
+    mode.add_argument('--paced-rate', type=float, metavar='MBPS', help='also collect fixed-rate probes')
+    p.add_argument('--paced-seconds', type=float, default=3)
+    p.add_argument('--loss-threshold', type=float, default=.01)
+    p.add_argument('--paced-resolution', type=float, default=.02)
+    p.add_argument('--paced-max-mbps', type=float, default=3200)
     p.add_argument('--seconds', type=float, default=5)
     p.add_argument('--latency-samples', type=int, default=1000)
     p.add_argument('--source-commit', required=True)
@@ -88,7 +95,20 @@ def main():
                     '--runs', str(args.runs), '--seconds', str(args.seconds),
                     '--latency-samples', str(args.latency_samples)], check=True)
     result['loopback'] = json.loads(loopback.read_text())
-    from perf_compare import aggregate
+    if args.paced or args.paced_rate is not None:
+        paced = args.output.with_suffix('.paced.json')
+        paced_mode = ['--paced'] if args.paced else ['--paced-rate', str(args.paced_rate)]
+        subprocess.run([sys.executable, str(Path(__file__).with_name('perf_loopback.py')),
+                        '--fipsd', str(args.build / 'fipsd/fipsd'), '--rust', str(args.rust.resolve(strict=True)),
+                        '--native-tool', str(args.build / 'fipsd/tests/fipsd_perf_native'),
+                        '--output', str(paced), '--work-dir', str(args.work_dir.resolve()),
+                        '--runs', str(args.runs), '--latency-samples', str(args.latency_samples), *paced_mode,
+                        '--paced-seconds', str(args.paced_seconds), '--loss-threshold', str(args.loss_threshold),
+                        '--paced-resolution', str(args.paced_resolution),
+                        '--paced-max-mbps', str(args.paced_max_mbps)], check=True)
+        result['paced_loopback'] = json.loads(paced.read_text())
+    from perf_compare import aggregate, report_only
+    report_only(result)
     aggregate(result)  # Refuse partial/invalid results before publishing.
     args.output.write_text(json.dumps(result, indent=2, allow_nan=False) + '\n')
     return 0

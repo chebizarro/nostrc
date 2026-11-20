@@ -1,5 +1,121 @@
 # FIPS performance baseline
 
+## Paced sustainable rate
+
+Use a Release build (the build command below deliberately disables unrelated apps):
+
+```sh
+cd /Users/bizarro/Documents/Projects/nostrc-wt/u19cz-1-paced-harness
+cmake -S . -B build-bench -G Ninja -DCMAKE_BUILD_TYPE=Release -DFIPS_ENABLE_BENCH=ON -DBUILD_FIPS=ON -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF -DBUILD_LIBHANAMI=OFF -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF -DBUILD_NOSTR_GOBJECT=OFF -DBUILD_NOSTR_GTK=OFF -DSIGNET_ENABLE=OFF -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF
+cmake --build build-bench --parallel 6 --target fipsd fipsd_perf_native
+caffeinate -i python3 fipsd/tests/perf_loopback.py \
+  --fipsd "$PWD/build-bench/fipsd/fipsd" \
+  --rust /tmp/fips-rust-target-perffix/release/fips \
+  --native-tool "$PWD/build-bench/fipsd/tests/fipsd_perf_native" \
+  --runs 1 --paced --paced-seconds 3 --loss-threshold .01 \
+  --paced-resolution .02 --latency-samples 300 \
+  --work-dir /tmp/u19cz1-perf --output /tmp/u19cz1-paced.json
+```
+
+For a fixed-load efficiency comparison, use `--paced-rate 100` **instead of**
+`--paced`. This runs exactly one 100 payload Mbit/s probe per pairing, without
+bracketing or bisection, using `--paced-seconds` for its traffic window:
+
+```sh
+cd /Users/bizarro/Documents/Projects/nostrc-wt/u19cz-1-paced-harness
+caffeinate -i python3 fipsd/tests/perf_loopback.py \
+  --fipsd "$PWD/build-bench/fipsd/fipsd" \
+  --rust /tmp/fips-rust-target-perffix/release/fips \
+  --native-tool "$PWD/build-bench/fipsd/tests/fipsd_perf_native" \
+  --runs 1 --paced-rate 100 --paced-seconds 3 --latency-samples 300 \
+  --work-dir /tmp/u19cz1-fixed --output /tmp/u19cz1-fixed.json
+```
+
+Fixed-rate rows report `paced_rate_mbps`, `target_mbps`, `offered_mbps`,
+`throughput_mbps`, `loss_fraction`, latency and CPU, but do not claim a
+`sustainable_mbps`. Loss is reported even if it exceeds the search threshold;
+check actual offered rate and delivery before comparing CPU efficiency.
+
+`caffeinate -i` is macOS-specific; omit it on Linux. The pinned Rust binary is
+an input, not rebuilt by this harness. Pair order rotates as in unpaced mode.
+Each pairing keeps **one pair of daemons** throughout its search; each probe
+opens fresh native flows on a distinct port, warms with 100 bidirectional
+exchanges, measures for `--paced-seconds` (default 3), then drains for 200 ms.
+The drain is outside the offered interval but its deliveries count. Packets
+arriving later count as lost; distinct flows prevent contamination of the next
+probe. Flow/listener teardown is asynchronous, hence distinct probe ports.
+
+The search starts at 100 payload Mbit/s, doubles to a failing upper bracket
+(or `--paced-max-mbps`, default 3200), halves if necessary down to 1 Mbit/s,
+then bisects until bracket width / passing rate <= `--paced-resolution`
+(default .02). A pass requires loss **strictly below** `--loss-threshold`
+(default .01, a fraction) and actual offered rate within 2% of target. These
+are finite-window observations, assuming approximately monotonic loss, not
+statistical confidence bounds or a guarantee of indefinitely sustainable load.
+A noisy early failure can underestimate capacity; use several rotated runs on
+an otherwise idle machine for comparisons, not the best probe from many runs.
+
+Read each pairing's JSON as follows:
+
+- `sustainable_mbps`: highest passing **actual offered** payload rate; the
+  selected row's `throughput_mbps` is its delivered goodput. `sustainable_loss`
+  is its loss fraction. Null means no passing probe, not zero loss.
+  `search_ceiling_reached` means only a lower bound was established; raise the
+  ceiling to obtain a failing bracket.
+- `probes`: every target, actual `offered_mbps`, delivered `throughput_mbps`,
+  `sent`, `accepted`, `received`, `loss_fraction`, local backpressure, CPU,
+  and pass/fail. In paced mode `sent` counts **attempted offers**, including
+  native API refusals; `accepted` counts successful API sends. Loss includes
+  both local refusals and downstream loss. A sender that cannot produce the
+  requested load must not get credit for that target. Unpaced `sent` and the
+  driver's default JSON layout are unchanged.
+- `loaded_one_way`: same-clock p50/p99 microseconds sampled during paced load,
+  with `loaded_latency_samples` showing the actual count. Missing samples give
+  null. Existing `one_way`, `reverse_one_way`, and `rtt` remain serial **pre-load**
+  latency observations, not latency under the sustainable load.
+- `cpu[0/1].traffic_cpu_s`: daemon CPU seconds between traffic boundary
+  markers. `us_per_delivered_datagram` is this delta × 1e6 / received datagrams,
+  in both paced and unpaced modes. Setup, warm-up, serial latency, process
+  startup/exit and the 200 ms drain are outside the marked send window. The
+  denominator still includes datagrams received during the drain; its CPU is
+  deliberately excluded from the headline traffic-window cost.
+- `us_per_delivered_datagram_run` retains the former whole-driver CPU cost for
+  comparison. Existing `traffic_s`, `traffic_percent_one_core` and
+  `traffic_wall_s` retain their whole-run meanings, so older gate metrics are
+  unchanged. No received datagrams gives null normalized CPU values.
+
+The harness enables `FIPSD_PERF_CPU_MARKERS=1`, reads flushed START/END lines
+from the driver's stderr using `Popen`, and samples both daemon processes on
+those events. The driver waits for a newline acknowledgement on stdin at each
+marker; the first send cannot precede the start CPU samples, and the end marker
+is emitted after the send deadline, before waiting for the receiver's drain.
+Direct driver callers do not enable this handshake and stdout remains unchanged.
+There are no sleeps or polling loops in CPU sampling. The subprocess retains a
+bounded timeout and is killed/reaped on timeout or sampling failure. Boundary
+observations still have IPC/scheduling and sequential `ps` sampling skew; macOS
+CPU accounting is quantized. This is event-bounded process accounting, not an
+atomic cross-process CPU-clock snapshot. Short probes magnify those errors.
+CPU excludes the traffic driver and kernel work not charged to the daemons.
+
+The native driver's optional arguments are
+`LEFT_API RIGHT_API RIGHT_NPUB SECONDS LATENCY_SAMPLES [OFFERED_MBPS [PORT]]`.
+Pacing uses monotonic **absolute** deadlines in batches covering at most 50 us
+(up to 64 datagrams), with busy waiting between batches. No per-packet sleep:
+macOS timer wake-up granularity would otherwise cap the offered rate. The
+sender consumes a core, has microbursts within a batch, and may catch up after
+scheduler delays; it cannot promise wire-level uniform spacing or real-time
+accuracy under contention. Actual offers, API acceptance and delivery are
+reported separately. Rate units always exclude transport/crypto overhead.
+
+`perf_run.py --paced` (search) or `--paced-rate MBPS` (fixed load) accepts the
+same paced configuration flags and
+collects an **additional** `paced_loopback` artifact alongside the unchanged
+unpaced gate workload. `perf_compare.py` prints sustainable rate/loss, paced
+CPU and unpaced CPU microseconds as **report-only diagnostics** (also in its
+markdown summary). No new failure metric or hosted-gate policy is introduced;
+raw per-probe and latency details remain in the JSON. No component version
+bump: these are test/harness/documentation changes, not shipped daemon APIs.
+
 ## Dataplane correction: nostrc-pxwaj
 
 Measured **2026-11-16** on the same Apple M4 Max workstation as the original

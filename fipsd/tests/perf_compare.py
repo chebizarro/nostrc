@@ -86,6 +86,55 @@ def aggregate(data):
             for name, values in sorted(samples.items())}
 
 
+def report_only(data):
+    """Additive diagnostics, deliberately excluded from baseline/gate metrics."""
+    samples = {}
+    for run in data['loopback']['runs']:
+        for row in run:
+            for i, cpu in enumerate(row['cpu']):
+                name = f"loopback/{row['pairing']}/cpu{i}_us_per_delivered_datagram"
+                value = cpu.get('us_per_delivered_datagram',
+                                positive(cpu['traffic_s']) * 1e6 / positive(row['received']))
+                samples.setdefault(name, []).append(value)
+                if 'us_per_delivered_datagram_run' in cpu:
+                    samples.setdefault(name + '_run', []).append(cpu['us_per_delivered_datagram_run'])
+    paced = data.get('paced_loopback')
+    if paced:
+        if len(paced['runs']) != data['config']['runs']:
+            raise ValueError('paced run count differs from declared runs')
+        for run in paced['runs']:
+            if len(run) != 3 or {r['pairing'] for r in run} != {'c-c', 'c-rust', 'rust-rust'}:
+                raise ValueError('all paced pairings required')
+            for row in run:
+                name = f"paced/{row['pairing']}"
+                # No passing probe is a reported unavailable rate, not a gate failure.
+                fixed = 'paced_rate_mbps' in row
+                if not fixed and row['sustainable_mbps'] is None:
+                    samples.setdefault(f'{name}/sustainable_mbps', []).append(None)
+                    continue
+                rate = positive(row['offered_mbps'] if fixed else row['sustainable_mbps'])
+                loss = row['loss_fraction'] if fixed else row['sustainable_loss']
+                if (isinstance(loss, bool) or not isinstance(loss, (int, float))
+                        or not math.isfinite(loss) or not 0 <= loss <= 1
+                        or (not fixed and loss >= paced['paced']['loss_threshold'])):
+                    raise ValueError('invalid sustainable loss')
+                rate_key = 'fixed_rate_mbps' if fixed else 'sustainable_mbps'
+                samples.setdefault(f'{name}/{rate_key}', []).append(rate)
+                samples.setdefault(f'{name}/loss_fraction', []).append(loss)
+                for i, cpu in enumerate(row['cpu']):
+                    value = cpu['us_per_delivered_datagram']
+                    samples.setdefault(f'{name}/cpu{i}_us_per_delivered_datagram', []).append(value)
+                    if 'us_per_delivered_datagram_run' in cpu:
+                        samples.setdefault(f'{name}/cpu{i}_us_per_delivered_datagram_run', []).append(
+                            cpu['us_per_delivered_datagram_run'])
+                if row.get('loaded_one_way'):
+                    for percentile in ('p50_us', 'p99_us'):
+                        value = positive(row['loaded_one_way'][percentile])
+                        samples.setdefault(f'{name}/loaded_one_way/{percentile}', []).append(value)
+    return {name: None if None in values else statistics.median(values)
+            for name, values in sorted(samples.items())}
+
+
 def compare(actual, baseline, tolerance=.10):
     if not 0 <= tolerance <= .10:
         raise ValueError('tolerance must be between 0 and 10%')
@@ -184,6 +233,15 @@ def main():
     policy = json.loads(args.baseline.read_text())
     actual = json.loads(args.results.read_text())
     metrics = validate(actual, policy)
+    diagnostics = report_only(actual)
+    for name, value in diagnostics.items():
+        print(f'reported: {name}: {value if value is not None else "unavailable"}')
+    if args.summary and diagnostics:
+        with args.summary.open('a') as out:
+            out.write('### Additional report-only diagnostics\n\n')
+            for name, value in diagnostics.items():
+                out.write(f'- `{name}`: {value if value is not None else "unavailable"}\n')
+            out.write('\n')
     if args.reference:
         reference = json.loads(args.reference.read_text())
         if reference['source_commit'] != policy['reference_commit']:
