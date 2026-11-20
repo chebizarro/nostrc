@@ -375,9 +375,11 @@ static int example(const char *path)
             for (size_t j=0;j<n && !replaced;++j)
                 replaced=on[j] && lead(lines[j])==at && !strncmp(lines[j]+at,lines[i]+at,k);
         if (!replaced) CHECK(fprintf(out,"%s\n",lines[i])>=0);
-        free(lines[i]);
     }
     CHECK(fclose(out)==0);
+    /* Free only after the pass: the placeholder search above reads every
+     * line, including ones already written (ASan heap-use-after-free). */
+    for (size_t i=0;i<n;++i) free(lines[i]);
     free(lines); free(on); free(text);
     return load_clean(enabled_path,"commented settings enabled");
 }
