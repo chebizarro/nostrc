@@ -116,6 +116,233 @@ markdown summary). No new failure metric or hosted-gate policy is introduced;
 raw per-probe and latency details remain in the JSON. No component version
 bump: these are test/harness/documentation changes, not shipped daemon APIs.
 
+## UDP syscall batching on Linux: nostrc-u19cz.4
+
+Linux only: macOS and Windows keep the per-datagram paths, and the C client,
+harness and Rust daemon are unchanged. Measured **2026-11-19/20** on the
+shared Linux VM below, base `ff3fe88e1` (perf/fips-deep-opt) and this branch
+built side by side and run **back to back, alternating**, every run reported.
+The VM runs on the same shared M4 Max host as the other agents' VMs and builds,
+and its numbers are dominated by that: see "Noise" below before reading any
+rate.
+
+- Ubuntu 24.04 aarch64 under QEMU/HVF, 10 vCPU, ~3.9 GB RAM, kernel
+  7.0.0-42-generic; `net.core.{r,w}mem_max` 4 MiB, so the 2 MiB UDP buffers are
+  granted. Release `-O3 -DNDEBUG` (cc = gcc 13.3), `FIPSD_WORKERS=2` (harness).
+- `perf_loopback.py --runs 2 --latency-samples 300`, with `--seconds 5`
+  (unpaced), `--paced-rate 100 --paced-seconds 4` (CPU per delivered datagram)
+  and `--paced --paced-seconds 3` (sustainable, <1% loss), each mode as four
+  alternating invocations (base, new, base, new): 4 rows per pairing and build.
+- Syscalls: `perf stat -e raw_syscalls:sys_enter,syscalls:sys_enter_<name>`
+  attached to each C daemon of the c-c pairing for 5 s inside a long traffic
+  window (16 s at 100 Mbit/s; 14 s unpaced); CPU profiles with `perf record -g`.
+
+### Design
+
+**libgo.** `gof_recvmmsg`/`gof_sendmmsg` (Linux only, appended to
+`fiber/io/io.c` beside `gof_recvmsg`): `recvmmsg(2)`/`sendmmsg(2)` with
+`gof_recvmsg`'s readiness contract per call. The fiber parks only while the
+syscall would move no message; a short count is not an error; a zero timeout
+never parks, so a crypto worker thread may call `gof_sendmmsg` as it calls
+`gof_sendmsg`.
+
+**Receive** (`transport/udp/connected.c`). The receive fiber takes up to 32
+datagrams per `recvmmsg`, each with its own source address and ancillary data
+(pktinfo destination, TOS/TCLASS ECN, `SO_RXQ_OVFL`), each through the same
+decode, classifier, framing and route-hint step as before. Each slot receives
+straight into a `fipsd_transport_event` the node will own and free, so a frame
+reaches the dispatcher without `fipsd_transport_emit`'s per-packet
+`calloc` + full-frame copy; the slot gets a fresh event (one `malloc`, no
+zeroing). A datagram longer than the slot (the configured MTU) spills into a
+per-slot tail that only such datagrams touch, and is copied into an event of
+its size: every datagram the old 64 KiB buffer took is still taken. The
+cumulative kernel-drop counter is recorded once per batch (as upstream), and a
+burst from one source updates its route hint without the 64-entry scan.
+`fipsd_transport_emit_event` tries a plain channel send before building the
+cancellation select (all emitters).
+
+Not done: one channel hop per batch, and an event pool returned by the
+dispatcher. Both need the dispatcher loop (`node/context.c`), which frees each
+event itself and was being changed concurrently (nostrc-u19cz.12).
+
+**Send** (`transport/udp/udp.c`, `node/worker_set.c`,
+`node/dataplane/encrypted.c`). A crypto worker drains up to 32 jobs. For
+consecutive jobs sharing an `after_batch` step it runs their AEADs, then the
+step once over them, then queues their completions in order. The data-lane
+link send is that step on a transport with the new optional `send_batch` op
+(Linux UDP); other transports keep the per-frame `after` send. Per gate run
+(consecutive frames of one peer slot and transport) the worker takes the gate
+lock once and decides each frame in queue order exactly as a single send
+would: sent only at the generation captured at submit with nothing `held`, a
+held frame holding every later one. The frames it may send leave in one
+`send_batch`, in that order, before the lock is released, so a bump still
+waits for an in-progress send, and bounced frames still follow in completion
+order. Each frame keeps its own result (`send_rc`) and all accounting stays on
+the completion.
+
+UDP `send_batch` groups consecutive frames to one destination (one socket
+lease, one resolution) and issues one `sendmmsg` per group. A run of
+equal-size datagrams, of which only the last may be shorter, rides one
+message with a `UDP_SEGMENT` control message (GSO, at most 64 segments and
+65000 bytes); listener sends carry the pktinfo source beside it.
+Partial results: `sendmmsg` returning k < n resubmits from message k, so its
+error is learned; a failed plain message fails only its frame and the rest
+follow in order. A failed GSO message is resent, with the rest of the run, as
+plain messages, so its frames meet what single sends would (backpressure takes
+what fits; a pending socket error fails one send). If the kernel refused GSO
+itself (EIO: no checksum offload on the route; EINVAL, EOPNOTSUPP,
+ENOPROTOOPT, EMSGSIZE), that socket stops using GSO, with one warning. GSO is
+probed per socket at open with `getsockopt(UDP_SEGMENT)`, as quinn-udp does,
+because a kernel without it would ignore the control message and send one
+oversize datagram. `FIPSD_UDP_GSO=0` turns it off (diagnostics). Backpressure
+(EAGAIN) is still a send failure, never a wait, as with `sendmsg`.
+
+### Syscalls per datagram
+
+c-c, 5 s windows, every syscall of each daemon (including the native API and
+scheduler):
+
+| Paced 100 Mbit/s (~52k datagrams) | Base sender | New sender | Base receiver | New receiver |
+|---|---:|---:|---:|---:|
+| all syscalls | 411.5k | 385.9k | 334.1k | 286.8k |
+| UDP send (`sendmsg` / `sendmmsg`) | 52.5k | 11.7k | — | — |
+| UDP receive (`recvmsg` / `recvmmsg`) | — | — | 60.1k | 17.4k |
+| `fcntl` (libgo `set_nonblock`, nostrc-bmsti) | 104.9k | 63.9k | 99.8k | 59.4k |
+| `futex` | 172.2k | 221.2k | 111.3k | 141.8k |
+
+| Unpaced (~95k datagrams/s sent) | Base sender | New sender | Base receiver | New receiver |
+|---|---:|---:|---:|---:|
+| all syscalls | 2.07M | 1.01M | 1.38M | 0.33M |
+| UDP send / receive calls | 474.5k `sendmsg` | 25.8k `sendmmsg` | 484.6k `recvmsg` | 21.1k `recvmmsg` |
+| `fcntl` | 949.1k | 435.3k | 611.7k | 111.8k |
+| `futex` | 155.7k | 120.9k | 132.1k | 88.2k |
+
+At 100 Mbit/s a batch averages ~4.5 frames on the send side and ~3 datagrams
+per receive call (including the receive that finds the socket empty and
+parks). Unpaced: ~18 datagrams per `sendmmsg` and ~23 per `recvmmsg`.
+`futex` rises at the paced rate. The likely cause is the u19cz.3 inline rule,
+but it is not instrumented: a receive batch leaves events queued, and a worker
+holds a run's completions until its batched send, so fewer jobs run inline on
+the dispatcher (nostrc-u19cz.14).
+
+### Results
+
+Paced 100 Mbit/s, CPU microseconds per delivered datagram (traffic window).
+`*` marks runs in which the pair was already slow before load: serial one-way
+p50 of 0.58-1.9 ms against ~0.3 ms otherwise, with low CPU and 28-69% loss.
+Both builds show such runs (nostrc-u19cz.13).
+
+| | Base `ff3fe88e1` | u19cz.4 |
+|---|---:|---:|
+| c-c sender | 102.1, 102.7, 156.4*, 100.4 | 102.8, 168.0*, 96.2, 92.2* |
+| c-c receiver | 71.3, 70.6, 107.2*, 70.9 | 69.8, 116.2*, 67.4, 64.8* |
+| C sender to Rust | 103.3, 112.0, 102.5, 103.6 | 100.8, 97.6, 98.8, 85.4* |
+| c-c loss % | 1.0, 2.8, 59.5*, 0.1 | 4.4, 69.4*, 3.4, 28.1* |
+
+Means without the marked runs: c-c sender 101.7 -> 99.5 us, receiver
+70.9 -> 68.6 us, C sender to Rust 105.4 -> 99.1 us. That is 2-6% lower, within
+this VM's noise. In the same probes the Rust
+daemon costs 53-58 us (sender) and 63-73 us (receiver). The profile explains
+why the effect is small. On this VM, thread wake-ups (`futex` ->
+`try_to_wake_up`, an IPI under HVF) take ~30-35% of every daemon's samples.
+The UDP send path itself was 14.4% of the sender's samples before and 10.7%
+after (`udp_sendmsg` and loopback xmit, which on loopback includes the
+receiver's softirq and its wake), and the receive fiber 5.8% -> 4.9% of the
+receiver's (`fipsd_transport_emit` 1.3% -> `_emit_event` 0.3%).
+
+Unpaced delivered Mbit/s. Every row is receiver overload: C pairs lose
+65-73% (base) and 72-81% (new, whose sender offers more), Rust to Rust 97%.
+
+| | Base | u19cz.4 |
+|---|---:|---:|
+| c-c | 232.0, 248.6, 270.3, 284.5 | 207.3, 282.0, 274.6, 283.1 |
+| C to Rust | 254.1, 258.5, 185.1, 337.0 | 145.4, 214.5, 196.4, 257.0 |
+| Rust to Rust (unchanged) | 71.3, 77.0, 73.4, 76.8 | 81.0, 76.0, 83.9, 80.6 |
+
+Unpaced rows measure how a receiver sheds an overload, not capacity. The
+faster C sender (more sent: 1.55M vs 1.34M in one 14 s C-to-Rust window) lets
+the Rust receiver deliver less. On the C receiver, every drop in both builds is
+native delivery (`native.drop_flow_queue_full`). There are no kernel receive
+drops and no UDP send errors (`show_metrics`/`show_transports` after fixed
+100/200 Mbit/s probes, 2 each). Batched receive did not raise those drops:
+base 2794, 3628 (100) and 17455, 36706 (200), new 521, 6100 and 13771, 22888.
+
+Sustainable (<1% loss) payload Mbit/s, 4 runs each. Noise again: the unchanged
+Rust-to-Rust pair ranged 36-200 Mbit/s.
+
+| | Base | u19cz.4 |
+|---|---:|---:|
+| c-c | 107.8, 47.7, 112.5, 60.2 | 93.7, 100.0, 46.9, 51.6 |
+| C to Rust | 49.2, 81.2, 85.9, 35.2 | 63.3, 106.2, 87.5, 74.2 |
+| Rust to Rust (unchanged) | 75.8, 35.9, 151.6, 95.3 | 47.7, 103.1, 125.0, 200.0 |
+
+**Noise.** At a fixed 100 Mbit/s the VM's loaded one-way p50 is 1.0-1.4 ms.
+Failures in the sustainable search look like sporadic stalls rather than a
+rate limit: one base C-to-Rust search lost 5.6% at 50 Mbit/s, then passed every
+probe up to 49.2. These rates are recorded, not claimed as a gain or a
+regression; the syscall counts and the profile shares are the reliable
+evidence.
+
+Verification: Debug `-DGO_WARNINGS_AS_ERRORS=ON`, `ctest -R
+'^Fips|^GoFiberIoDatagram' -E 'Soak|Perf'`, with both Rust interop binaries
+set.
+
+- Linux VM, clang 18 ASan+UBSan: 226 tests, 0 failures, 11 capability skips.
+  The Linux-only cases ran: one-call `recvmmsg` burst, batched sends over
+  connected and listener sockets with GSO probed, and the libgo mmsg tests.
+- Linux VM, clang 18 TSan (vendored nsync, `-E '^FipsCore'`): 187 tests,
+  2 failures, both pre-existing. `FipsdNodeMultiRingTest` and
+  `FipsdNodeMultiFullMeshTest` hit a report on OpenSSL's per-thread
+  `EVP_CIPHER_CTX` between two in-process nodes' dispatcher fibers; the
+  unmodified base reproduced it 5/5 (nostrc-u19cz.16). Nothing else was
+  reported.
+- Linux VM, gcc 13.3 Release `-O3 -Werror`: everything builds except
+  `libfips-core/tests/test_aead_residue.c`, pre-existing (nostrc-u19cz.17).
+  226 tests, 0 failures, 2 not built, 11 skips.
+- macOS, Apple clang ASan+UBSan: 224 tests, 0 failures, 8 skips. TSan
+  (vendored nsync, `-E '^FipsCore'`): 185 tests, 0 failures, 8 skips, no
+  reports. `FipsdDataplaneTest` repeated 30/30 under ASan.
+- Stage 1 alone (`780ef2975`) builds with gcc `-Werror` on Linux, and its
+  UDP, dataplane, libgo and UDP two-node tests pass.
+- Skips are capability skips: privileged TUN/IPv6/Ethernet/gateway smoke,
+  BlueZ, Tor, the control and fipsctl interop (upstream checkout and cargo),
+  and the kqueue-only native probe on Linux.
+
+Stage 3 (outbound fusion, nostrc-ov6k4) was not attempted. On the VM the
+sender is bound by its dispatcher thread and by thread wakes, not by the link
+worker; on macOS the link worker is still the single-flow bottleneck (u19cz.3)
+and keeps per-datagram sends, so fusion would cost throughput there.
+
+macOS (M4 Max, shared host, load average ~20) keeps every per-datagram path:
+the worker's per-frame send (no `send_batch` op), `recvmsg` into one buffer
+and the copying emit. Only the emit's channel fast path and the receive
+route-hint cache are shared with Linux. Release builds of base and final code,
+alternating as on the VM:
+
+| macOS | Base `ff3fe88e1` | u19cz.4 |
+|---|---:|---:|
+| 100 Mbit/s CPU us/datagram, c-c sender | 49.9, 53.6, 55.1, 51.9 | 45.4, 51.1, 49.2, 43.5 |
+| 100 Mbit/s CPU us/datagram, c-c receiver | 43.1, 48.8, 48.3, 47.5 | 44.7, 43.9, 44.6, 42.3 |
+| 100 Mbit/s CPU us/datagram, C sender to Rust | 53.8, 63.7, 50.9, 59.2 | 45.0, 54.0, 60.9, 37.4 |
+| unpaced c-c Mbit/s | 776.3, 354.7, 530.7, 647.8 | 559.9, 609.7, 415.1, 593.0 |
+| unpaced Rust to Rust (unchanged) | 438.2, 386.4, 544.9, 241.9 | 681.0, 655.0, 72.5, 319.7 |
+
+No regression is visible beyond the host noise shown by the unchanged pair.
+
+Deferred, with beads:
+
+- One dispatcher channel hop per receive batch, and a dispatcher-returned
+  event pool (nostrc-u19cz.12).
+- Intermittent slow C-C pair on the VM, in both builds (nostrc-u19cz.13).
+- Fewer inline crypto runs at moderate rates with batched I/O, measured as
+  the `futex` rise (nostrc-u19cz.14).
+- Darwin `recvmsg_x`/`sendmsg_x` batching, as upstream does on macOS
+  (nostrc-u19cz.15).
+- Pre-existing gate failures found here: Linux TSan on the OpenSSL
+  per-thread context (nostrc-u19cz.16), and gcc `-Werror` in
+  `test_aead_residue.c` (nostrc-u19cz.17).
+- Outbound fusion stays deferred (nostrc-ov6k4).
+
 ## Dataplane threads: nostrc-u19cz.3
 
 Measured **2026-11-19** on the M4 Max below (Release `-O3 -g`, local macOS, not

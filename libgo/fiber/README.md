@@ -186,6 +186,23 @@ unlike `gof_write`, they never split a message or resend its control data.
 so callers retain the usual responsibility to inspect them and close received
 `SCM_RIGHTS` fds. The Windows implementations return `-1`/`ENOTSUP`.
 
+On Linux only (not declared elsewhere), two batch forms take an array of
+`struct mmsghdr` (define `_GNU_SOURCE` before the system headers):
+
+```c
+int gof_recvmmsg(gof_socket_t fd, struct mmsghdr *msgs, unsigned int vlen, int flags, int timeout_ms);
+int gof_sendmmsg(gof_socket_t fd, struct mmsghdr *msgs, unsigned int vlen, int flags, int timeout_ms);
+```
+
+They follow the message wrappers' contract per call (nostrc-u19cz.4): one
+`recvmmsg(2)`/`sendmmsg(2)` moves up to `vlen` messages, and the fiber parks only
+while the syscall would move none. They return the number moved (each
+message's `msg_len`, and on receive its name/control lengths and `msg_flags`, as
+the kernel left them), or `-1` with errno. A short count is not an error. On
+receive, fewer were queued. On send, message `count` failed and its error is not
+reported, so resubmit from it to learn it. `recvmmsg` gets no kernel timeout.
+A zero `timeout_ms` never parks, so a plain OS thread may call either with it.
+
 For owner-directed teardown, prepare a newly owned fd with `gof_io_reset_fd`
 (which may fail allocation), then use `gof_io_cancel_fd` to latch `ECANCELED`
 for existing and future readiness waits. This includes cancellation between
