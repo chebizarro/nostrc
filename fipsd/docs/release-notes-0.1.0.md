@@ -82,8 +82,15 @@ What changed in the pass:
 
 Details and the full measurements are in [`perf.md`](perf.md).
 
-Mixed pairs are limited by the Rust receiver: a C sender now offers more than
-the Rust daemon delivers, so unpaced C→Rust shows high loss.
+**Mixed pairs under overload.** The pinned Rust daemon's receive path collapses
+when it is offered more than it can absorb. Rust↔Rust delivers about 55 Mbit/s
+at 98% loss in the unpaced CI benchmark. The 0.1.0 C sender is fast enough to
+push it there too: on hosted CI, unpaced C→Rust went from 421 Mbit/s (old C
+sender, just under the collapse point) to 58 Mbit/s, equal to Rust→Rust.
+
+This only affects senders that exceed the Rust receiver's capacity without
+backing off, such as the synthetic unpaced benchmark. TCP over the TUN adapts
+to loss. At paced rates the Rust receiver can sustain, C→Rust delivers normally.
 
 ## Security
 

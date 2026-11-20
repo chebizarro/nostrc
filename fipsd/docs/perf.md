@@ -1077,6 +1077,25 @@ spreads from the raw artifacts; missing/invalid measurements still fail closed.
 The job summary shows each gated micro's effective noise floor. No new CLI flags,
 workflow changes, baseline refresh or additional benchmark runs are needed.
 
+**Rust-receiver bound (nostrc-u19cz).** Unpaced `c-rust` goodput measures a C
+sender into the pinned Rust daemon's receiver. That receiver collapses under
+unpaced overload: Rust↔Rust delivers about 55 Mbit/s at about 98% loss on hosted
+runners. After the optimization pass the C sender offers more than the receiver
+absorbs, so `c-rust` falls into the same collapse. Hosted run
+[44700102649](https://github.com/chebizarro/nostrc/actions/runs/44700102649)
+measured:
+- `c-rust`: 421 → 58 Mbit/s;
+- `rust-rust`: 55 → 57 Mbit/s;
+- `c-c`: 434 → 924 Mbit/s.
+
+So a hosted `c-rust` goodput drop is waived, and becomes a `::warning`, only
+while `c-rust` still delivers at least 90% of the candidate's own `rust-rust`
+goodput in the same run. A C sender that does worse than the Rust sender into
+the same receiver still fails. `c-c` is never waived. Local mode is unchanged.
+Unit tests: `test_c_rust_bounded_by_rust_receiver_warns_not_fails`,
+`test_c_rust_below_rust_control_still_fails`, and
+`test_rust_control_does_not_excuse_c_c`.
+
 **Hosted calibration evidence.** Failed logs and downloadable
 `fips-bench-results` artifacts from runs
 [44082939871](https://github.com/chebizarro/nostrc/actions/runs/44082939871),

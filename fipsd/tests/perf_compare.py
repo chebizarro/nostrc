@@ -159,6 +159,26 @@ def hosted_gated(name):
             and name.endswith('/median_ns') and '_cross_thread' not in name)
 
 
+RUST_RECEIVER_BOUND = 'loopback/c-rust/throughput_mbps'
+RUST_CONTROL = 'loopback/rust-rust/throughput_mbps'
+
+
+def rust_receiver_bound(name, actual, tolerance):
+    """True when C->Rust goodput is limited by the Rust receiver, not by C.
+
+    The pinned Rust daemon's receive path collapses under unpaced overload
+    (Rust<->Rust delivers ~55 Mbit/s at ~98% loss on hosted runners). A C
+    sender that offers more than that receiver absorbs drives c-rust into the
+    same collapse (nostrc-u19cz). That is not a C regression as long as C->Rust
+    still delivers at least what Rust->Rust delivers in the same candidate run.
+    A C sender worse than the Rust sender into the same receiver still fails.
+    """
+    if name != RUST_RECEIVER_BOUND or RUST_CONTROL not in actual:
+        return False
+    control = positive(actual[RUST_CONTROL]['value'])
+    return positive(actual[name]['value']) >= control * (1 - tolerance)
+
+
 def hosted_compare(actual, reference, tolerance=.10, warn_p50=.50):
     """(regressions in gated metrics, report rows for every metric, warnings)."""
     if actual.keys() != reference.keys():
@@ -184,6 +204,11 @@ def hosted_compare(actual, reference, tolerance=.10, warn_p50=.50):
                             HOSTED_MICRO_SPREAD_MULTIPLIER * max(spreads))
                 if a - b <= floor:
                     regression = []
+            if regression and rust_receiver_bound(name, actual, tolerance):
+                control = positive(actual[RUST_CONTROL]['value'])
+                warnings.append(f'{name}: {b:.3f} -> {a:.3f} ({delta * 100:+.1f}%) is bounded by the '
+                                f'Rust receiver: rust-rust delivered {control:.3f} in the same run')
+                regression = []
             failures.extend(regression)
         rows.append((name, b, a, delta, gated, floor))
         if name.endswith('/p50_us') and delta > warn_p50:
@@ -260,7 +285,8 @@ def main():
             if not gated:
                 print(f'reported: {name}: {b:.3f} -> {a:.3f} ({delta * 100:+.1f}%)')
         for line in warnings:
-            print(f'::warning title=FIPS loopback latency::{line} (report-only on hosted runners)')
+            title = 'FIPS loopback goodput' if '/throughput_mbps' in line else 'FIPS loopback latency'
+            print(f'::warning title={title}::{line} (report-only on hosted runners)')
         if args.summary:
             with args.summary.open('a') as out:
                 out.write(summary_markdown(rows, policy['reference_commit'], policy['tolerance']))

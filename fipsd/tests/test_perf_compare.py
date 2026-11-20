@@ -199,6 +199,36 @@ class HostedPolicyTest(unittest.TestCase):
             failures, _, _ = hosted_compare(self.scaled(predicate, factor), self.reference)
             self.assertTrue(failures)
 
+    def with_goodput(self, base, **values):
+        out = copy.deepcopy(base)
+        for pairing, value in values.items():
+            out[f'loopback/{pairing.replace("_", "-")}/throughput_mbps']['value'] = value
+        return out
+
+    def test_c_rust_bounded_by_rust_receiver_warns_not_fails(self):
+        # Hosted run 44700102649: the faster C sender drove the pinned Rust
+        # receiver into the same overload collapse Rust<->Rust shows.
+        base = self.with_goodput(self.reference, c_c=434, c_rust=421, rust_rust=55)
+        actual = self.with_goodput(self.reference, c_c=924, c_rust=58, rust_rust=56)
+        failures, _, warnings = hosted_compare(actual, base)
+        self.assertEqual(failures, [])
+        self.assertEqual(len(warnings), 1)
+        self.assertIn('bounded by the Rust receiver', warnings[0])
+
+    def test_c_rust_below_rust_control_still_fails(self):
+        base = self.with_goodput(self.reference, c_c=434, c_rust=421, rust_rust=55)
+        actual = self.with_goodput(self.reference, c_c=924, c_rust=49, rust_rust=56)
+        failures, _, _ = hosted_compare(actual, base)
+        self.assertEqual(len(failures), 1)
+        self.assertIn('loopback/c-rust/throughput_mbps', failures[0])
+
+    def test_rust_control_does_not_excuse_c_c(self):
+        base = self.with_goodput(self.reference, c_c=434, c_rust=421, rust_rust=55)
+        actual = self.with_goodput(self.reference, c_c=380, c_rust=421, rust_rust=500)
+        failures, _, _ = hosted_compare(actual, base)
+        self.assertEqual(len(failures), 1)
+        self.assertIn('loopback/c-c/throughput_mbps', failures[0])
+
     def test_p50_beyond_fifty_percent_warns(self):
         actual = self.scaled(lambda n: n.endswith('/p50_us'), 1.6)
         failures, _, warnings = hosted_compare(actual, self.reference)
