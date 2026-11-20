@@ -482,7 +482,9 @@ static void test_accept(void) {
     NostrRelayAuthStatus st = status_of(relay);
     CHECK(st.state == NOSTR_RELAY_AUTH_STATE_ACCEPTED && st.sequence == r.frame.sequence);
     CHECK(!strcmp(st.event_id, r.event_id));
-    /* The OK callback saw the same frame, after the session settled. */
+    /* The OK callback saw the same frame; it runs after the session settled
+     * (and after the result callback), so wait for it. */
+    WAIT_FOR(obs.ok_frames == 1);
     pthread_mutex_lock(&obs.mu);
     CHECK(obs.ok_frames == 1 && obs.last_ok_frame.sequence == r.frame.sequence);
     pthread_mutex_unlock(&obs.mu);
