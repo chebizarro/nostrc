@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.22)
 project(nostrc C)
+# fipsd's CoreBluetooth agent (fipsd/src/ble-agent/*.m) is Objective-C. CMake
+# needs the language enabled in the top-level scope for the generate step to
+# have the OBJC rule variables, not only in the directory that adds the target.
+if(APPLE)
+  enable_language(OBJC)
+endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
@@ -233,11 +239,6 @@ ${_gui_frame_check_output}${_gui_frame_check_error}")
   endif()
 endif()
 
-option(BUILD_RELAYD "Build the relayd application (requires nsync)" ON)
-if (BUILD_RELAYD AND EXISTS ${CMAKE_SOURCE_DIR}/apps/relayd/CMakeLists.txt)
-  add_subdirectory(apps/relayd)
-endif()
-
 # Global hardening flags (GCC/Clang); keep portable and avoid breaking MSVC
 if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   add_compile_options(-fstack-protector-strong -fno-strict-aliasing)
@@ -278,28 +279,29 @@ option(ENABLE_NSON "Enable NSON compilation" OFF)
 
 # Sanitizer helper (Debug builds)
 function(apply_sanitizers target)
+  # A static archive has no link step of its own: its consumers must select
+  # the compiler's sanitizer runtime when they link the instrumented objects.
+  get_target_property(_type ${target} TYPE)
+  set(_link_scope PRIVATE)
+  if(_type STREQUAL "STATIC_LIBRARY")
+    set(_link_scope PUBLIC)
+  endif()
   # Always honor GO_ENABLE_* toggles regardless of build type so CI (which may
   # use RelWithDebInfo) still links sanitizer DSOs for executables.
+  # -fsanitize=* on the link line selects the compiler's own runtime. Never name
+  # tsan/asan/ubsan libraries explicitly: under Clang that adds GCC's shared
+  # runtime beside Clang's static one, and two TSan runtimes crash at startup.
   if (GO_ENABLE_TSAN)
     target_compile_options(${target} PRIVATE -fsanitize=thread -fno-omit-frame-pointer)
-    target_link_options(${target} PRIVATE -fsanitize=thread)
-    if (UNIX AND NOT APPLE)
-      target_link_libraries(${target} PRIVATE tsan)
-    endif()
+    target_link_options(${target} ${_link_scope} -fsanitize=thread)
   endif()
   if (GO_ENABLE_ASAN)
     target_compile_options(${target} PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-    target_link_options(${target} PRIVATE -fsanitize=address)
-    if (UNIX AND NOT APPLE)
-      target_link_libraries(${target} PRIVATE asan)
-    endif()
+    target_link_options(${target} ${_link_scope} -fsanitize=address)
   endif()
   if (GO_ENABLE_UBSAN)
     target_compile_options(${target} PRIVATE -fsanitize=undefined)
-    target_link_options(${target} PRIVATE -fsanitize=undefined)
-    if (UNIX AND NOT APPLE)
-      target_link_libraries(${target} PRIVATE ubsan)
-    endif()
+    target_link_options(${target} ${_link_scope} -fsanitize=undefined)
   endif()
 endfunction()
 
@@ -308,11 +310,8 @@ endfunction()
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
   if (GO_ENABLE_TSAN)
     add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -O2)
+    # The driver links the runtime; an explicit -ltsan would add a second one (see apply_sanitizers).
     add_link_options(-fsanitize=thread)
-    if (UNIX AND NOT APPLE)
-      # Ensure explicit tsan runtime linkage for lld on Linux
-      add_link_options(-ltsan)
-    endif()
   else()
     if (GO_ENABLE_ASAN)
       add_compile_options(-fsanitize=address -fno-omit-frame-pointer -O2)
@@ -371,6 +370,25 @@ endif()
 add_subdirectory(libgo)
 add_subdirectory(libjson)
 add_subdirectory(libnostr)
+apply_sanitizers(nostr)
+
+# Applications inherit sanitizer setup and the foundations' usage requirements.
+option(BUILD_RELAYD "Build the relayd application (requires nsync)" ON)
+if (BUILD_RELAYD AND EXISTS ${CMAKE_SOURCE_DIR}/apps/relayd/CMakeLists.txt)
+  add_subdirectory(apps/relayd)
+endif()
+
+# FIPS keeps pure protocol code separate from its runtime/I/O host.
+option(BUILD_FIPS "Build the FIPS protocol core and host daemon skeletons" ON)
+if(BUILD_FIPS)
+  add_subdirectory(libfips-core)
+  if(TARGET go_fiber)
+    add_subdirectory(fipsd)
+  else()
+    message(STATUS "Skipping fipsd: the go_fiber runtime is unavailable on this platform")
+  endif()
+endif()
+
 # Both backend layouts compile the same pinned vendor sources. Patch only build
 # copies so configuring never dirties the submodule (nostrc-wktgk).
 include(cmake/NostrdbPatches.cmake)

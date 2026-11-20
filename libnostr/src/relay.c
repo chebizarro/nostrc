@@ -11,7 +11,7 @@
 #include "subscription-private.h"
 #include "nostr-subscription.h"
 #include "nostr-utils.h"
-#include "nostr/metrics.h"
+#include "metrics-private.h"
 #include "security_limits_runtime.h"
 #include "nostr_log.h"
 #include "go.h"
@@ -19,20 +19,21 @@
 #include "select.h"
 #include "context.h"
 #include <stdatomic.h>
+#include <pthread.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
+static pthread_once_t shutdown_dbg_once = PTHREAD_ONCE_INIT;
+static int shutdown_dbg_value;
+static void shutdown_dbg_init(void) {
+    const char *e = getenv("NOSTR_DEBUG_SHUTDOWN");
+    shutdown_dbg_value = (e && *e && strcmp(e, "0") != 0) ? 1 : 0;
+}
 static int shutdown_dbg_enabled(void) {
-    static int inited = 0;
-    static int enabled = 0;
-    if (!inited) {
-        const char *e = getenv("NOSTR_DEBUG_SHUTDOWN");
-        enabled = (e && *e && strcmp(e, "0") != 0) ? 1 : 0;
-        inited = 1;
-    }
-    return enabled;
+    pthread_once(&shutdown_dbg_once, shutdown_dbg_init);
+    return shutdown_dbg_value;
 }
 
 /* === Security: invalid signature tracking (per-pubkey sliding window + ban) === */
@@ -477,7 +478,7 @@ bool nostr_relay_is_connected(NostrRelay *relay) {
     if (!relay) return false;
     nsync_mu_lock(&relay->priv->mutex);
     bool connected = false;
-    if (relay->connection && relay->connection->priv) {
+    if (!relay->priv->closing && relay->connection && relay->connection->priv) {
         nsync_mu_lock(&relay->connection->priv->mutex);
         /* In test mode, connection is always "connected" since we bypass real network */
         if (relay->connection->priv->test_mode) {
@@ -1059,8 +1060,7 @@ static void *write_operations(void *arg) {
             nostr_metric_timer t = {0};
             nostr_metric_timer_start(&t);
             nostr_connection_write_message(conn, r->priv->connection_context, req->msg, &werr);
-            static nostr_metric_histogram *h_ws_write_ns;
-            if (!h_ws_write_ns) h_ws_write_ns = nostr_metric_histogram_get("ws_write_ns");
+            NOSTR_METRIC_HISTOGRAM(h_ws_write_ns, "ws_write_ns");
             nostr_metric_timer_stop(&t, h_ws_write_ns);
             if (req->msg) {
                 nostr_metric_counter_add("ws_tx_bytes", (uint64_t)strlen(req->msg));
@@ -1316,7 +1316,6 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
 // calls this concurrently, and the plain check-then-set statics were a race.
 static int metrics_sample_rate = 0;
 static int debug_incoming_cached = -1;
-static int debug_eose_cached = -1;
 static pthread_once_t g_cached_env_once = PTHREAD_ONCE_INIT;
 
 static void init_cached_env_once(void) {
@@ -1325,7 +1324,6 @@ static void init_cached_env_once(void) {
     if (metrics_sample_rate <= 0) metrics_sample_rate = 100;
     const char *dbg = getenv("NOSTR_DEBUG_INCOMING");
     debug_incoming_cached = (dbg && *dbg && strcmp(dbg, "0") != 0) ? 1 : 0;
-    debug_eose_cached = getenv("NOSTR_DEBUG_EOSE") ? 1 : 0;
 }
 
 static void init_cached_env(void) {
@@ -1460,8 +1458,7 @@ static void *message_loop(void *arg) {
             nostr_metric_timer t_parse = {0};
             nostr_metric_timer_start(&t_parse);
             envelope = nostr_envelope_parse(buf);
-            static nostr_metric_histogram *h_envelope_parse_ns;
-            if (!h_envelope_parse_ns) h_envelope_parse_ns = nostr_metric_histogram_get("envelope_parse_ns");
+            NOSTR_METRIC_HISTOGRAM(h_envelope_parse_ns, "envelope_parse_ns");
             nostr_metric_timer_stop(&t_parse, h_envelope_parse_ns);
         } else {
             envelope = nostr_envelope_parse(buf);
@@ -1530,8 +1527,7 @@ static void *message_loop(void *arg) {
                     nostr_metric_timer_start(&t_verify);
                     validation_status =
                         nostr_event_validate(env->event, canonical_id);
-                    static nostr_metric_histogram *h_event_verify_ns;
-                    if (!h_event_verify_ns) h_event_verify_ns = nostr_metric_histogram_get("event_verify_ns");
+                    NOSTR_METRIC_HISTOGRAM(h_event_verify_ns, "event_verify_ns");
                     nostr_metric_timer_stop(&t_verify, h_event_verify_ns);
                     nostr_metric_counter_add("event_verify_sampled", metrics_sample_rate);
                 } else {
@@ -1594,8 +1590,7 @@ static void *message_loop(void *arg) {
                             nostr_metric_timer t_dispatch = {0};
                             nostr_metric_timer_start(&t_dispatch);
                             nostr_subscription_dispatch_event(subscription, env->event);
-                            static nostr_metric_histogram *h_event_dispatch_ns;
-                            if (!h_event_dispatch_ns) h_event_dispatch_ns = nostr_metric_histogram_get("event_dispatch_ns");
+                            NOSTR_METRIC_HISTOGRAM(h_event_dispatch_ns, "event_dispatch_ns");
                             nostr_metric_timer_stop(&t_dispatch, h_event_dispatch_ns);
                             nostr_metric_counter_add("event_dispatch_sampled", metrics_sample_rate);
                         } else {
@@ -1778,8 +1773,7 @@ void nostr_relay_publish(NostrRelay *relay, NostrEvent *event) {
     nostr_metric_timer t_ser = {0};
     nostr_metric_timer_start(&t_ser);
     char *event_json = nostr_event_serialize_compact(event);
-    static nostr_metric_histogram *h_event_serialize_ns;
-    if (!h_event_serialize_ns) h_event_serialize_ns = nostr_metric_histogram_get("event_serialize_ns");
+    NOSTR_METRIC_HISTOGRAM(h_event_serialize_ns, "event_serialize_ns");
     nostr_metric_timer_stop(&t_ser, h_event_serialize_ns);
     if (!event_json) {
         fprintf(stderr, "[nostr_relay_publish] ERROR: failed to serialize event\n");
@@ -1930,26 +1924,48 @@ char *nostr_relay_get_auth_challenge(NostrRelay *relay, uint64_t *generation) {
     return challenge;
 }
 
-void nostr_relay_auth(NostrRelay *relay, void (*sign)(NostrEvent *, Error **), Error **err) {
-
-    NostrEvent auth_event = {
-        .id = NULL,
-        .pubkey = NULL,
-        .created_at = 0,
-        .kind = NOSTR_KIND_CLIENT_AUTHENTICATION,
-        .tags = nostr_tags_new(2,
-                nostr_tag_new("challenge", relay->priv->challenge, NULL),
-                nostr_tag_new("relay", relay->url, NULL)),
-        .content = strdup(""),
-        .sig = NULL};
-    Error *sig_err = NULL;
-    sign(&auth_event, &sig_err);
-    if (sig_err) {
-        if (err) *err = sig_err;
+static void relay_auth_impl(NostrRelay *relay, void (*sign)(NostrEvent *, Error **),
+                            uint64_t wait_ms, Error **err) {
+    char *challenge = relay ? nostr_relay_get_auth_challenge(relay, NULL) : NULL;
+    if (!challenge || !sign) {
+        free(challenge);
+        if (err) *err = new_error(1, "no current AUTH challenge or signer");
         return;
     }
-    nostr_relay_publish(relay, &auth_event);
-    nostr_tags_free(auth_event.tags);
+    NostrEvent *event = nostr_event_new();
+    if (!event) { free(challenge); if (err) *err = new_error(1, "AUTH allocation failed"); return; }
+    event->kind = NOSTR_KIND_CLIENT_AUTHENTICATION;
+    event->created_at = (int64_t)time(NULL);
+    /* nostr_event_new already allocated an empty tag list; the setter frees it. */
+    nostr_event_set_tags(event, nostr_tags_new(2, nostr_tag_new("challenge", challenge, NULL),
+        nostr_tag_new("relay", relay->url, NULL)));
+    event->content = strdup("");
+    free(challenge);
+    Error *failure = NULL;
+    sign(event, &failure);
+    if (!failure) {
+        if (wait_ms == 0)
+            nostr_relay_publish(relay, event); /* OK/false still arrives via the OK callback */
+        else if (!nostr_relay_publish_and_wait(relay, event, wait_ms, &failure) && !failure)
+            failure = new_error(1, "AUTH rejected");
+    }
+    nostr_event_free(event);
+    if (err) *err = failure;
+    else if (failure) free_error(failure);
+}
+
+void nostr_relay_auth(NostrRelay *relay, void (*sign)(NostrEvent *, Error **), Error **err) {
+    relay_auth_impl(relay, sign, 0, err);
+}
+
+bool nostr_relay_auth_wait(NostrRelay *relay, void (*sign)(NostrEvent *, Error **),
+                           uint64_t timeout_ms, Error **err) {
+    Error *failure = NULL;
+    relay_auth_impl(relay, sign, timeout_ms ? timeout_ms : 5000, &failure);
+    bool ok = failure == NULL;
+    if (err) *err = failure;
+    else if (failure) free_error(failure);
+    return ok;
 }
 
 bool nostr_relay_subscribe(NostrRelay *relay, GoContext *ctx, NostrFilters *filters, Error **err) {

@@ -28,6 +28,7 @@ MIRRORED = (
     ".github/workflows/gnostr-appimage.yml",
     ".github/workflows/signet-ci.yml",
     ".github/workflows/nostrc-ci.yml",
+    ".github/workflows/fips-ci.yml",
 )
 NOT_BUILD_DEPS = {
     "cloud-init": "signet-ci validates deployment cloud-init schema; not a build dependency",
@@ -37,6 +38,10 @@ NOT_BUILD_DEPS = {
     "patchelf": "gnostr-appimage rewrites the bundle's RPATHs",
     "python3-pip": "gnostr-appimage installs blueprint-compiler 0.22 for its .ui "
                    "regeneration, which the gate disables (BLUEPRINT_COMPILER=OFF)",
+    "iproute2": "fips-ci chaos-netns runs root-only network-namespace scenarios; not a build dependency",
+    "nftables": "fips-ci chaos-netns builds the NAT routers of those scenarios; not a build dependency",
+    "iperf3": "fips-ci chaos-netns generates background load in those scenarios; not a build dependency",
+    "conntrack": "fips-ci chaos-netns reads the NAT routers' mappings as evidence; not a build dependency",
 }
 
 # Development headers alone do not provide decodebin, AAC/MP4 demux/decoder,
@@ -100,11 +105,11 @@ def apt_packages(text):
 
 def check(root):
     root = Path(root)
-    image = apt_packages((root / DOCKERFILE).read_text())
+    image = apt_packages((root / DOCKERFILE).read_text(encoding="utf-8"))
     if not image:
         return [f"{DOCKERFILE}: no apt-get install packages found"]
     problems = []
-    settings = settings_build_dependencies((root / SETTINGS_CONTROL).read_text())
+    settings = settings_build_dependencies((root / SETTINGS_CONTROL).read_text(encoding="utf-8"))
     for package in sorted(settings - image - SOURCE_BUILD_DEPS):
         # The image's debhelper supplies debhelper-compat (= 13).
         if package == "debhelper-compat" and "debhelper" in image:
@@ -119,7 +124,7 @@ def check(root):
         if not path.is_file():
             problems.append(f"{workflow}: mirrored workflow is missing (update MIRRORED)")
             continue
-        workflow_packages = apt_packages(path.read_text())
+        workflow_packages = apt_packages(path.read_text(encoding="utf-8"))
         if workflow == ".github/workflows/groundhog-ci.yml":
             for package in sorted(REQUIRED_GSTREAMER_RUNTIME - workflow_packages):
                 problems.append(f"{workflow}: missing required voice runtime package {package}")
@@ -148,26 +153,26 @@ def self_test():
         root = Path(tmp)
         (root / "scripts").mkdir()
         (root / ".github/workflows").mkdir(parents=True)
-        (root / DOCKERFILE).write_text(dockerfile)
+        (root / DOCKERFILE).write_text(dockerfile, encoding="utf-8")
         (root / SETTINGS_CONTROL).parent.mkdir(parents=True)
-        (root / SETTINGS_CONTROL).write_text("Build-Depends: libfoo-dev,\n libgrotto-panels-0-dev (>= 0.1.0)\nStandards-Version: 4.6.2\n")
+        (root / SETTINGS_CONTROL).write_text("Build-Depends: libfoo-dev,\n libgrotto-panels-0-dev (>= 0.1.0)\nStandards-Version: 4.6.2\n", encoding="utf-8")
         for workflow in MIRRORED:
-            (root / workflow).write_text(good)
+            (root / workflow).write_text(good, encoding="utf-8")
         assert check(root) == [], check(root)
-        (root / SETTINGS_CONTROL).write_text("Build-Depends: libmissing-settings-dev\n")
+        (root / SETTINGS_CONTROL).write_text("Build-Depends: libmissing-settings-dev\n", encoding="utf-8")
         assert check(root) == [f"{SETTINGS_CONTROL}: build dependency libmissing-settings-dev missing from {DOCKERFILE}"]
-        (root / SETTINGS_CONTROL).write_text("Build-Depends: libfoo-dev,\n libgrotto-panels-0-dev (>= 0.1.0)\n")
-        (root / MIRRORED[0]).write_text(bad)
+        (root / SETTINGS_CONTROL).write_text("Build-Depends: libfoo-dev,\n libgrotto-panels-0-dev (>= 0.1.0)\n", encoding="utf-8")
+        (root / MIRRORED[0]).write_text(bad, encoding="utf-8")
         found = check(root)
         assert found == [f"{MIRRORED[0]}: installs libnew-dev, which {DOCKERFILE} does not"], found
-        (root / MIRRORED[0]).write_text(good.replace("libzbar-dev", ""))
+        (root / MIRRORED[0]).write_text(good.replace("libzbar-dev", ""), encoding="utf-8")
         found = check(root)
         assert found == [f"{MIRRORED[0]}: missing required signer package libzbar-dev"], found
-        (root / MIRRORED[0]).write_text(good)
-        (root / MIRRORED[1]).write_text(good.replace("gstreamer1.0-libav", ""))
+        (root / MIRRORED[0]).write_text(good, encoding="utf-8")
+        (root / MIRRORED[1]).write_text(good.replace("gstreamer1.0-libav", ""), encoding="utf-8")
         found = check(root)
         assert found == [f"{MIRRORED[1]}: missing required voice runtime package gstreamer1.0-libav"], found
-        (root / MIRRORED[1]).write_text(good)
+        (root / MIRRORED[1]).write_text(good, encoding="utf-8")
         (root / MIRRORED[1]).unlink()
         assert any("missing" in p for p in check(root))
     print("check-linux-ci-packages self-test passed")

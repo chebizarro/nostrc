@@ -1,0 +1,14 @@
+schema_version: "1.1"
+name: design-relay-preferences-page
+expected_outcome: |
+  relays-page.blp defines an Adw.PreferencesPage composed of
+  Adw.PreferencesGroup(s) with boxed-list rows: the relay list uses Adw rows
+  (e.g. Adw.ActionRow / Adw.ExpanderRow) with a remove control at the end of
+  each row and an add affordance (button row or add button in the group
+  header), Read/Write use Adw.SwitchRow (or switches in rows) with
+  header-capitalized noun labels, the timeout uses Adw.SpinRow with a 1–120
+  range, and auto-reconnect uses Adw.SwitchRow. New-relay entry uses an
+  Adw.EntryRow with an instruction-style placeholder ending in an ellipsis
+  character. Labels follow HIG capitalization and have no trailing periods.
+  DESIGN.md explains each widget choice by reference to the HIG boxed-list /
+  switch / spin-button guidance rather than aesthetics alone.

@@ -1,3 +1,4 @@
+#include <stdint.h> /* intptr_t: long is 32-bit on LLP64 Windows */
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
@@ -9,7 +10,7 @@ void *send_to_channel(void *arg) {
     
     for (int i = 0; i < 5; i++) {
         printf("Sending value %d to the channel...\n", i);
-        go_channel_send(chan, (void *)(long)i);  // Send integer values as void pointers
+        go_channel_send(chan, (void *)(intptr_t)i);  // Send integer values as void pointers
         sleep(1);  // Simulate some work
     }
 
@@ -23,7 +24,7 @@ void *receive_from_channel(void *arg) {
     void *value;
 
     while (go_channel_receive(chan, &value) == 0) {  // Receive from the channel
-        printf("Received value: %ld from the channel\n", (long)value);
+        printf("Received value: %ld from the channel\n", (long)(intptr_t)value);
     }
 
     printf("Channel closed, no more values to receive.\n");

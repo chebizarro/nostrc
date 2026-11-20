@@ -1,0 +1,10 @@
+usr/bin/fipsd
+usr/bin/fipsctl
+usr/lib/*/fipsd/
+usr/lib/systemd/system/fipsd.service
+usr/lib/systemd/system/fips-dns.service
+usr/lib/systemd/system/fips-firewall.service
+usr/lib/tmpfiles.d/
+usr/lib/sysusers.d/
+usr/share/fips/
+etc/fips/

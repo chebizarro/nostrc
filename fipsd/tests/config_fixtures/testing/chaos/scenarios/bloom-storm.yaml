@@ -1,0 +1,69 @@
+
+scenario:
+  name: "bloom-storm"
+  seed: 31
+  duration_secs: 180
+
+topology:
+  algorithm: explicit
+  num_nodes: 6
+  params:
+    adjacency:
+      - [n01, n02]
+      - [n01, n03]
+      - [n02, n04]
+      - [n03, n04]
+      - [n04, n05]
+      - [n05, n06]
+  subnet: "172.20.0.0/24"
+  ip_start: 10
+
+netem:
+  enabled: true
+  default_policy:
+    delay_ms: [1, 1]
+    jitter_ms: [0, 0]
+    loss_pct: [0, 0]
+
+link_swap:
+  enabled: true
+  interval_secs: 4
+  policies:
+    fast:
+      delay_ms: [5, 5]
+      jitter_ms: [0, 0]
+      loss_pct: [0, 0]
+    slow:
+      delay_ms: [100, 100]
+      jitter_ms: [0, 0]
+      loss_pct: [0, 0]
+  edges:
+    - edge: "n02-n04"
+      policy: fast
+    - edge: "n03-n04"
+      policy: slow
+
+link_flaps:
+  enabled: false
+
+traffic:
+  enabled: false
+
+logging:
+  rust_log: "info"
+  output_dir: "./sim-results"
+
+assertions:
+  bloom_send_rate:
+    window_secs: 30
+    max_per_node: 40
+  min_parent_switches:
+    min_total: 10
+
+fips_overrides:
+  node:
+    tree:
+      parent_hysteresis: 0.0
+      reeval_interval_secs: 1
+      flap_threshold: 9999
+      hold_down_secs: 0

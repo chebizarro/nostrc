@@ -1,0 +1,640 @@
+{
+  "cases": [
+    {
+      "bytes": {
+        "file": "codec-u8-0.bin",
+        "generator_version": "0.1.0",
+        "hex": "00",
+        "length": 1,
+        "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      "kind": "u8",
+      "truncations": [
+        {
+          "error": {
+            "expected": 1,
+            "got": 0,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": ""
+        }
+      ],
+      "value": 0
+    },
+    {
+      "bytes": {
+        "file": "codec-u8-ff.bin",
+        "generator_version": "0.1.0",
+        "hex": "ff",
+        "length": 1,
+        "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+        "sha256": "a8100ae6aa1940d0b663bb31cd466142ebbdbd5187131b92d93818987832eb89"
+      },
+      "kind": "u8",
+      "truncations": [
+        {
+          "error": {
+            "expected": 1,
+            "got": 0,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": ""
+        }
+      ],
+      "value": 255
+    },
+    {
+      "bytes": {
+        "file": "codec-u16_le-0.bin",
+        "generator_version": "0.1.0",
+        "hex": "0000",
+        "length": 2,
+        "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+        "sha256": "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7"
+      },
+      "kind": "u16_le",
+      "truncations": [
+        {
+          "error": {
+            "expected": 2,
+            "got": 0,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": ""
+        },
+        {
+          "error": {
+            "expected": 2,
+            "got": 1,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "00"
+        }
+      ],
+      "value": 0
+    },
+    {
+      "bytes": {
+        "file": "codec-u16_le-abcd.bin",
+        "generator_version": "0.1.0",
+        "hex": "cdab",
+        "length": 2,
+        "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+        "sha256": "e37b7f85dc7b39750f6ffb792dfa69d939e0636078188c784bb7ec87ec9612f6"
+      },
+      "kind": "u16_le",
+      "truncations": [
+        {
+          "error": {
+            "expected": 2,
+            "got": 0,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": ""
+        },
+        {
+          "error": {
+            "expected": 2,
+            "got": 1,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "cd"
+        }
+      ],
+      "value": 43981
+    },
+    {
+      "bytes": {
+        "file": "codec-u16_le-ffff.bin",
+        "generator_version": "0.1.0",
+        "hex": "ffff",
+        "length": 2,
+        "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+        "sha256": "ca2fd00fa001190744c15c317643ab092e7048ce086a243e2be9437c898de1bb"
+      },
+      "kind": "u16_le",
+      "truncations": [
+        {
+          "error": {
+            "expected": 2,
+            "got": 0,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": ""
+        },
+        {
+          "error": {
+            "expected": 2,
+            "got": 1,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "ff"
+        }
+      ],
+      "value": 65535
+    },
+    {
+      "bytes": {
+        "file": "codec-u32_le-0.bin",
+        "generator_version": "0.1.0",
+        "hex": "00000000",
+        "length": 4,
+        "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+        "sha256": "df3f619804a92fdb4057192dc43dd748ea778adc52bc498ce80524c014b81119"
+      },
+      "kind": "u32_le",
+      "truncations": [
+        {
+          "error": {
+            "expected": 4,
+            "got": 0,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": ""
+        },
+        {
+          "error": {
+            "expected": 4,
+            "got": 1,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "00"
+        },
+        {
+          "error": {
+            "expected": 4,
+            "got": 2,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "0000"
+        },
+        {
+          "error": {
+            "expected": 4,
+            "got": 3,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "000000"
+        }
+      ],
+      "value": 0
+    },
+    {
+      "bytes": {
+        "file": "codec-u32_le-89abcdef.bin",
+        "generator_version": "0.1.0",
+        "hex": "efcdab89",
+        "length": 4,
+        "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+        "sha256": "455720fc1a027a44b281694d7e8bf335b4315946d9c834847a33216b14690b37"
+      },
+      "kind": "u32_le",
+      "truncations": [
+        {
+          "error": {
+            "expected": 4,
+            "got": 0,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": ""
+        },
+        {
+          "error": {
+            "expected": 4,
+            "got": 1,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "ef"
+        },
+        {
+          "error": {
+            "expected": 4,
+            "got": 2,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "efcd"
+        },
+        {
+          "error": {
+            "expected": 4,
+            "got": 3,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "efcdab"
+        }
+      ],
+      "value": 2309737967
+    },
+    {
+      "bytes": {
+        "file": "codec-u32_le-ffffffff.bin",
+        "generator_version": "0.1.0",
+        "hex": "ffffffff",
+        "length": 4,
+        "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+        "sha256": "ad95131bc0b799c0b1af477fb14fcf26a6a9f76079e48bf090acb7e8367bfd0e"
+      },
+      "kind": "u32_le",
+      "truncations": [
+        {
+          "error": {
+            "expected": 4,
+            "got": 0,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": ""
+        },
+        {
+          "error": {
+            "expected": 4,
+            "got": 1,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "ff"
+        },
+        {
+          "error": {
+            "expected": 4,
+            "got": 2,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "ffff"
+        },
+        {
+          "error": {
+            "expected": 4,
+            "got": 3,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "ffffff"
+        }
+      ],
+      "value": 4294967295
+    },
+    {
+      "bytes": {
+        "file": "codec-u64_le-0.bin",
+        "generator_version": "0.1.0",
+        "hex": "0000000000000000",
+        "length": 8,
+        "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+        "sha256": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc"
+      },
+      "kind": "u64_le",
+      "truncations": [
+        {
+          "error": {
+            "expected": 8,
+            "got": 0,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": ""
+        },
+        {
+          "error": {
+            "expected": 8,
+            "got": 1,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "00"
+        },
+        {
+          "error": {
+            "expected": 8,
+            "got": 2,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "0000"
+        },
+        {
+          "error": {
+            "expected": 8,
+            "got": 3,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "000000"
+        },
+        {
+          "error": {
+            "expected": 8,
+            "got": 4,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "00000000"
+        },
+        {
+          "error": {
+            "expected": 8,
+            "got": 5,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "0000000000"
+        },
+        {
+          "error": {
+            "expected": 8,
+            "got": 6,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "000000000000"
+        },
+        {
+          "error": {
+            "expected": 8,
+            "got": 7,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "00000000000000"
+        }
+      ],
+      "value": 0
+    },
+    {
+      "bytes": {
+        "file": "codec-u64_le-123456789abcdef.bin",
+        "generator_version": "0.1.0",
+        "hex": "efcdab8967452301",
+        "length": 8,
+        "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+        "sha256": "a85ba2b36261d0dca4b6cbbc840fa8a441ec95200abba5c5623e7ddadeff99e5"
+      },
+      "kind": "u64_le",
+      "truncations": [
+        {
+          "error": {
+            "expected": 8,
+            "got": 0,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": ""
+        },
+        {
+          "error": {
+            "expected": 8,
+            "got": 1,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "ef"
+        },
+        {
+          "error": {
+            "expected": 8,
+            "got": 2,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "efcd"
+        },
+        {
+          "error": {
+            "expected": 8,
+            "got": 3,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "efcdab"
+        },
+        {
+          "error": {
+            "expected": 8,
+            "got": 4,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "efcdab89"
+        },
+        {
+          "error": {
+            "expected": 8,
+            "got": 5,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "efcdab8967"
+        },
+        {
+          "error": {
+            "expected": 8,
+            "got": 6,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "efcdab896745"
+        },
+        {
+          "error": {
+            "expected": 8,
+            "got": 7,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "efcdab89674523"
+        }
+      ],
+      "value": 81985529216486895
+    },
+    {
+      "bytes": {
+        "file": "codec-u64_le-ffffffffffffffff.bin",
+        "generator_version": "0.1.0",
+        "hex": "ffffffffffffffff",
+        "length": 8,
+        "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+        "sha256": "12a3ae445661ce5dee78d0650d33362dec29c4f82af05e7e57fb595bbbacf0ca"
+      },
+      "kind": "u64_le",
+      "truncations": [
+        {
+          "error": {
+            "expected": 8,
+            "got": 0,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": ""
+        },
+        {
+          "error": {
+            "expected": 8,
+            "got": 1,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "ff"
+        },
+        {
+          "error": {
+            "expected": 8,
+            "got": 2,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "ffff"
+        },
+        {
+          "error": {
+            "expected": 8,
+            "got": 3,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "ffffff"
+        },
+        {
+          "error": {
+            "expected": 8,
+            "got": 4,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "ffffffff"
+        },
+        {
+          "error": {
+            "expected": 8,
+            "got": 5,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "ffffffffff"
+        },
+        {
+          "error": {
+            "expected": 8,
+            "got": 6,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "ffffffffffff"
+        },
+        {
+          "error": {
+            "expected": 8,
+            "got": 7,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "ffffffffffffff"
+        }
+      ],
+      "value": 18446744073709551615
+    },
+    {
+      "bytes": {
+        "file": "codec-array.bin",
+        "generator_version": "0.1.0",
+        "hex": "007f80ff",
+        "length": 4,
+        "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+        "sha256": "89273d2f70b93285bb7ddb4bcee86a5347ca7159352e3cbdd20c23e9d1e507d3"
+      },
+      "kind": "array",
+      "truncations": [
+        {
+          "error": {
+            "expected": 4,
+            "got": 0,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": ""
+        },
+        {
+          "error": {
+            "expected": 4,
+            "got": 1,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "00"
+        },
+        {
+          "error": {
+            "expected": 4,
+            "got": 2,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "007f"
+        },
+        {
+          "error": {
+            "expected": 4,
+            "got": 3,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "007f80"
+        }
+      ]
+    },
+    {
+      "bytes": {
+        "file": "codec-bytes.bin",
+        "generator_version": "0.1.0",
+        "hex": "0102030405",
+        "length": 5,
+        "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+        "sha256": "74f81fe167d99b4cb41d6d0ccda82278caee9f3e2f25d5e5a3936ff3dcec60d0"
+      },
+      "kind": "bytes",
+      "truncations": [
+        {
+          "error": {
+            "expected": 5,
+            "got": 0,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": ""
+        },
+        {
+          "error": {
+            "expected": 5,
+            "got": 1,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "01"
+        },
+        {
+          "error": {
+            "expected": 5,
+            "got": 2,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "0102"
+        },
+        {
+          "error": {
+            "expected": 5,
+            "got": 3,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "010203"
+        },
+        {
+          "error": {
+            "expected": 5,
+            "got": 4,
+            "variant": "MessageTooShort"
+          },
+          "input_hex": "01020304"
+        }
+      ]
+    },
+    {
+      "bytes": {
+        "file": "codec-empty.bin",
+        "generator_version": "0.1.0",
+        "hex": "",
+        "length": 0,
+        "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "kind": "empty",
+      "truncations": []
+    },
+    {
+      "advance": 1,
+      "input_hex": "01020304",
+      "kind": "cursor",
+      "position": 1,
+      "remaining": 3,
+      "require_3": "Ok",
+      "require_4": {
+        "expected": 5,
+        "got": 4,
+        "variant": "MessageTooShort"
+      },
+      "rest_hex": "020304"
+    }
+  ],
+  "family": "codec",
+  "gaps": [],
+  "generator": "fips-vectors",
+  "generator_version": "0.1.0",
+  "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+  "schema_version": 1
+}

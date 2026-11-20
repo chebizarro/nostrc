@@ -66,7 +66,10 @@ void test_relay_subscription() {
     NostrFilter *filter = nostr_filter_new();
 
     NostrFilters *filters = nostr_filters_new();
-    nostr_filters_add(filters, filter);
+    bool added = nostr_filters_add(filters, filter);
+    assert(added);
+    /* add moves the contents; the caller still owns the empty shell. */
+    nostr_filter_free(filter);
 
     // Prepare and fire explicitly so the test retains ownership of the
     // subscription and can stop its lifecycle worker before relay teardown.

@@ -1,0 +1,74 @@
+# FIPS node configuration for fipsd (the C daemon).
+#
+# Installed as /usr/share/fips/fips.yaml.example; the package seeds
+# /etc/fips/fips.yaml (mode 0600) from it on first install and never
+# overwrites a live config. The schema is upstream's (fipsd/README.md,
+# "YAML configuration"): unknown keys warn and are discarded, and a setting
+# is parsed whether or not its owning subsystem is implemented yet.
+
+node:
+  identity:
+    # By default a new ephemeral keypair is generated on each start.
+    # Uncomment persistent to keep the same identity across restarts;
+    # or set an explicit key (overrides persistent).
+    # persistent: true
+    # nsec: "nsec1..."
+
+  # Unix control socket for fipsctl. Without socket_path the daemon uses
+  # /run/fips/control.sock (systemd's RuntimeDirectory=fips, group fips, 0770).
+  control:
+    enabled: true
+
+  # Native datagram API (libfipsnative clients); off by default.
+  # native_api:
+  #   enabled: true
+
+  rendezvous:
+    # Optional Nostr-mediated overlay endpoint rendezvous.
+    # nostr:
+    #   enabled: true
+    #   policy: configured_only  # disabled | configured_only | open
+    #   advertise: true
+    #   advert_relays:
+    #     - "wss://nos.lol"
+    #     - "wss://offchain.pub"
+    #   dm_relays:
+    #     - "wss://nos.lol"
+    #     - "wss://offchain.pub"
+
+  # Logging: level and optional size-rolled file (SIGHUP reloads these three).
+  # log_level: info          # error | warn | info | debug | trace
+  # log_file: /var/log/fips/fipsd.log
+  # log_max_size_mb: 10
+  # log_max_files: 5
+
+# Virtual interface carrying mesh IPv6 traffic. fips-firewall.service and
+# /etc/fips/fips.nft police this interface by name (`define fips_if`).
+tun:
+  enabled: true
+  name: fips0
+  mtu: 1280
+
+# Built-in resolver for .fips names (peer aliases and /etc/fips/hosts).
+# fips-dns.service routes the domain here through the host's DNS backend.
+dns:
+  enabled: true
+  bind_addr: "::1"
+  port: 5354
+  ttl: 300
+
+transports:
+  udp:
+    bind_addr: "0.0.0.0:2121"
+    # outbound_only: true     # dial out, never listen or advertise
+
+  tcp:
+    bind_addr: "0.0.0.0:8443"
+
+# Peers to dial at start-up. Aliases resolve as <alias>.fips.
+peers: []
+# peers:
+#   - npub: "npub1..."
+#     alias: "friend"
+#     address: "203.0.113.10:2121"
+#     transport: udp

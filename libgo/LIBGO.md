@@ -7,6 +7,40 @@ This document explains the public API, threading/blocking/cancellation semantics
 - Threading model: All operations are thread-safe. Blocking operations wait on condition variables and wake upon state changes or cancellation.
 - Memory model: Create primitives with their constructor/init; free/destroy with the corresponding free/destroy functions. Do not free the underlying structs manually unless explicitly documented.
 
+## Fiber scheduler lifetime and I/O
+
+In **libgo 0.3.0 Unreleased**, PATCH-class fixes for `nostrc-dahcn` and
+`nostrc-3lzr1` remove periodic I/O retries and premature background worker exit.
+`gof_run()` returns when all fibers finish. `gof_start_background()` keeps its
+workers alive even with zero fibers, accepting later `go_fiber()` submissions
+until explicit `gof_request_stop()` / `gof_join_background()`. Join must finish
+before another start; foreground and background runs must not overlap.
+
+Fiber I/O without a deadline parks until readiness, peer EOF/hangup or scheduler
+stop, without the former 2 ms wakeups. Timed socket operations retain their
+absolute deadline and return `ETIMEDOUT` on expiry. Stop cancels pending I/O with
+`ECANCELED`; it is cooperative and does not preempt fibers or cancel channel and
+application waits. Keep the waiting descriptor open until its operation ends;
+raw cross-thread `close(fd)` is not cancellation. See [the fiber runtime
+README](fiber/README.md) for the lifecycle contract and regression tests.
+
+## Fiber hook linkage
+
+`GoChannel` and `go_select` park cooperatively when called inside `go_fiber`.
+Call `gof_init()` (also called by `gof_spawn()`) before running fibers. It
+registers an immutable, process-lifetime hook table with core libgo as well as
+the existing `go_register_fiber_spawn` callback. Core libgo owns the
+`gof_hook_*` dispatch symbols; no weak/strong archive override or whole-archive
+link flag is required. Linking `libgo` before `go_fiber` cannot silently select
+OS-thread waits inside fibers. Normal static-library dependency resolution
+still applies; the CMake `go_fiber` target carries its core-libgo dependency
+so single-pass linkers rescan core libgo after the fiber archive as needed.
+
+Without initialization, or on an ordinary OS thread, core channels/select keep
+their normal OS-thread blocking behavior. The hook table is an internal bridge,
+not an installed extension API; it must not be replaced or unregistered while
+fibers exist. Existing spawn registration and `go_fiber()` behavior are retained.
+
 ## Goroutine Wrapper: `go()`
 
 Header: `libgo/include/go.h`
@@ -285,6 +319,67 @@ GO_DEFINE_AUTO_CLEANUP_CLEAR_FUNC(GoWaitGroup, go_wait_group_destroy)
 Built-in registration in `refptr.h`: GoRefPtr.
 Additional registrations in `go-auto-internal.h`: GoChannel, GoContext,
 GoHashMap, Error, Ticker, GoWaitGroup, IntArray, StringArray.
+
+## Snapshot Swap (GoSwap)
+
+Header: `libgo/include/swap.h` (also included by `go.h`). Added in libgo 0.3.0.
+
+```c
+GoSwap *go_swap_create(void *initial, void (*destructor)(void *));
+GoRefPtr go_swap_load(GoSwap *swap);
+bool go_swap_store(GoSwap *swap, void *value);
+void go_swap_free(GoSwap *swap);
+```
+
+A slot publishes whole immutable values for configuration reloads, peer tables,
+and routing snapshots. Many readers and multiple writers may operate on a slot.
+Loads and stores are linearizable: a reader gets one complete old or new snapshot,
+not a mixture. This is snapshot storage, not a notification channel or event queue.
+
+**Safety scheme:** load copies and retains the slot's `GoRefPtr` under a short
+`nsync_mu` lock. Store swaps the complete handle under that same lock, then drops
+its reference to the old value outside the lock. Thus the old reference cannot
+be freed between a reader's load and retain. This deliberately uses a lock on the
+acquisition path rather than an unsafe atomic-pointer/load-then-retain scheme;
+it is **not lock-free**. Reading an already acquired snapshot requires no slot
+lock. Allocation and destructors run outside the lock.
+
+- `destructor` must be non-NULL; it is called exactly once for each successfully
+  transferred non-NULL value, after its last reference is released. It may run
+  on a reader or writer thread and must be thread-safe. It may load/store a live
+  slot, but must not access a slot being freed. Destruction order is unspecified.
+- Create/store take ownership only on success. On allocation failure they return
+  NULL/false, leave ownership with the caller, and store leaves the old value
+  unchanged. NULL initial creates an empty slot; storing NULL clears it without
+  allocation. An empty load is an all-zero `GoRefPtr`, safe to release.
+- Every transferred value must have independent ownership. Never store the raw
+  pointer from a loaded snapshot, even back into the same slot. Do not mutate
+  published contents. Separate loaded handles can be used on separate threads;
+  to copy one handle, retain it while it is still owned.
+- Release each acquired reference exactly once: manually **or** via
+  `go_auto(GoRefPtr)`, not both. `go_refptr_release()` does not clear a handle
+  unless it releases the last reference.
+- Stop/join slot users before `go_swap_free()`. Free drops only the slot's
+  reference: already acquired snapshots outlive the slot. `free(NULL)` and
+  `load(NULL)` are harmless; `store(NULL, value)` fails without taking ownership.
+
+```c
+GoSwap *config = go_swap_create(NULL, free);
+if (!config) return;
+int *next = malloc(sizeof(*next));
+if (next) {
+    *next = 42;
+    if (!go_swap_store(config, next)) free(next);
+}
+{
+    go_auto(GoRefPtr) snapshot = go_swap_load(config);
+    if (snapshot.ptr) printf("config: %d\n", *(const int *)snapshot.ptr);
+}
+// After joining all threads that access config:
+go_swap_free(config);
+```
+
+Compare-and-swap, watch notifications, and lock-free reclamation are not provided.
 
 ## Hash Map
 

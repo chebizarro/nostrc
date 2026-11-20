@@ -27,7 +27,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
-declare_component_version(LIBGO 0 2 0)
+declare_component_version(LIBGO 0 3 0)
 
 # Optional: enable more aggressive local optimizations for libgo
 include(CheckCCompilerFlag)
@@ -254,6 +254,14 @@ if(NOT DEFINED _NOSTR_FIND_OR_VENDOR_NSYNC_DONE)
   include(FindOrVendorNsync)
 endif()
 
+# nsync's compiler dispatch recognizes Clang but not Apple's compiler ID.
+# Without this header it falls back to POSIX THREAD_LOCAL (empty), and its
+# waiter destructor races on a process-global pointer under TSan.
+if(NOSTRC_NSYNC_VENDORED AND CMAKE_C_COMPILER_ID STREQUAL "AppleClang")
+  get_target_property(_libgo_nsync_source_dir nsync SOURCE_DIR)
+  target_include_directories(nsync BEFORE PRIVATE "${_libgo_nsync_source_dir}/platform/clang")
+endif()
+
 # Include the nsync headers directory-wide for the many test/example targets.
 include_directories(${NSYNC_INCLUDE_DIR})
 
@@ -292,6 +300,7 @@ target_include_directories(nostrgo SYSTEM PUBLIC ${NSYNC_INCLUDE_DIR})
 
 # Create the test executables for channels and contexts
 add_executable(go_context_cancel_test tests/go_context_cancel_test.c)
+add_executable(go_context_background_test tests/go_context_background_test.c)
 add_executable(go_channel_test tests/go_channel_test.c)
 add_executable(go_context_timeout_test tests/go_context_timeout_test.c)
 add_executable(go_ticker_test tests/go_ticker_test.c)
@@ -313,6 +322,7 @@ add_executable(go_channel_mpmc_slot_test tests/go_channel_mpmc_slot_test.c)
 
 # Link the context library to each test
 target_link_libraries(go_context_cancel_test PRIVATE libgo ${NSYNC_LIB} pthread)
+target_link_libraries(go_context_background_test PRIVATE libgo ${NSYNC_LIB} pthread)
 target_link_libraries(go_channel_test PRIVATE libgo ${NSYNC_LIB} pthread)
 target_link_libraries(go_context_timeout_test PRIVATE libgo ${NSYNC_LIB} pthread)
 target_link_libraries(go_ticker_test PRIVATE libgo ${NSYNC_LIB} pthread)
@@ -345,6 +355,7 @@ apply_warnings(int_array_test)
 apply_warnings(string_array_test)
 apply_warnings(long_adder_stress_test)
 apply_sanitizers(go_context_cancel_test)
+apply_sanitizers(go_context_background_test)
 apply_sanitizers(go_channel_test)
 apply_sanitizers(go_context_timeout_test)
 apply_sanitizers(go_wait_group_test)
@@ -358,6 +369,7 @@ apply_sanitizers(go_select_closed_test)
 apply_sanitizers(go_select_cancel_test)
 apply_sanitizers(go_channel_mpmc_slot_test)
 apply_warnings(go_context_cancel_test)
+apply_warnings(go_context_background_test)
 apply_warnings(go_channel_test)
 apply_warnings(go_context_timeout_test)
 apply_warnings(go_wait_group_test)
@@ -384,6 +396,7 @@ endif()
 
 # Add tests to CTest
 add_test(NAME GoContextCancelTest COMMAND go_context_cancel_test)
+add_test(NAME GoContextBackgroundTest COMMAND go_context_background_test)
 add_test(NAME GoChannelTest COMMAND go_channel_test)
 add_test(NAME GoContextTimeoutTest COMMAND go_context_timeout_test)
 add_test(NAME GoTickerTest COMMAND go_ticker_test)
@@ -396,8 +409,8 @@ add_test(NAME GoContextStressTest COMMAND go_context_stress_test)
 add_test(NAME GoSelectClosedTest COMMAND go_select_closed_test)
 add_test(NAME GoSelectCancelTest COMMAND go_select_cancel_test)
 add_test(NAME GoChannelMpmcSlotTest COMMAND go_channel_mpmc_slot_test)
-# The stress case bounds itself at 20 s; never let a regression hang CI.
-set_tests_properties(GoChannelMpmcSlotTest PROPERTIES TIMEOUT 60)
+# Fixed work determines success; CTest alone bounds a deadlock on slow sanitizer hosts.
+set_tests_properties(GoChannelMpmcSlotTest PROPERTIES TIMEOUT 120)
 
 # Register utility tests
 add_test(NAME GoErrorTest COMMAND error_test)
@@ -523,11 +536,10 @@ install(FILES
 # Fiber runtime (separate library): go_fiber  #
 ###############################################
 
-# The fiber runtime requires ucontext (portable) or platform-specific assembly
-# backends.  Windows/MinGW has neither ucontext nor an assembly backend yet,
-# and nothing in the Windows build links go_fiber, so skip it entirely.
-if(NOT WIN32)
-
+# The fiber runtime switches contexts with platform assembly (or ucontext on
+# the portable path) and polls with epoll/kqueue. Windows uses the Fibers API
+# for contexts and an I/O completion port with overlapped Winsock calls for
+# I/O (context_win32.c, netpoll_iocp.c, io_win32.c).
 option(GOF_PORTABLE_CONTEXT "Use portable setjmp/longjmp for fiber context" OFF)
 option(GOF_ENABLE_TRACING "Enable lightweight tracing in go_fiber" OFF)
 
@@ -550,7 +562,11 @@ set(GOF_COMMON_SOURCES
   ${GOF_FIBER_DIR}/debug/introspect.c
 )
 
-if(GOF_PORTABLE_CONTEXT)
+if(WIN32)
+  list(APPEND GOF_COMMON_SOURCES
+    ${GOF_FIBER_DIR}/context/context_win32.c
+    ${GOF_FIBER_DIR}/io/io_win32.c)
+elseif(GOF_PORTABLE_CONTEXT)
   # Prevent deprecated portable context on macOS
   if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     message(FATAL_ERROR "GOF_PORTABLE_CONTEXT is not supported on macOS; use assembly backends. Set GOF_PORTABLE_CONTEXT=OFF.")
@@ -581,6 +597,14 @@ else()
 endif()
 
 add_library(go_fiber STATIC ${GOF_COMMON_SOURCES})
+# Initialization registers both spawn and channel hooks in core libgo. Carry
+# that dependency even for consumers with no direct channel/select references;
+# single-pass archive linkers need core libgo after go_fiber as well.
+target_link_libraries(go_fiber PUBLIC libgo)
+if(WIN32)
+  # Winsock (WSARecvMsg/ConnectEx/AcceptEx come through WSAIoctl).
+  target_link_libraries(go_fiber PUBLIC ws2_32 mswsock)
+endif()
 target_include_directories(go_fiber PUBLIC ${GOF_PUBLIC_INC})
 nostrc_library_visibility(go_fiber GO_FIBER_API libgo/fiber-export.h "${CMAKE_INSTALL_INCLUDEDIR}/libgo")
 if(GOF_PORTABLE_CONTEXT)
@@ -608,6 +632,51 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
   target_compile_definitions(go_fiber PRIVATE GOF_NETPOLL_IOCP=1)
 endif()
+
+# Real core-channel waits, including the historically unsafe archive order.
+add_executable(go_fiber_hook_linkorder_test tests/go_fiber_hook_linkorder_test.c)
+target_link_libraries(go_fiber_hook_linkorder_test PRIVATE libgo go_fiber ${NSYNC_LIB})
+apply_warnings(go_fiber_hook_linkorder_test)
+apply_sanitizers(go_fiber_hook_linkorder_test)
+add_test(NAME GoFiberHookLinkorderTest COMMAND go_fiber_hook_linkorder_test)
+set_tests_properties(GoFiberHookLinkorderTest PROPERTIES TIMEOUT 10)
+
+# Spawn-only consumers must also resolve the registration objects, even when
+# no channel/select call pulled them out of core libgo on its first scan.
+add_executable(go_fiber_spawn_linkorder_test fiber/tests/test_basic.c)
+target_link_libraries(go_fiber_spawn_linkorder_test PRIVATE libgo go_fiber)
+apply_warnings(go_fiber_spawn_linkorder_test)
+apply_sanitizers(go_fiber_spawn_linkorder_test)
+add_test(NAME GoFiberSpawnLinkorderTest COMMAND go_fiber_spawn_linkorder_test)
+set_tests_properties(GoFiberSpawnLinkorderTest PROPERTIES TIMEOUT 10)
+
+add_executable(gof_test_tsan_migration fiber/tests/test_tsan_migration.c)
+target_link_libraries(gof_test_tsan_migration PRIVATE go_fiber libgo ${NSYNC_LIB})
+apply_warnings(gof_test_tsan_migration)
+apply_sanitizers(gof_test_tsan_migration)
+add_test(NAME GoFiberTsanMigrationTest COMMAND gof_test_tsan_migration)
+set_tests_properties(GoFiberTsanMigrationTest PROPERTIES TIMEOUT 30)
+
+foreach(_case io_idle background_lifecycle)
+  add_executable(gof_test_${_case} fiber/tests/test_${_case}.c)
+  target_link_libraries(gof_test_${_case} PRIVATE go_fiber libgo ${NSYNC_LIB})
+  apply_warnings(gof_test_${_case})
+  apply_sanitizers(gof_test_${_case})
+endforeach()
+foreach(_workers 1 4)
+  foreach(_pair "IoIdle|io_idle" "BackgroundLifecycle|background_lifecycle")
+    string(REPLACE "|" ";" _pair "${_pair}")
+    list(GET _pair 0 _name)
+    list(GET _pair 1 _case)
+    set(_test "GoFiber${_name}TestW${_workers}")
+    add_test(NAME ${_test} COMMAND gof_test_${_case})
+    set_tests_properties(${_test} PROPERTIES TIMEOUT 60
+                         ENVIRONMENT "GOF_NWORKERS=${_workers}")
+    if(COMMAND nostrc_describe_test)
+      nostrc_describe_test(${_test} OWNER libgo TARGETS gof_test_${_case})
+    endif()
+  endforeach()
+endforeach()
 
 # Simple unit tests for go_fiber (standalone binaries with asserts)
 add_executable(gof_test_basic fiber/tests/test_basic.c)
@@ -712,27 +781,61 @@ endif()
 add_executable(gof_bench_yield fiber/bench/bench_yield.c)
 add_executable(gof_bench_pingpong fiber/bench/bench_pingpong.c)
 add_executable(gof_bench_sleep fiber/bench/bench_sleep.c)
-add_executable(gof_bench_poll_partition fiber/bench/bench_poll_partition.c)
 target_link_libraries(gof_bench_yield PRIVATE go_fiber libgo ${NSYNC_LIB})
 target_link_libraries(gof_bench_pingpong PRIVATE go_fiber libgo ${NSYNC_LIB})
 target_link_libraries(gof_bench_sleep PRIVATE go_fiber libgo ${NSYNC_LIB})
-target_link_libraries(gof_bench_poll_partition PRIVATE go_fiber libgo ${NSYNC_LIB})
 apply_warnings(gof_bench_yield)
 apply_warnings(gof_bench_pingpong)
 apply_warnings(gof_bench_sleep)
-apply_warnings(gof_bench_poll_partition)
 apply_sanitizers(gof_bench_yield)
 apply_sanitizers(gof_bench_pingpong)
 apply_sanitizers(gof_bench_sleep)
-apply_sanitizers(gof_bench_poll_partition)
+if(NOT WIN32) # Unix socket pairs
+  add_executable(gof_bench_poll_partition fiber/bench/bench_poll_partition.c)
+  target_link_libraries(gof_bench_poll_partition PRIVATE go_fiber libgo ${NSYNC_LIB})
+  apply_warnings(gof_bench_poll_partition)
+  apply_sanitizers(gof_bench_poll_partition)
+endif()
 
-endif() # NOT WIN32 — skip go_fiber on Windows
+# Datagram/message I/O uses the same scheduler and both native poller backends.
+add_executable(gof_test_io_datagram fiber/tests/test_io_datagram.c)
+target_link_libraries(gof_test_io_datagram PRIVATE go_fiber libgo ${NSYNC_LIB})
+apply_warnings(gof_test_io_datagram)
+apply_sanitizers(gof_test_io_datagram)
+add_test(NAME GoFiberIoDatagramTest COMMAND gof_test_io_datagram)
+add_test(NAME GoFiberIoDatagramTestW4 COMMAND gof_test_io_datagram)
+set_tests_properties(GoFiberIoDatagramTest PROPERTIES
+  TIMEOUT 15 ENVIRONMENT "GOF_NWORKERS=1")
+set_tests_properties(GoFiberIoDatagramTestW4 PROPERTIES
+  TIMEOUT 15 ENVIRONMENT "GOF_NWORKERS=4")
+if(COMMAND nostrc_describe_test)
+  nostrc_describe_test(GoFiberIoDatagramTest OWNER libgo TARGETS gof_test_io_datagram)
+  nostrc_describe_test(GoFiberIoDatagramTestW4 OWNER libgo TARGETS gof_test_io_datagram)
+endif()
+
+# Real UDP/TCP loopback sockets, truncation, deadlines and owner-directed
+# cancellation (including cancel racing an arriving datagram) on every poller.
+add_executable(gof_test_io_loopback fiber/tests/test_io_loopback.c)
+target_link_libraries(gof_test_io_loopback PRIVATE go_fiber libgo ${NSYNC_LIB})
+apply_warnings(gof_test_io_loopback)
+apply_sanitizers(gof_test_io_loopback)
+add_test(NAME GoFiberIoLoopbackTest COMMAND gof_test_io_loopback)
+add_test(NAME GoFiberIoLoopbackTestW4 COMMAND gof_test_io_loopback)
+set_tests_properties(GoFiberIoLoopbackTest PROPERTIES
+  TIMEOUT 60 ENVIRONMENT "GOF_NWORKERS=1")
+set_tests_properties(GoFiberIoLoopbackTestW4 PROPERTIES
+  TIMEOUT 60 ENVIRONMENT "GOF_NWORKERS=4")
+if(COMMAND nostrc_describe_test)
+  nostrc_describe_test(GoFiberIoLoopbackTest OWNER libgo TARGETS gof_test_io_loopback)
+  nostrc_describe_test(GoFiberIoLoopbackTestW4 OWNER libgo TARGETS gof_test_io_loopback)
+endif()
 
 # These pairs mirror the actual add_test COMMANDs, including W4 executions
 # sharing targets. Explicit targets also resolve a fresh, not-yet-built tree
 # (CTest omits commands whose executable does not exist yet).
 foreach(_pair
     "GoContextCancelTest|go_context_cancel_test" "GoChannelTest|go_channel_test"
+    "GoContextBackgroundTest|go_context_background_test"
     "GoContextTimeoutTest|go_context_timeout_test" "GoTickerTest|go_ticker_test"
     "GoSelectTest|go_select_test" "GoWaitGroupTest|go_wait_group_test"
     "GoChannelCloseTest|go_channel_close_test" "GoSelectMultiTest|go_select_multi_test"
@@ -742,6 +845,9 @@ foreach(_pair
     "GoRefPtrTest|refptr_test" "GoHashMapTest2|hash_map_test2"
     "GoIntArrayTest|int_array_test" "GoStringArrayTest|string_array_test"
     "GoLongAdderStressTest|long_adder_stress_test"
+    "GoFiberHookLinkorderTest|go_fiber_hook_linkorder_test"
+    "GoFiberSpawnLinkorderTest|go_fiber_spawn_linkorder_test"
+    "GoFiberTsanMigrationTest|gof_test_tsan_migration"
     "GoFiberBasicTest|gof_test_basic" "GoFiberContextTest|gof_test_context"
     "GoFiberChanTest|gof_test_chan" "GoFiberChanExtTest|gof_test_chan_ext"
     "GoFiberIoTest|gof_test_io" "GoFiberIoDeadlockTest|gof_test_io_deadlock"
@@ -756,6 +862,19 @@ foreach(_pair
     nostrc_describe_test("${_test}" OWNER libgo TARGETS "${_target}")
   endif()
 endforeach()
+# Refcounted snapshot swap (core libgo; independent of the fiber runtime).
+target_sources(nostrgo PRIVATE src/swap.c)
+install(FILES include/swap.h DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+add_executable(go_swap_test tests/go_swap_test.c)
+target_link_libraries(go_swap_test PRIVATE libgo)
+apply_warnings(go_swap_test)
+apply_sanitizers(go_swap_test)
+add_test(NAME GoSwapTest COMMAND go_swap_test)
+set_tests_properties(GoSwapTest PROPERTIES TIMEOUT 120)
+if(COMMAND nostrc_describe_test)
+  nostrc_describe_test(GoSwapTest OWNER libgo TARGETS go_swap_test)
+endif()
+
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   nostrc_finalize_test_inventory()
 endif()

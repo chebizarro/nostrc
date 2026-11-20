@@ -1,0 +1,24 @@
+┌ fipstop 0.1.0 ───────────────────────────────────────────────────────────────┐
+│Node │ Peers | Transports │ Sessions | Tree | Filters | Performance | Routing │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌ Routing State ───────────────────────────────────────────────────────────────┐
+│    Coord Cache    : 0                                                        │
+│    Identity Cache : 0                                                        │
+│    Pending Lookups: 0                                                        │
+│    Recent Requests: 0                                                        │
+│    Warm Malformed : 0 pkts (0B)                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌ Coordinate Cache ────────────────────────────────────────────────────────────┐
+│    Entries    : 0 / 50000                                                    │
+│    Fill Ratio : 0.0%                                                         │
+│    Default TTL: 5.0m                                                         │
+│    Expired    : 0                                                            │
+│    Avg Age    : 0ms                                                          │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌ Routing Statistics ──────────────────────────────────────────────────────────┐
+│  Local Stack                            Forwarded                            │
+│    Transmitted: 0 pkts (0B)               Forwarded: 0 pkts (0B)             │
+│    Received   : 0 pkts (0B)                                                  │
+└──────────────────────────────────────────────────────────────────────────────┘
+ Connected | Refresh: 2s | Updated: 0.0s ago [f] focus pane [Tab] next [?] Help

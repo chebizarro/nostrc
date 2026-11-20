@@ -1,0 +1,25 @@
+{
+  "nftables": [
+    {
+      "metainfo": {
+        "json_schema_version": 1
+      }
+    },
+    {
+      "add": {
+        "table": {
+          "family": "inet",
+          "name": "fips_gateway"
+        }
+      }
+    },
+    {
+      "delete": {
+        "table": {
+          "family": "inet",
+          "name": "fips_gateway"
+        }
+      }
+    }
+  ]
+}

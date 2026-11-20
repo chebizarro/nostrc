@@ -10,14 +10,18 @@ _Atomic uint64_t gof_unparks = 0;
 __attribute__((weak)) void gof_trace_on_switch(uint64_t old_id, uint64_t new_id) {
   (void)old_id; (void)new_id;
 }
-__attribute__((weak)) void gof_trace_on_block(int fd, int ev) {
+__attribute__((weak)) void gof_trace_on_block(gof_socket_t fd, int ev) {
   (void)fd; (void)ev;
 }
-__attribute__((weak)) void gof_trace_on_unblock(int fd, int ev) {
+__attribute__((weak)) void gof_trace_on_unblock(gof_socket_t fd, int ev) {
+  (void)fd; (void)ev;
+}
+__attribute__((weak)) void gof_trace_on_io_armed(gof_socket_t fd, int ev) {
   (void)fd; (void)ev;
 }
 #else
 void gof_trace_on_switch(uint64_t old_id, uint64_t new_id) {(void)old_id;(void)new_id;}
-void gof_trace_on_block(int fd, int ev) {(void)fd;(void)ev;}
-void gof_trace_on_unblock(int fd, int ev) {(void)fd;(void)ev;}
+void gof_trace_on_block(gof_socket_t fd, int ev) {(void)fd;(void)ev;}
+void gof_trace_on_unblock(gof_socket_t fd, int ev) {(void)fd;(void)ev;}
+void gof_trace_on_io_armed(gof_socket_t fd, int ev) {(void)fd;(void)ev;}
 #endif

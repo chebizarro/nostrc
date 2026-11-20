@@ -1,0 +1,21 @@
+# Generated from fipsd/packaging/systemd/fips-firewall.service.in by CMake.
+# Not enabled by default. Enable with: systemctl enable --now fips-firewall
+[Unit]
+Description=FIPS mesh-interface nftables baseline
+Documentation=file://@CMAKE_INSTALL_FULL_SYSCONFDIR@/fips/fips.nft
+Before=fipsd.service
+ConditionPathExists=@CMAKE_INSTALL_FULL_SYSCONFDIR@/fips/fips.nft
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f @CMAKE_INSTALL_FULL_SYSCONFDIR@/fips/fips.nft
+# Reapplies the ruleset in place: the file adds then flushes the table, so one
+# nft run replaces it in a single transaction, with no moment without it.
+ExecReload=/usr/sbin/nft -f @CMAKE_INSTALL_FULL_SYSCONFDIR@/fips/fips.nft
+ExecStop=-/usr/sbin/nft delete table inet fips
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

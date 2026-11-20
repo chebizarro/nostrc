@@ -12,7 +12,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # The CI image promises the call runtime; absent plugins must never become skips.
 ENV GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME=1
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # toolchain (all workflows; clang for nostrc-ci, signet-ci, libgo-ci)
+    # toolchain (all workflows; clang/libFuzzer for nostrc-ci, signet-ci, libgo-ci, fips-ci)
     build-essential cmake ninja-build meson pkg-config clang libclang-rt-18-dev patch \
     # groundhog-ci.yml "Install build and display dependencies"
     libxml2-dev libgtk-4-dev libadwaita-1-dev libglib2.0-dev libsecret-1-dev \
@@ -31,6 +31,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpeas-2-dev librsvg2-dev libgdk-pixbuf-2.0-dev \
     # signet-ci.yml
     libmicrohttpd-dev libcbor-dev python3-jsonschema python3-yaml \
+    # fipsd YAML configuration (fips-ci.yml: orchestrator adds libyaml-dev)
+    libyaml-dev \
+    # fips-gateway's nftables backend (optional: without it the executable
+    # is skipped; the hosted fips-ci jobs do not install it yet)
+    libnftables-dev \
+    libncurses-dev \
+    libdbus-1-dev \
     # local tooling: sources, debugging, the gate's tree sync and lock
     git python3 ca-certificates curl gdb rsync util-linux \
  && rm -rf /var/lib/apt/lists/*

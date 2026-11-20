@@ -1,0 +1,20 @@
+
+node:
+  identity:
+    nsec: "{{NSEC}}"
+
+tun:
+  enabled: true
+  name: fips0
+  mtu: 1280
+
+dns:
+  enabled: true
+
+transports:
+  udp:
+    bind_addr: "0.0.0.0:2121"
+    mtu: 1472
+
+peers:
+{{PEERS}}

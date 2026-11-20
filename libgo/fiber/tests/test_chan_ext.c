@@ -7,6 +7,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -28,7 +29,7 @@ static void recv_fiber(void *arg) {
 static void *send_thread(void *arg) {
   (void)arg;
   for (int i = 0; i < N; i++) {
-    int rc = gof_chan_send(g_ch, (void*)(long)i);
+    int rc = gof_chan_send(g_ch, (void*)(intptr_t)i);
     assert(rc == 0);
     struct timespec ts = { 0, 1000 * 1000 }; /* 1ms */
     nanosleep(&ts, NULL);

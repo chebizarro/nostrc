@@ -48,6 +48,15 @@ int gof_ctx_init_bootstrap(gof_context *ctx, void *stack_base, size_t stack_size
   return 0;
 }
 
+/* The scheduler has already selected the destination's TSan context.
+ * Instrumenting this wrapper would push/pop frames on different fibers. */
+#if defined(__has_feature)
+# if __has_feature(thread_sanitizer)
+__attribute__((noinline, disable_sanitizer_instrumentation))
+# endif
+#elif defined(__SANITIZE_THREAD__)
+__attribute__((noinline, no_sanitize_thread))
+#endif
 void gof_ctx_swap(gof_context *from, gof_context *to) {
   GOF_LOG("[gof] ctx_swap from=%p to=%p\n", (void*)from, (void*)to);
 #if defined(__APPLE__)

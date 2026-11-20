@@ -16,11 +16,22 @@
 #if defined(_WIN32) || defined(__MINGW32__)
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include "libgo/net_compat.h" /* POSIX-shaped struct msghdr/iovec and CMSG_* */
 #else
 #include <sys/socket.h> /* for struct sockaddr, socklen_t */
 #endif
 #ifdef __cplusplus
 extern "C" {
+#endif
+
+/** Socket handle accepted by the fiber I/O wrappers: a file descriptor on
+ * POSIX, a Winsock SOCKET on Windows (never truncated to int). */
+#if defined(_WIN32) || defined(__MINGW32__)
+typedef SOCKET gof_socket_t;
+#define GOF_INVALID_SOCKET INVALID_SOCKET
+#else
+typedef int gof_socket_t;
+#define GOF_INVALID_SOCKET (-1)
 #endif
 
 /** Opaque handle to a fiber. */
@@ -59,7 +70,8 @@ GO_FIBER_API void        gof_sleep_ms(uint64_t ms);
  * @brief Enter the scheduler loop. Typically called once on the main thread.
  * @note This blocks the calling thread until all fibers complete.
  *       For applications with their own event loop (e.g., GTK/GLib),
- *       use gof_start_background() instead.
+ *       use gof_start_background() instead. Do not run foreground and
+ *       background schedulers concurrently.
  */
 GO_FIBER_API void        gof_run(void);
 
@@ -70,8 +82,9 @@ GO_FIBER_API void        gof_run(void);
  * scheduler worker threads in the background, allowing the calling thread
  * to continue (e.g., to run a GTK main loop).
  *
- * The scheduler stays alive until gof_request_stop() is called or all fibers
- * complete and no I/O waiters remain.
+ * The worker pool stays alive with zero live fibers until gof_request_stop().
+ * Fibers may be submitted later from OS threads via gof_spawn()/go_fiber().
+ * After stop, join before restarting; start returns -1 while joining.
  *
  * @param default_stack_bytes Default stack size for fibers (0 = use default 256KB).
  * @return 0 on success, -1 on error (e.g., already running).
@@ -81,7 +94,10 @@ GO_FIBER_API int         gof_start_background(size_t default_stack_bytes);
 /**
  * @brief Request the fiber scheduler to stop.
  *
- * Wakes all workers so they can observe the stop flag and exit.
+ * Wakes idle workers and cancels pending fiber I/O waits with ECANCELED.
+ * This is cooperative, not preemption: running fibers must return/yield and
+ * callers must arrange cancellation of channel waits and other application work.
+ * Stop submitting work before stopping the pool.
  * Does not wait for completion — use gof_join_background() to wait.
  * Safe to call from any thread (including GTK main thread).
  */
@@ -90,8 +106,9 @@ GO_FIBER_API void        gof_request_stop(void);
 /**
  * @brief Wait for all background scheduler threads to finish.
  *
- * Blocks until all worker threads have exited. Call after gof_request_stop()
- * or after all fibers have naturally completed.
+ * Blocks until all worker threads have exited. Call from an OS thread after
+ * gof_request_stop(); zero live fibers alone does not end background mode.
+ * A successful join permits another start or a foreground gof_run().
  *
  * @return 0 on success, -1 if not running in background mode.
  */
@@ -109,11 +126,112 @@ GO_FIBER_API int         gof_in_fiber(void);
  */
 GO_FIBER_API gof_fiber_t*gof_current(void);
 
-/** Fiber-friendly I/O wrappers that integrate with the netpoller. */
-GO_FIBER_API ssize_t     gof_read(int fd, void *buf, size_t n);
-GO_FIBER_API ssize_t     gof_write(int fd, const void *buf, size_t n);
-GO_FIBER_API int         gof_connect(int fd, const struct sockaddr *sa, socklen_t slen, int timeout_ms);
-GO_FIBER_API int         gof_accept(int fd, struct sockaddr *sa, socklen_t *slen, int timeout_ms);
+struct msghdr; /* <sys/socket.h> on POSIX; libgo/net_compat.h on Windows. */
+
+/** Fiber-friendly I/O wrappers; call from a running fiber.
+ * No deadline means indefinite parking until readiness, peer EOF/hangup, or
+ * scheduler stop (returns -1, errno=ECANCELED), with no periodic retries.
+ * Keep fd open while a wait is pending: raw close(fd) on the waiting descriptor
+ * from another thread is not a cancellation operation. Peer close is observed.
+ * Windows: fd is a SOCKET (read/write are WSARecv/WSASend; pipes and files are
+ * not supported) and every call is an overlapped operation on libgo's I/O
+ * completion port that parks the fiber until its completion is delivered.
+ */
+GO_FIBER_API ssize_t     gof_read(gof_socket_t fd, void *buf, size_t n);
+GO_FIBER_API ssize_t     gof_write(gof_socket_t fd, const void *buf, size_t n);
+GO_FIBER_API int         gof_connect(gof_socket_t fd, const struct sockaddr *sa, socklen_t slen, int timeout_ms);
+/** Returns the accepted socket, or GOF_INVALID_SOCKET with errno set. */
+GO_FIBER_API gof_socket_t gof_accept(gof_socket_t fd, struct sockaddr *sa, socklen_t *slen, int timeout_ms);
+
+/**
+ * @brief Message I/O that parks the calling fiber on EAGAIN/EWOULDBLOCK.
+ * Sets O_NONBLOCK on fd (also affecting aliases of the same open file).
+ * POSIX: after gof_io_reset_fd, the first call checks and sets O_NONBLOCK and
+ * later calls skip that fcntl and pass MSG_DONTWAIT instead, until the next
+ * reset_fd (required before closing/reusing the descriptor, see below).
+ * timeout_ms < 0 waits indefinitely; 0 attempts once without waiting; > 0
+ * bounds readiness retries with one monotonic deadline. Expiry returns -1
+ * with errno=ETIMEDOUT; scheduler stop cancels a pending wait with ECANCELED.
+ * Other errors and flags follow the underlying syscall.
+ * Sends return after one successful syscall, including short or zero sends;
+ * they never split a datagram or resend ancillary data. Receives preserve
+ * source addresses, iovecs, control data and message flags as supplied by the OS.
+ * Call from a running fiber. On Windows the messages are translated to
+ * WSAMSG (WSARecvMsg/WSASendMsg on datagram sockets, WSARecv/WSASend on
+ * stream sockets, which carry no control data); a truncated datagram returns
+ * its truncated length with MSG_TRUNC, as on POSIX. See libgo/fiber/README.md.
+ */
+GO_FIBER_API ssize_t     gof_recvfrom(gof_socket_t fd, void *buf, size_t n, int flags,
+                                    struct sockaddr *sa, socklen_t *slen, int timeout_ms);
+GO_FIBER_API ssize_t     gof_sendto(gof_socket_t fd, const void *buf, size_t n, int flags,
+                                  const struct sockaddr *sa, socklen_t slen, int timeout_ms);
+GO_FIBER_API ssize_t     gof_recvmsg(gof_socket_t fd, struct msghdr *msg, int flags, int timeout_ms);
+GO_FIBER_API ssize_t     gof_sendmsg(gof_socket_t fd, const struct msghdr *msg, int flags, int timeout_ms);
+#if defined(__linux__)
+/** Linux batch datagram I/O (recvmmsg(2)/sendmmsg(2); not declared elsewhere).
+ * The gof_recvmsg/gof_sendmsg contract above, per call: the fiber parks, until
+ * readiness, the deadline or cancellation, only while the syscall would move
+ * no message at all. Returns the number of messages moved (each message's
+ * msg_len and, on receive, its name/control lengths and flags as the kernel
+ * left them), or -1 with errno. A count below vlen is not an error: on
+ * receive, fewer were queued; on send, message `count` failed and its error
+ * is not reported, so resubmit from it to learn it. recvmmsg gets no kernel
+ * timeout. timeout_ms == 0 never parks, so a plain OS thread may call either
+ * with it, as it may gof_sendmsg. */
+struct mmsghdr;
+GO_FIBER_API int         gof_recvmmsg(gof_socket_t fd, struct mmsghdr *msgs, unsigned int vlen,
+                                      int flags, int timeout_ms);
+GO_FIBER_API int         gof_sendmmsg(gof_socket_t fd, struct mmsghdr *msgs, unsigned int vlen,
+                                      int flags, int timeout_ms);
+#endif
+
+/** Owner-directed readiness-wait cancellation, independent of scheduler stop.
+ * reset_fd prepares a newly owned descriptor (may fail with ENOMEM).
+ * cancel_fd latches ECANCELED for pending and future waits on that descriptor,
+ * including the race before a receive parks; it does not close/shutdown it.
+ * Successful nonblocking syscalls may still finish: callers check their stop
+ * state after return. The owner must join ALL users, then reset_fd before
+ * closing/reusing the descriptor. Never reset while a cancelled user is live.
+ * Both calls are thread/fiber-safe and never park. fd aliases are not tracked.
+ * Windows: cancel_fd issues CancelIoEx for the pending operations; each user
+ * still waits for its (aborted or completed) completion before returning, so
+ * no buffer outlives its call, and a receive that completed first returns its
+ * data. Sockets need no registration: every operation re-checks the socket's
+ * completion-port association, so a recycled SOCKET value is handled too.
+ */
+GO_FIBER_API int         gof_io_reset_fd(gof_socket_t fd);
+GO_FIBER_API int         gof_io_cancel_fd(gof_socket_t fd);
+
+#if !defined(_WIN32)
+/** Writability waits for a writer whose own syscall cannot park (nostrc-e3ps5;
+ * POSIX readiness backends only, not declared on Windows).
+ *
+ * gof_wait_writable parks the calling fiber until fd reports at least `lowat`
+ * bytes of send space (0: any writability), a gof_io_wake_writers, the
+ * deadline (timeout_ms > 0; < 0 waits indefinitely; 0 is EINVAL), owner
+ * cancellation or scheduler stop. lowat > 0 needs a backend with a
+ * per-registration low-water mark: kqueue (macOS) registers EVFILT_WRITE with
+ * NOTE_LOWAT, which XNU evaluates on a connected AF_UNIX socket against the
+ * peer's receive space, so a datagram writer refused with ENOBUFS can park
+ * until its datagram fits; elsewhere lowat > 0 is ENOTSUP. Readiness is a
+ * hint: retry the write. Returns 0, or -1 with errno ETIMEDOUT, ECANCELED,
+ * ENOTSUP, EINVAL or ENOMEM.
+ *
+ * gof_io_wake_writers wakes every fiber parked for writability on fd as if
+ * it had become writable; with none parked it latches one wake that the next
+ * writability wait on fd consumes without parking, so a wake issued just
+ * before the writer parks is not lost. Not a cancellation; gof_io_reset_fd
+ * clears the latch. Thread/fiber-safe, never parks. Returns 0 or -1 (ENOMEM,
+ * EINVAL). */
+GO_FIBER_API int         gof_wait_writable(gof_socket_t fd, size_t lowat, int timeout_ms);
+GO_FIBER_API int         gof_io_wake_writers(gof_socket_t fd);
+#endif
+
+/** errno-style code for the calling thread's last failed raw socket call
+ * (socket, bind, setsockopt, ...): errno on POSIX, WSAGetLastError() mapped
+ * to the same errno values the gof_* wrappers report on Windows. */
+GO_FIBER_API int         gof_socket_errno(void);
+
 
 /**
  * @brief Snapshot of fiber diagnostic information.
@@ -207,15 +325,22 @@ GO_FIBER_API int  gof_set_npollers(int n);
 /** Returns the configured number of pollers (>=1). */
 GO_FIBER_API int  gof_get_npollers(void);
 
-/** Weak trace hooks (no-op by default); attributes best-effort across compilers. */
+/** Weak trace hooks (no-op by default); attributes best-effort across compilers.
+ * on_block reports a committed I/O park on its worker; on_unblock reports an
+ * I/O wait returning (including readiness claimed before a park committed).
+ * Hooks may run concurrently; they must not yield or call fiber APIs.
+ */
 #if defined(__GNUC__) || defined(__clang__)
 GO_FIBER_API void __attribute__((weak)) gof_trace_on_switch(uint64_t old_id, uint64_t new_id);
-GO_FIBER_API void __attribute__((weak)) gof_trace_on_block(int fd, int ev);
-GO_FIBER_API void __attribute__((weak)) gof_trace_on_unblock(int fd, int ev);
+GO_FIBER_API void __attribute__((weak)) gof_trace_on_block(gof_socket_t fd, int ev);
+GO_FIBER_API void __attribute__((weak)) gof_trace_on_unblock(gof_socket_t fd, int ev);
+/* After waiter registration/arming, before the fiber announces its park. */
+GO_FIBER_API void __attribute__((weak)) gof_trace_on_io_armed(gof_socket_t fd, int ev);
 #else
 GO_FIBER_API void gof_trace_on_switch(uint64_t old_id, uint64_t new_id);
-GO_FIBER_API void gof_trace_on_block(int fd, int ev);
-GO_FIBER_API void gof_trace_on_unblock(int fd, int ev);
+GO_FIBER_API void gof_trace_on_block(gof_socket_t fd, int ev);
+GO_FIBER_API void gof_trace_on_unblock(gof_socket_t fd, int ev);
+GO_FIBER_API void gof_trace_on_io_armed(gof_socket_t fd, int ev);
 #endif
 
 #ifdef __cplusplus

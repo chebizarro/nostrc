@@ -1,0 +1,993 @@
+{
+  "cases": {
+    "patterns": [
+      {
+        "entropy_seed_hex": "000000000000494b",
+        "frames": [
+          {
+            "aad_hex": "",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 0,
+            "corrupt_input_hex": "72d00a331482cfa43440d67b2cc45d2a38646726e606f710ab11e1c862530b44b2a7dc",
+            "counter": 0,
+            "direction": "initiator_to_responder",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f696b2f302f30",
+            "plaintext_hex": "666970732d766563746f72732f696b2f302f30",
+            "replay_error": "ReplayDetected(0)",
+            "sealed": {
+              "file": "noise-ik-frame-0-0.bin",
+              "generator_version": "0.1.0",
+              "hex": "73d00a331482cfa43440d67b2cc45d2a38646726e606f710ab11e1c862530b44b2a7dc",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "4093a5ab48edc45032fcaffada324900f3374df33e2bc2866d2de3ab11f9d3ee"
+            }
+          },
+          {
+            "aad_hex": "0001a5",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 1,
+            "corrupt_input_hex": "1ee9715d231fb4154039f3758c37d0822f3a7151c2aaf510d1b6f2f656e4fa5f1ad335",
+            "counter": 1,
+            "direction": "initiator_to_responder",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f696b2f302f31",
+            "plaintext_hex": "666970732d766563746f72732f696b2f302f31",
+            "replay_error": "ReplayDetected(1)",
+            "sealed": {
+              "file": "noise-ik-frame-0-1.bin",
+              "generator_version": "0.1.0",
+              "hex": "1fe9715d231fb4154039f3758c37d0822f3a7151c2aaf510d1b6f2f656e4fa5f1ad335",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "4271ec99777f786580d47b9a6fbcb9c71248734161c228172fdad2df307c3ef3"
+            }
+          },
+          {
+            "aad_hex": "",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 2,
+            "corrupt_input_hex": "34db523c4d3e4166b1c4fb45e45d2ffa07276e2d1f0885aab2d4271e911c6712d1b13e",
+            "counter": 2,
+            "direction": "initiator_to_responder",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f696b2f302f32",
+            "plaintext_hex": "666970732d766563746f72732f696b2f302f32",
+            "replay_error": "ReplayDetected(2)",
+            "sealed": {
+              "file": "noise-ik-frame-0-2.bin",
+              "generator_version": "0.1.0",
+              "hex": "35db523c4d3e4166b1c4fb45e45d2ffa07276e2d1f0885aab2d4271e911c6712d1b13e",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "5f7fb764447513cd86e5ecf5c427203be0c4d4e2e6a56e21c938703c268d9d8f"
+            }
+          },
+          {
+            "aad_hex": "0003a5",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 3,
+            "corrupt_input_hex": "5d35ee4da704e2edfd3eba52bd6ac940a5e694e7c00b95f4ea3c1a631a6a2afc93f458",
+            "counter": 3,
+            "direction": "initiator_to_responder",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f696b2f302f33",
+            "plaintext_hex": "666970732d766563746f72732f696b2f302f33",
+            "replay_error": "ReplayDetected(3)",
+            "sealed": {
+              "file": "noise-ik-frame-0-3.bin",
+              "generator_version": "0.1.0",
+              "hex": "5c35ee4da704e2edfd3eba52bd6ac940a5e694e7c00b95f4ea3c1a631a6a2afc93f458",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "0420f84f1564eb1cd9c18e2fce681bb3f7269334981d0c0ffa8e91ca70bee0db"
+            }
+          },
+          {
+            "aad_hex": "",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 4,
+            "corrupt_input_hex": "6629438d1bc6db39f00ec0e685480464f24544d2dec9f76d8749bb821a8526cce0daf1",
+            "counter": 4,
+            "direction": "initiator_to_responder",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f696b2f302f34",
+            "plaintext_hex": "666970732d766563746f72732f696b2f302f34",
+            "replay_error": "ReplayDetected(4)",
+            "sealed": {
+              "file": "noise-ik-frame-0-4.bin",
+              "generator_version": "0.1.0",
+              "hex": "6729438d1bc6db39f00ec0e685480464f24544d2dec9f76d8749bb821a8526cce0daf1",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "4881dd431ea3f0de88d1caca271c2c7669da07d83953112f7a665f18f5d2983d"
+            }
+          },
+          {
+            "aad_hex": "0005a5",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 5,
+            "corrupt_input_hex": "bb2ff7c1ca7117d77b54509a720b1c55404a82e7e0766b6543591d99905e0b60ad7b20",
+            "counter": 5,
+            "direction": "initiator_to_responder",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f696b2f302f35",
+            "plaintext_hex": "666970732d766563746f72732f696b2f302f35",
+            "replay_error": "ReplayDetected(5)",
+            "sealed": {
+              "file": "noise-ik-frame-0-5.bin",
+              "generator_version": "0.1.0",
+              "hex": "ba2ff7c1ca7117d77b54509a720b1c55404a82e7e0766b6543591d99905e0b60ad7b20",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "4ea2bfe2cf77696ef3d063fc2998cab2656f203e860797e7cb1f4ba1d23fd1f5"
+            }
+          },
+          {
+            "aad_hex": "",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 6,
+            "corrupt_input_hex": "3655470666a8395427d46145dda0c3af0c7a3d794429a8efe08b222c0ba239017f90b7",
+            "counter": 6,
+            "direction": "initiator_to_responder",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f696b2f302f36",
+            "plaintext_hex": "666970732d766563746f72732f696b2f302f36",
+            "replay_error": "ReplayDetected(6)",
+            "sealed": {
+              "file": "noise-ik-frame-0-6.bin",
+              "generator_version": "0.1.0",
+              "hex": "3755470666a8395427d46145dda0c3af0c7a3d794429a8efe08b222c0ba239017f90b7",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "25b8d20f8b11f5adb9f17d349e6ca4a90748a16081ad59aef6147d7529ab9d16"
+            }
+          },
+          {
+            "aad_hex": "0007a5",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 7,
+            "corrupt_input_hex": "366e7eedd5fc1d95c5667a837cba008e52c76ec4cfd65f5c1acf216b99acbb81d07d2a",
+            "counter": 7,
+            "direction": "initiator_to_responder",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f696b2f302f37",
+            "plaintext_hex": "666970732d766563746f72732f696b2f302f37",
+            "replay_error": "ReplayDetected(7)",
+            "sealed": {
+              "file": "noise-ik-frame-0-7.bin",
+              "generator_version": "0.1.0",
+              "hex": "376e7eedd5fc1d95c5667a837cba008e52c76ec4cfd65f5c1acf216b99acbb81d07d2a",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "f6dc749e217c3c13ce6dcc23d7b21227e058c392199c938d34603e6f1f74df44"
+            }
+          },
+          {
+            "aad_hex": "",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 0,
+            "corrupt_input_hex": "96b6b2feef8ab486e6ee302e55c2c3781e93eb03424e093392d5f66b2881f387d7d7a1",
+            "counter": 0,
+            "direction": "responder_to_initiator",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f696b2f312f30",
+            "plaintext_hex": "666970732d766563746f72732f696b2f312f30",
+            "replay_error": "ReplayDetected(0)",
+            "sealed": {
+              "file": "noise-ik-frame-1-0.bin",
+              "generator_version": "0.1.0",
+              "hex": "97b6b2feef8ab486e6ee302e55c2c3781e93eb03424e093392d5f66b2881f387d7d7a1",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "52179bd9557f8a4889d42e1fb922b37eea0b7d2792f646c2074329f0910fed96"
+            }
+          },
+          {
+            "aad_hex": "0101a5",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 1,
+            "corrupt_input_hex": "9b32ba24097291e0c3833777cb899193db89b9da988a7e932c7700029107a4e628dec3",
+            "counter": 1,
+            "direction": "responder_to_initiator",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f696b2f312f31",
+            "plaintext_hex": "666970732d766563746f72732f696b2f312f31",
+            "replay_error": "ReplayDetected(1)",
+            "sealed": {
+              "file": "noise-ik-frame-1-1.bin",
+              "generator_version": "0.1.0",
+              "hex": "9a32ba24097291e0c3833777cb899193db89b9da988a7e932c7700029107a4e628dec3",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "f2bac3c9d454deb501dc33e6a9d13f0fa385410d651aa4b19a8877b05fa9815e"
+            }
+          },
+          {
+            "aad_hex": "",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 2,
+            "corrupt_input_hex": "20bce3e7a7a86e8ce5933fd191a963ddac5fe4f96cd44a2354ec30cd067fc0ca4caa90",
+            "counter": 2,
+            "direction": "responder_to_initiator",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f696b2f312f32",
+            "plaintext_hex": "666970732d766563746f72732f696b2f312f32",
+            "replay_error": "ReplayDetected(2)",
+            "sealed": {
+              "file": "noise-ik-frame-1-2.bin",
+              "generator_version": "0.1.0",
+              "hex": "21bce3e7a7a86e8ce5933fd191a963ddac5fe4f96cd44a2354ec30cd067fc0ca4caa90",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "ce89a76e3a97d667445a1498bc4f1bb075a88495bb5d27546002ae1d6cef38fb"
+            }
+          },
+          {
+            "aad_hex": "0103a5",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 3,
+            "corrupt_input_hex": "de0ae7036b8d7fc33341d2f3530b61685a5a90623602a924bca5906731e19929a4e8fa",
+            "counter": 3,
+            "direction": "responder_to_initiator",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f696b2f312f33",
+            "plaintext_hex": "666970732d766563746f72732f696b2f312f33",
+            "replay_error": "ReplayDetected(3)",
+            "sealed": {
+              "file": "noise-ik-frame-1-3.bin",
+              "generator_version": "0.1.0",
+              "hex": "df0ae7036b8d7fc33341d2f3530b61685a5a90623602a924bca5906731e19929a4e8fa",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "4d7a401ea6d446462a0cb6d27131a0fe5c96b66545da98c5375344ec49341452"
+            }
+          },
+          {
+            "aad_hex": "",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 4,
+            "corrupt_input_hex": "8eae11d51d671c8b25dedd2da9f57b732d8ba45c642090caebe2be58fab04aef89e191",
+            "counter": 4,
+            "direction": "responder_to_initiator",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f696b2f312f34",
+            "plaintext_hex": "666970732d766563746f72732f696b2f312f34",
+            "replay_error": "ReplayDetected(4)",
+            "sealed": {
+              "file": "noise-ik-frame-1-4.bin",
+              "generator_version": "0.1.0",
+              "hex": "8fae11d51d671c8b25dedd2da9f57b732d8ba45c642090caebe2be58fab04aef89e191",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "79011822d316f2145d6024b89f54064ddb73d4d1cf34548c3a895c013ba6c7a6"
+            }
+          },
+          {
+            "aad_hex": "0105a5",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 5,
+            "corrupt_input_hex": "b2f1d9a2c587ecb3802f5359f166fd2464276ef7134f1327fe4339d17bdd88676d8bf2",
+            "counter": 5,
+            "direction": "responder_to_initiator",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f696b2f312f35",
+            "plaintext_hex": "666970732d766563746f72732f696b2f312f35",
+            "replay_error": "ReplayDetected(5)",
+            "sealed": {
+              "file": "noise-ik-frame-1-5.bin",
+              "generator_version": "0.1.0",
+              "hex": "b3f1d9a2c587ecb3802f5359f166fd2464276ef7134f1327fe4339d17bdd88676d8bf2",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "f3e9a3ba8a91a9d7f948c8e79bfc893e48d35f01ec6940b67bd8d5e73d7df473"
+            }
+          },
+          {
+            "aad_hex": "",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 6,
+            "corrupt_input_hex": "d8d8f53d71d82b8cc2457375f9c1452fd9fab348982e6dd9d9ba99f077350dc3c0cfad",
+            "counter": 6,
+            "direction": "responder_to_initiator",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f696b2f312f36",
+            "plaintext_hex": "666970732d766563746f72732f696b2f312f36",
+            "replay_error": "ReplayDetected(6)",
+            "sealed": {
+              "file": "noise-ik-frame-1-6.bin",
+              "generator_version": "0.1.0",
+              "hex": "d9d8f53d71d82b8cc2457375f9c1452fd9fab348982e6dd9d9ba99f077350dc3c0cfad",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "bfc8ea3323548bdcb9e33286d4d41e30a51cc3031cb0a9933ff6c3b41046cd3e"
+            }
+          },
+          {
+            "aad_hex": "0107a5",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 7,
+            "corrupt_input_hex": "d15846bcb38c99323c72d907b40c3af8eceb1a803888760d0821541c4a519863a526e2",
+            "counter": 7,
+            "direction": "responder_to_initiator",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f696b2f312f37",
+            "plaintext_hex": "666970732d766563746f72732f696b2f312f37",
+            "replay_error": "ReplayDetected(7)",
+            "sealed": {
+              "file": "noise-ik-frame-1-7.bin",
+              "generator_version": "0.1.0",
+              "hex": "d05846bcb38c99323c72d907b40c3af8eceb1a803888760d0821541c4a519863a526e2",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "b1af1ecd923b4631a7c1991a295c647373795de0901c56773bda1db9f9be69f5"
+            }
+          }
+        ],
+        "keypair_seeds": [
+          0,
+          1
+        ],
+        "messages": [
+          {
+            "bytes": {
+              "file": "noise-ik-msg-1.bin",
+              "generator_version": "0.1.0",
+              "hex": "031b41e632ad8afba548f0de71d01426d684c4221c95a5c230fa261546e0f8439f12a09d1b041ea7e121ba57d18fc96c4139cf6ba964279bc243edef62899aa36048979038f74a4a099d618d1a9155d9a3ac8a9ff75c217c9bb537e406a24822d293e68a9cad5b370810",
+              "length": 106,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "0a4807d0d6c5cd86127779d733d56f7f6196c61d45b40a4e867fb0a774ddf8a9"
+            },
+            "number": 1,
+            "sender": "initiator"
+          },
+          {
+            "bytes": {
+              "file": "noise-ik-msg-2.bin",
+              "generator_version": "0.1.0",
+              "hex": "03bcd7d39e31a731fba63f6891503f027babfb54822c746e204f97f4363c6ac4f67f59e06bd04a9bb53176918a42bf66d53998dc9322b1fca5",
+              "length": 57,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "7fb75d37eaea05533be403c079c269dc748b98ef47544b7040275187717d233a"
+            },
+            "number": 2,
+            "sender": "responder"
+          }
+        ],
+        "pattern": "IK",
+        "post_handshake": {
+          "ck": null,
+          "initiator_h": "b6b2164862161f46a4fa1b1bfad495022b2fcfcc87d9d3623c136d3225224a54",
+          "responder_h": "b6b2164862161f46a4fa1b1bfad495022b2fcfcc87d9d3623c136d3225224a54"
+        },
+        "startup_epoch_hex": "0123456789abcdef",
+        "steps": [
+          {
+            "event": "constructed",
+            "state": {
+              "initiator": {
+                "h": "c4f4d7e468c992772c7227ff713db3f384364eb3a7cf1996e39568e0dd51c89d",
+                "progress": "Initial"
+              },
+              "responder": {
+                "h": "c4f4d7e468c992772c7227ff713db3f384364eb3a7cf1996e39568e0dd51c89d",
+                "progress": "Initial"
+              }
+            }
+          },
+          {
+            "event": "initiator_write_1",
+            "state": {
+              "initiator": {
+                "h": "a371a8bbe8221571fb916c71a5663a3b49b9e5e8bebcc9ba044e032c4b03a2e1",
+                "progress": "Message1Done"
+              },
+              "responder": {
+                "h": "c4f4d7e468c992772c7227ff713db3f384364eb3a7cf1996e39568e0dd51c89d",
+                "progress": "Initial"
+              }
+            }
+          },
+          {
+            "event": "responder_read_1",
+            "state": {
+              "initiator": {
+                "h": "a371a8bbe8221571fb916c71a5663a3b49b9e5e8bebcc9ba044e032c4b03a2e1",
+                "progress": "Message1Done"
+              },
+              "responder": {
+                "h": "a371a8bbe8221571fb916c71a5663a3b49b9e5e8bebcc9ba044e032c4b03a2e1",
+                "progress": "Message1Done"
+              }
+            }
+          },
+          {
+            "event": "responder_write_2",
+            "state": {
+              "initiator": {
+                "h": "a371a8bbe8221571fb916c71a5663a3b49b9e5e8bebcc9ba044e032c4b03a2e1",
+                "progress": "Message1Done"
+              },
+              "responder": {
+                "h": "b6b2164862161f46a4fa1b1bfad495022b2fcfcc87d9d3623c136d3225224a54",
+                "progress": "Complete"
+              }
+            }
+          },
+          {
+            "event": "initiator_read_2_on_fork",
+            "state": {
+              "initiator": {
+                "h": "b6b2164862161f46a4fa1b1bfad495022b2fcfcc87d9d3623c136d3225224a54",
+                "progress": "Complete"
+              },
+              "responder": {
+                "h": "b6b2164862161f46a4fa1b1bfad495022b2fcfcc87d9d3623c136d3225224a54",
+                "progress": "Complete"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "entropy_seed_hex": "000000000000584b",
+        "frames": [
+          {
+            "aad_hex": "",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 0,
+            "corrupt_input_hex": "84058b83aba2d20564ca9de693c68507714bb853b39be8afd39ce4996202bb0f5ecb34",
+            "counter": 0,
+            "direction": "initiator_to_responder",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f786b2f302f30",
+            "plaintext_hex": "666970732d766563746f72732f786b2f302f30",
+            "replay_error": "ReplayDetected(0)",
+            "sealed": {
+              "file": "noise-xk-frame-0-0.bin",
+              "generator_version": "0.1.0",
+              "hex": "85058b83aba2d20564ca9de693c68507714bb853b39be8afd39ce4996202bb0f5ecb34",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "647768907354fe0fe60e0f4a44267bc1fdda1d067cdd082f73859e273ec56685"
+            }
+          },
+          {
+            "aad_hex": "0001a5",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 1,
+            "corrupt_input_hex": "287de01b11d5cd14094a0eeb6c5e0ae0b64374b0614b5470d49cdd431e7ae6e3721995",
+            "counter": 1,
+            "direction": "initiator_to_responder",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f786b2f302f31",
+            "plaintext_hex": "666970732d766563746f72732f786b2f302f31",
+            "replay_error": "ReplayDetected(1)",
+            "sealed": {
+              "file": "noise-xk-frame-0-1.bin",
+              "generator_version": "0.1.0",
+              "hex": "297de01b11d5cd14094a0eeb6c5e0ae0b64374b0614b5470d49cdd431e7ae6e3721995",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "b81586a3a817c17ad26316887005dc36a258aa8fa158f19d762a313126e7a484"
+            }
+          },
+          {
+            "aad_hex": "",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 2,
+            "corrupt_input_hex": "d0dd26cce12486c555e2a4c9e7b818d9ef2edad3bc4459679c9339d7944477acd119b8",
+            "counter": 2,
+            "direction": "initiator_to_responder",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f786b2f302f32",
+            "plaintext_hex": "666970732d766563746f72732f786b2f302f32",
+            "replay_error": "ReplayDetected(2)",
+            "sealed": {
+              "file": "noise-xk-frame-0-2.bin",
+              "generator_version": "0.1.0",
+              "hex": "d1dd26cce12486c555e2a4c9e7b818d9ef2edad3bc4459679c9339d7944477acd119b8",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "fed1b667e76c94722776755a4156fa11b919f57ffc6f9add1a8e5ae01759a32c"
+            }
+          },
+          {
+            "aad_hex": "0003a5",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 3,
+            "corrupt_input_hex": "254ad482fa3fd45a445dfe12711f5c910fc5c65177293becc8873c09ecdef5d9d9f839",
+            "counter": 3,
+            "direction": "initiator_to_responder",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f786b2f302f33",
+            "plaintext_hex": "666970732d766563746f72732f786b2f302f33",
+            "replay_error": "ReplayDetected(3)",
+            "sealed": {
+              "file": "noise-xk-frame-0-3.bin",
+              "generator_version": "0.1.0",
+              "hex": "244ad482fa3fd45a445dfe12711f5c910fc5c65177293becc8873c09ecdef5d9d9f839",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "0dde93974948e99ebefec91a072e7d69c16a23a31060b34f8dce70de2cbbe0de"
+            }
+          },
+          {
+            "aad_hex": "",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 4,
+            "corrupt_input_hex": "6f3e6785e32a2512ad31a0f472ad262568f366e885cff471161fee7753741a4a0e3573",
+            "counter": 4,
+            "direction": "initiator_to_responder",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f786b2f302f34",
+            "plaintext_hex": "666970732d766563746f72732f786b2f302f34",
+            "replay_error": "ReplayDetected(4)",
+            "sealed": {
+              "file": "noise-xk-frame-0-4.bin",
+              "generator_version": "0.1.0",
+              "hex": "6e3e6785e32a2512ad31a0f472ad262568f366e885cff471161fee7753741a4a0e3573",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "0d3a5dbe650a151caae2e2b8584c6d7a5d9dbb67decbd6ece3ebba83337d7c8d"
+            }
+          },
+          {
+            "aad_hex": "0005a5",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 5,
+            "corrupt_input_hex": "32b35dd07f17fce013f82c6ed43391555b9d8d141bbc3d7b0a003c51d11500da268c81",
+            "counter": 5,
+            "direction": "initiator_to_responder",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f786b2f302f35",
+            "plaintext_hex": "666970732d766563746f72732f786b2f302f35",
+            "replay_error": "ReplayDetected(5)",
+            "sealed": {
+              "file": "noise-xk-frame-0-5.bin",
+              "generator_version": "0.1.0",
+              "hex": "33b35dd07f17fce013f82c6ed43391555b9d8d141bbc3d7b0a003c51d11500da268c81",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "03ef6e54280ed44b0385a84df2caf87a64cd81c8769b209ec1a7021618242274"
+            }
+          },
+          {
+            "aad_hex": "",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 6,
+            "corrupt_input_hex": "83f3eb6a2631d53a2b0861e5ee625a9bda78504ad33d65bbba38fd11c80c686615c8a3",
+            "counter": 6,
+            "direction": "initiator_to_responder",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f786b2f302f36",
+            "plaintext_hex": "666970732d766563746f72732f786b2f302f36",
+            "replay_error": "ReplayDetected(6)",
+            "sealed": {
+              "file": "noise-xk-frame-0-6.bin",
+              "generator_version": "0.1.0",
+              "hex": "82f3eb6a2631d53a2b0861e5ee625a9bda78504ad33d65bbba38fd11c80c686615c8a3",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "2077fbd403431ae35e482eb58a030d596cdc02ccfea9f286c9f3d96f00808796"
+            }
+          },
+          {
+            "aad_hex": "0007a5",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 7,
+            "corrupt_input_hex": "ba4caf3a994e64875ff432f07c96c639b1415f0acd2d08ddbdfb75bc2dda4d5afe61a5",
+            "counter": 7,
+            "direction": "initiator_to_responder",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f786b2f302f37",
+            "plaintext_hex": "666970732d766563746f72732f786b2f302f37",
+            "replay_error": "ReplayDetected(7)",
+            "sealed": {
+              "file": "noise-xk-frame-0-7.bin",
+              "generator_version": "0.1.0",
+              "hex": "bb4caf3a994e64875ff432f07c96c639b1415f0acd2d08ddbdfb75bc2dda4d5afe61a5",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "f18fef875c6a4356f1bc57d71ef8c354fdf6ab0b8d5e25ea90a907afa5a55978"
+            }
+          },
+          {
+            "aad_hex": "",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 0,
+            "corrupt_input_hex": "df45e28ef244f185534d1a9e9161a54d5463692038f070f8234c603ed6964ac8016b69",
+            "counter": 0,
+            "direction": "responder_to_initiator",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f786b2f312f30",
+            "plaintext_hex": "666970732d766563746f72732f786b2f312f30",
+            "replay_error": "ReplayDetected(0)",
+            "sealed": {
+              "file": "noise-xk-frame-1-0.bin",
+              "generator_version": "0.1.0",
+              "hex": "de45e28ef244f185534d1a9e9161a54d5463692038f070f8234c603ed6964ac8016b69",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "02ecc9b1641e835bdbf671d93a84ecd9dcfc4fd72966ed5d0aeaf4b3e163a93e"
+            }
+          },
+          {
+            "aad_hex": "0101a5",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 1,
+            "corrupt_input_hex": "4e6b90c2014bc4ff767ebd2994300f45e721283d258f687eaf143998a35f3e9347d3e5",
+            "counter": 1,
+            "direction": "responder_to_initiator",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f786b2f312f31",
+            "plaintext_hex": "666970732d766563746f72732f786b2f312f31",
+            "replay_error": "ReplayDetected(1)",
+            "sealed": {
+              "file": "noise-xk-frame-1-1.bin",
+              "generator_version": "0.1.0",
+              "hex": "4f6b90c2014bc4ff767ebd2994300f45e721283d258f687eaf143998a35f3e9347d3e5",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "1254814ca4b1390bba6f9ffd6d70309a1498cecd50efea00f5748e4b7260ddba"
+            }
+          },
+          {
+            "aad_hex": "",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 2,
+            "corrupt_input_hex": "1edb9afb921e79a6b7e051a7abc8777d6c984143dfdb290e1ac1f790f27e06f6e78015",
+            "counter": 2,
+            "direction": "responder_to_initiator",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f786b2f312f32",
+            "plaintext_hex": "666970732d766563746f72732f786b2f312f32",
+            "replay_error": "ReplayDetected(2)",
+            "sealed": {
+              "file": "noise-xk-frame-1-2.bin",
+              "generator_version": "0.1.0",
+              "hex": "1fdb9afb921e79a6b7e051a7abc8777d6c984143dfdb290e1ac1f790f27e06f6e78015",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "a547edf81c50eec1449084f666bf0a27fe96866eb7b4aa8608ca4d5432f0067d"
+            }
+          },
+          {
+            "aad_hex": "0103a5",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 3,
+            "corrupt_input_hex": "d1cda16e3e978b3ae87f9b50e50f92fa222312498e86d85e569b3156472af24b742d01",
+            "counter": 3,
+            "direction": "responder_to_initiator",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f786b2f312f33",
+            "plaintext_hex": "666970732d766563746f72732f786b2f312f33",
+            "replay_error": "ReplayDetected(3)",
+            "sealed": {
+              "file": "noise-xk-frame-1-3.bin",
+              "generator_version": "0.1.0",
+              "hex": "d0cda16e3e978b3ae87f9b50e50f92fa222312498e86d85e569b3156472af24b742d01",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "72b6bdcaddde06845c7d15931b11e7b307f67645be84667a7afa23e7fc1c37f3"
+            }
+          },
+          {
+            "aad_hex": "",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 4,
+            "corrupt_input_hex": "7b1b86e1272322b31687a1d6505f3a6fe804688655aa4c13ac2b7643913a7eb1ab2279",
+            "counter": 4,
+            "direction": "responder_to_initiator",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f786b2f312f34",
+            "plaintext_hex": "666970732d766563746f72732f786b2f312f34",
+            "replay_error": "ReplayDetected(4)",
+            "sealed": {
+              "file": "noise-xk-frame-1-4.bin",
+              "generator_version": "0.1.0",
+              "hex": "7a1b86e1272322b31687a1d6505f3a6fe804688655aa4c13ac2b7643913a7eb1ab2279",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "5d3e474391d2ba917f2b93618c0d3ad234850511bc9ef9278f22ac92e8eca3a6"
+            }
+          },
+          {
+            "aad_hex": "0105a5",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 5,
+            "corrupt_input_hex": "a81bd0fad0639672d7e0e1767c1b9c717ea7b3bd131d634a7c6008e3ce6120afb98a74",
+            "counter": 5,
+            "direction": "responder_to_initiator",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f786b2f312f35",
+            "plaintext_hex": "666970732d766563746f72732f786b2f312f35",
+            "replay_error": "ReplayDetected(5)",
+            "sealed": {
+              "file": "noise-xk-frame-1-5.bin",
+              "generator_version": "0.1.0",
+              "hex": "a91bd0fad0639672d7e0e1767c1b9c717ea7b3bd131d634a7c6008e3ce6120afb98a74",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "adb44c2be31a9c97efbac574764daeb52c11a1ff4a9804885de2e3112a82a1b5"
+            }
+          },
+          {
+            "aad_hex": "",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 6,
+            "corrupt_input_hex": "00374dace261bcf0d7406060ee3ecfffd85b1dcd7bcc49be9fafdda330348c26abd8f0",
+            "counter": 6,
+            "direction": "responder_to_initiator",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f786b2f312f36",
+            "plaintext_hex": "666970732d766563746f72732f786b2f312f36",
+            "replay_error": "ReplayDetected(6)",
+            "sealed": {
+              "file": "noise-xk-frame-1-6.bin",
+              "generator_version": "0.1.0",
+              "hex": "01374dace261bcf0d7406060ee3ecfffd85b1dcd7bcc49be9fafdda330348c26abd8f0",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "217861a96be3f1dab90b7141392dca06bd1190593c4f523bfba7119aa9a3d12d"
+            }
+          },
+          {
+            "aad_hex": "0107a5",
+            "authentication_error": "DecryptionFailed",
+            "corrupt_counter": 7,
+            "corrupt_input_hex": "e0fda7b406991789ad3ef240d7852c73091d752a53a7bbd7f35e7bcccf086e2ed8c43c",
+            "counter": 7,
+            "direction": "responder_to_initiator",
+            "failed_counter_still_acceptable": true,
+            "opened_hex": "666970732d766563746f72732f786b2f312f37",
+            "plaintext_hex": "666970732d766563746f72732f786b2f312f37",
+            "replay_error": "ReplayDetected(7)",
+            "sealed": {
+              "file": "noise-xk-frame-1-7.bin",
+              "generator_version": "0.1.0",
+              "hex": "e1fda7b406991789ad3ef240d7852c73091d752a53a7bbd7f35e7bcccf086e2ed8c43c",
+              "length": 35,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "79c184c0a17dad5019cdf88f037e218c6d1b226aa63cd6bae2f4c07c1f86a9ad"
+            }
+          }
+        ],
+        "keypair_seeds": [
+          0,
+          1
+        ],
+        "messages": [
+          {
+            "bytes": {
+              "file": "noise-xk-msg-1.bin",
+              "generator_version": "0.1.0",
+              "hex": "027c998ef9a338d2adf536efbf2fc7657ff3ec54184264529517e01e188a2d7007",
+              "length": 33,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "5148c2dbeeeca07d09b53f1206fe70128333a28872795e447162d413210110b7"
+            },
+            "number": 1,
+            "sender": "initiator"
+          },
+          {
+            "bytes": {
+              "file": "noise-xk-msg-2.bin",
+              "generator_version": "0.1.0",
+              "hex": "03ae9881ef1f89e3ff6b8d910e0904d11568079b7af7027a9ae214c9f4dc7cdbaf4c33322230eedee5c0163771320610b57734a0794b583c05",
+              "length": 57,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "8dbe954ee922d2eb2cadc3f062bbd4176d9faf0eebff3e3eea9953fe8a799ae0"
+            },
+            "number": 2,
+            "sender": "responder"
+          },
+          {
+            "bytes": {
+              "file": "noise-xk-msg-3.bin",
+              "generator_version": "0.1.0",
+              "hex": "2804c0cf83344167d18071c680c4e8877b98b0e34e232f12652307dda79af52ba1fa5ed1d4b68186058ebbb20d3aec87034c9cf1d012e4c9251db2c9fd6e6cdfe66af30145768c0583",
+              "length": 73,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "8efd9b8b6b24f96bdf996cf5bc491e56b484e3392f0051478ba9585d13fe5c43"
+            },
+            "number": 3,
+            "sender": "initiator"
+          }
+        ],
+        "pattern": "XK",
+        "post_handshake": {
+          "ck": null,
+          "initiator_h": "e4c771ee2cf82892f364eb1b19bd4e1212b701fdbf423e6d726ae745174b8f28",
+          "responder_h": "e4c771ee2cf82892f364eb1b19bd4e1212b701fdbf423e6d726ae745174b8f28"
+        },
+        "startup_epoch_hex": "0123456789abcdef",
+        "steps": [
+          {
+            "event": "constructed",
+            "state": {
+              "initiator": {
+                "h": "d26750f4eafd9d9d10b10f07ec287e2ffdd33f0df19eeefe3d27168b7e5fb9b0",
+                "progress": "Initial"
+              },
+              "responder": {
+                "h": "d26750f4eafd9d9d10b10f07ec287e2ffdd33f0df19eeefe3d27168b7e5fb9b0",
+                "progress": "Initial"
+              }
+            }
+          },
+          {
+            "event": "initiator_write_1",
+            "state": {
+              "initiator": {
+                "h": "cf101c89eafa38b0502000fc7cc44ce2ef1ec2c8aa5d22cf8fd9b31f840f73f4",
+                "progress": "Message1Done"
+              },
+              "responder": {
+                "h": "d26750f4eafd9d9d10b10f07ec287e2ffdd33f0df19eeefe3d27168b7e5fb9b0",
+                "progress": "Initial"
+              }
+            }
+          },
+          {
+            "event": "responder_read_1",
+            "state": {
+              "initiator": {
+                "h": "cf101c89eafa38b0502000fc7cc44ce2ef1ec2c8aa5d22cf8fd9b31f840f73f4",
+                "progress": "Message1Done"
+              },
+              "responder": {
+                "h": "cf101c89eafa38b0502000fc7cc44ce2ef1ec2c8aa5d22cf8fd9b31f840f73f4",
+                "progress": "Message1Done"
+              }
+            }
+          },
+          {
+            "event": "responder_write_2",
+            "state": {
+              "initiator": {
+                "h": "cf101c89eafa38b0502000fc7cc44ce2ef1ec2c8aa5d22cf8fd9b31f840f73f4",
+                "progress": "Message1Done"
+              },
+              "responder": {
+                "h": "e49ec2f612c5efc93181cd028dfa2a578c1fc9f77fc24a0fcd785b93d90deab1",
+                "progress": "Message2Done"
+              }
+            }
+          },
+          {
+            "event": "initiator_read_2_on_fork",
+            "state": {
+              "initiator": {
+                "h": "e49ec2f612c5efc93181cd028dfa2a578c1fc9f77fc24a0fcd785b93d90deab1",
+                "progress": "Message2Done"
+              },
+              "responder": {
+                "h": "e49ec2f612c5efc93181cd028dfa2a578c1fc9f77fc24a0fcd785b93d90deab1",
+                "progress": "Message2Done"
+              }
+            }
+          },
+          {
+            "event": "initiator_write_3",
+            "state": {
+              "initiator": {
+                "h": "e4c771ee2cf82892f364eb1b19bd4e1212b701fdbf423e6d726ae745174b8f28",
+                "progress": "Complete"
+              },
+              "responder": {
+                "h": "e49ec2f612c5efc93181cd028dfa2a578c1fc9f77fc24a0fcd785b93d90deab1",
+                "progress": "Message2Done"
+              }
+            }
+          },
+          {
+            "event": "responder_read_3_on_fork",
+            "state": {
+              "initiator": {
+                "h": "e4c771ee2cf82892f364eb1b19bd4e1212b701fdbf423e6d726ae745174b8f28",
+                "progress": "Complete"
+              },
+              "responder": {
+                "h": "e4c771ee2cf82892f364eb1b19bd4e1212b701fdbf423e6d726ae745174b8f28",
+                "progress": "Complete"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "replay_trace": [
+      {
+        "accept": true,
+        "counter": 0,
+        "highest_after": 0
+      },
+      {
+        "accept": false,
+        "counter": 0,
+        "highest_after": 0
+      },
+      {
+        "accept": true,
+        "counter": 2,
+        "highest_after": 2
+      },
+      {
+        "accept": true,
+        "counter": 1,
+        "highest_after": 2
+      },
+      {
+        "accept": false,
+        "counter": 2,
+        "highest_after": 2
+      },
+      {
+        "accept": true,
+        "counter": 8191,
+        "highest_after": 8191
+      },
+      {
+        "accept": true,
+        "counter": 8192,
+        "highest_after": 8192
+      },
+      {
+        "accept": false,
+        "counter": 0,
+        "highest_after": 8192
+      },
+      {
+        "accept": false,
+        "counter": 1,
+        "highest_after": 8192
+      },
+      {
+        "accept": false,
+        "counter": 8192,
+        "highest_after": 8192
+      },
+      {
+        "accept": true,
+        "counter": 16384,
+        "highest_after": 16384
+      },
+      {
+        "accept": false,
+        "counter": 8192,
+        "highest_after": 16384
+      },
+      {
+        "accept": true,
+        "counter": 8193,
+        "highest_after": 16384
+      },
+      {
+        "accept": true,
+        "counter": 16383,
+        "highest_after": 16384
+      },
+      {
+        "accept": false,
+        "counter": 16384,
+        "highest_after": 16384
+      },
+      {
+        "accept": true,
+        "counter": 20000,
+        "highest_after": 20000
+      }
+    ],
+    "replay_window_size": 8192
+  },
+  "family": "noise",
+  "gaps": [
+    "SymmetricState.ck is private; no public or test-hook getter at this pin. h is exported via HandshakeState::handshake_hash (test-hooks)."
+  ],
+  "generator": "fips-vectors",
+  "generator_version": "0.1.0",
+  "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+  "schema_version": 1
+}

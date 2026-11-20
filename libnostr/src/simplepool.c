@@ -43,19 +43,30 @@ typedef struct PoolSubscriptionEntry {
     struct PoolSubscriptionEntry *next;
 } PoolSubscriptionEntry;
 
+typedef struct PoolClosedBackoff {
+    NostrRelay *relay; /* identity only, pool owns the relay */
+    uint64_t due_ms;
+    unsigned next_ms;
+    struct PoolClosedBackoff *next;
+} PoolClosedBackoff;
+
 typedef struct SubscriptionRegistry {
     PoolSubscriptionEntry *head;
     size_t count;
     pthread_mutex_t mutex;
     GoChannel *cleanup_queue;  // Queue of entries to cleanup
     _Atomic bool shutdown_requested; /* nostrc-val0v: polled by the cleanup worker, set by pool free */
-    _Atomic unsigned recovery_window; /* configured before subscribe; no public layout change */
+    PoolClosedBackoff *closed_backoff; /* mutex protected */
+    unsigned closed_initial_ms, closed_max_ms;
+    _Atomic unsigned recovery_window; /* public setter / worker snapshot; no public layout change */
 } SubscriptionRegistry;
 
 static SubscriptionRegistry *subscription_registry_new(void) {
     SubscriptionRegistry *reg = (SubscriptionRegistry *)malloc(sizeof(SubscriptionRegistry));
     if (!reg) return NULL;
     
+    reg->closed_backoff = NULL;
+    reg->closed_initial_ms = reg->closed_max_ms = 0;
     reg->head = NULL;
     reg->count = 0;
     pthread_mutex_init(&reg->mutex, NULL);
@@ -71,6 +82,10 @@ static void subscription_registry_free(SubscriptionRegistry *reg) {
     
     pthread_mutex_lock(&reg->mutex);
     
+    while (reg->closed_backoff) {
+        PoolClosedBackoff *next = reg->closed_backoff->next;
+        free(reg->closed_backoff); reg->closed_backoff = next;
+    }
     // Free all entries
     PoolSubscriptionEntry *entry = reg->head;
     while (entry) {
@@ -321,7 +336,7 @@ static bool pool_dial_relay(NostrSimplePool *pool, NostrRelay *relay,
 
     nostr_relay_dial_release(relay, connected);
 
-    if (pool->brown_list_enabled && pool->brown_list && url) {
+    if (nostr_simple_pool_get_brown_list_enabled(pool) && pool->brown_list && url) {
         if (connected) nostr_brown_list_record_success(pool->brown_list, url);
         else nostr_brown_list_record_failure(pool->brown_list, url);
     }
@@ -441,6 +456,53 @@ bool nostr_simple_pool_set_recovery_window(NostrSimplePool *pool, unsigned secon
     if (!registry) return false;
     atomic_store(&registry->recovery_window, seconds);
     return true;
+}
+bool nostr_simple_pool_set_closed_backoff(NostrSimplePool *pool, unsigned initial_ms, unsigned max_ms) {
+    SubscriptionRegistry *reg = pool ? pool->sub_registry : NULL;
+    if (!reg || (initial_ms && max_ms < initial_ms)) return false;
+    pthread_mutex_lock(&reg->mutex);
+    reg->closed_initial_ms = initial_ms; reg->closed_max_ms = max_ms;
+    pthread_mutex_unlock(&reg->mutex);
+    return true;
+}
+static uint64_t closed_backoff_now(void) {
+    struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
+    return (uint64_t)t.tv_sec * 1000 + (uint64_t)t.tv_nsec / 1000000;
+}
+/* Called under pool_mutex by reconcile, or from its sole worker at a frame
+ * boundary. Lock order is pool_mutex -> registry mutex, never the reverse.
+ * Drop the registry mutex before any subscription I/O, wait or callback.
+ * One entry per pool relay. */
+static bool pool_closed_backoff(NostrSimplePool *pool, NostrRelay *relay, int action) {
+    SubscriptionRegistry *reg = pool->sub_registry;
+    if (!reg) return true;
+    pthread_mutex_lock(&reg->mutex);
+    PoolClosedBackoff **slot = &reg->closed_backoff;
+    while (*slot && (*slot)->relay != relay) slot = &(*slot)->next;
+    if (action == 2) { /* removal; do not retain a freed relay identity */
+        if (*slot) { PoolClosedBackoff *old = *slot; *slot = old->next; free(old); }
+        pthread_mutex_unlock(&reg->mutex); return true;
+    }
+    if (!reg->closed_initial_ms) { pthread_mutex_unlock(&reg->mutex); return true; }
+    if (!*slot) {
+        *slot = calloc(1, sizeof(**slot));
+        if (!*slot) {
+            pthread_mutex_unlock(&reg->mutex);
+            fprintf(stderr, "[pool] CLOSED backoff allocation failed; recovery refused\n");
+            return false;
+        }
+        (*slot)->relay = relay; (*slot)->next_ms = reg->closed_initial_ms;
+    }
+    PoolClosedBackoff *b = *slot;
+    uint64_t now = closed_backoff_now();
+    if (action == 1) { /* CLOSED: schedule, do not tear down authenticated socket */
+        b->due_ms = UINT64_MAX - now < b->next_ms ? UINT64_MAX : now + b->next_ms;
+        b->next_ms = b->next_ms < reg->closed_max_ms / 2 ? b->next_ms * 2 : reg->closed_max_ms;
+    } else if (action == -1) { /* EOSE is the successful catch-up boundary */
+        b->due_ms = 0; b->next_ms = reg->closed_initial_ms;
+    }
+    bool ready = !b->due_ms || now >= b->due_ms;
+    pthread_mutex_unlock(&reg->mutex); return ready;
 }
 static unsigned pool_recovery_window(NostrSimplePool *pool) {
     SubscriptionRegistry *registry = pool->sub_registry;
@@ -692,7 +754,7 @@ static NostrRelay *pool_register_relay(NostrSimplePool *pool, const char *url,
     if (err) free_error(err);
     if (!relay) {
         /* nostrc-py1: Record failure even if relay creation fails */
-        if (pool->brown_list_enabled && pool->brown_list) {
+        if (nostr_simple_pool_get_brown_list_enabled(pool) && pool->brown_list) {
             nostr_brown_list_record_failure(pool->brown_list, url);
         }
         return NULL;
@@ -740,7 +802,7 @@ void nostr_simple_pool_ensure_relay(NostrSimplePool *pool, const char *url) {
     if (!pool || !url || !*url) return;
 
     /* nostrc-py1: Check brown list before connecting */
-    if (pool->brown_list_enabled && pool->brown_list) {
+    if (nostr_simple_pool_get_brown_list_enabled(pool) && pool->brown_list) {
         if (nostr_brown_list_should_skip(pool->brown_list, url)) {
             int remaining = nostr_brown_list_get_time_remaining(pool->brown_list, url);
             fprintf(stderr, "[pool] Skipping browned relay: %s (retry in %ds)\n", url, remaining);
@@ -845,6 +907,7 @@ bool nostr_simple_pool_remove_relay(NostrSimplePool *pool, const char *url) {
 
             pthread_mutex_unlock(&pool->pool_mutex);
 
+            pool_closed_backoff(pool, relay, 2);
             // Disconnect and free relay outside of lock
             fprintf(stderr, "[pool] Removing relay: %s\n", url);
             nostr_relay_disconnect(relay);
@@ -929,7 +992,7 @@ static void *pool_redial_thread(void *arg) {
              * being dialled forever. Note the brown list deliberately does not
              * brown anything while NO relay has ever connected, so a
              * single-relay daemon keeps retrying its only relay. */
-            if (pool->brown_list_enabled && pool->brown_list && url &&
+            if (nostr_simple_pool_get_brown_list_enabled(pool) && pool->brown_list && url &&
                 nostr_brown_list_should_skip(pool->brown_list, url)) {
                 continue;
             }
@@ -1032,6 +1095,7 @@ static ssize_t dedup_find_slot(NostrSimplePool *pool, const char *id, int *found
     return first_tombstone;
 }
 
+/* Caller holds pool_mutex, including for the mutable dedup table. */
 static int pool_seen(NostrSimplePool *pool, const char *id) {
     if (!pool->dedup_unique || !id || !*id) return 0;
     if (pool->dedup_cap == 0 || !pool_dedup_init(pool)) return 0;
@@ -1108,7 +1172,15 @@ static int batch_add(PoolIncomingEvent **batch, size_t *len, size_t *cap,
 static void pool_deliver_batch(NostrSimplePool *pool, PoolIncomingEvent *batch,
                                size_t *len) {
     if (*len == 0) return;
-    if (pool->batch_middleware) {
+    /* Setters publish callback + data as one unit. Snapshot under the same
+     * mutex, then invoke outside it so middleware can re-enter pool APIs. */
+    pthread_mutex_lock(&pool->pool_mutex);
+    void (*batch_cb)(NostrIncomingEvent *, size_t) = pool->batch_middleware;
+    void (*event_cb)(NostrIncomingEvent *) = pool->event_middleware;
+    void (*event_ex_cb)(NostrIncomingEvent *, void *) = pool->event_middleware_ex;
+    void *event_data = pool->event_middleware_data;
+    pthread_mutex_unlock(&pool->pool_mutex);
+    if (batch_cb) {
         NostrSimplePool *previous_pool = middleware_pool;
         NostrSubscription *previous_sub = middleware_subscription;
         middleware_pool = NULL;
@@ -1116,13 +1188,13 @@ static void pool_deliver_batch(NostrSimplePool *pool, PoolIncomingEvent *batch,
         NostrIncomingEvent *events = malloc(*len * sizeof(*events));
         if (events) {
             for (size_t i = 0; i < *len; i++) events[i] = batch[i].incoming;
-            pool->batch_middleware(events, *len);
+            batch_cb(events, *len);
             free(events);
         } else {
             /* Preserve delivery even if the contiguous public view cannot
              * be allocated. Neither public event layout nor ownership changes. */
             for (size_t i = 0; i < *len; i++)
-                pool->batch_middleware(&batch[i].incoming, 1);
+                batch_cb(&batch[i].incoming, 1);
         }
         middleware_pool = previous_pool;
         middleware_subscription = previous_sub;
@@ -1136,10 +1208,10 @@ static void pool_deliver_batch(NostrSimplePool *pool, PoolIncomingEvent *batch,
             middleware_subscription = batch[i].subscription;
             middleware_generation = batch[i].generation;
             middleware_live_since = batch[i].live_since;
-            if (pool->event_middleware_ex)
-                pool->event_middleware_ex(&batch[i].incoming, pool->event_middleware_data);
-            else if (pool->event_middleware)
-                pool->event_middleware(&batch[i].incoming);
+            if (event_ex_cb)
+                event_ex_cb(&batch[i].incoming, event_data);
+            else if (event_cb)
+                event_cb(&batch[i].incoming);
             else
                 nostr_event_free(batch[i].incoming.event);
             middleware_pool = previous_pool;
@@ -1156,10 +1228,12 @@ static void pool_collect_event(NostrSimplePool *pool, NostrSubscription *sub,
                                 PoolIncomingEvent **batch, size_t *len, size_t *cap) {
     NostrEvent *ev = delivery->event;
     char *eid = nostr_event_get_id(ev);
+    pthread_mutex_lock(&pool->pool_mutex);
     int seen = pool_seen(pool, eid);
+    bool has_middleware = pool->event_middleware_ex || pool->event_middleware || pool->batch_middleware;
+    pthread_mutex_unlock(&pool->pool_mutex);
     free(eid);
-    if (!seen && (pool->event_middleware_ex || pool->event_middleware || pool->batch_middleware)
-        && batch_add(batch, len, cap, ev, nostr_subscription_get_relay(sub), sub, delivery))
+    if (!seen && has_middleware && batch_add(batch, len, cap, ev, nostr_subscription_get_relay(sub), sub, delivery))
         return;
     nostr_event_free(ev);
 }
@@ -1193,6 +1267,8 @@ static void pool_drain_all(NostrSimplePool *pool,
                 continue;
             }
             pool_deliver_batch(pool, *batch, batch_len);
+            (void)pool_closed_backoff(pool, nostr_subscription_get_relay(sub),
+                kind == NOSTR_ORDERED_EOSE ? -1 : 1);
             if (kind == NOSTR_ORDERED_EOSE)
                 pool_subscription_notify(pool, nostr_subscription_get_relay(sub), sub,
                                          "EOSE", NULL, &delivery);
@@ -1200,8 +1276,8 @@ static void pool_drain_all(NostrSimplePool *pool,
                 pool_subscription_notify(pool, nostr_subscription_get_relay(sub), sub,
                                          "CLOSED", delivery.reason, &delivery);
             free(delivery.reason);
+            pthread_mutex_lock(&pool->pool_mutex);
             if (kind == NOSTR_ORDERED_CLOSED || pool->auto_unsub_on_eose) {
-                pthread_mutex_lock(&pool->pool_mutex);
                 for (size_t j = 0; j < pool->subs_count; j++) {
                     if (pool->subs[j] == sub) {
                         if (kind == NOSTR_ORDERED_EOSE) nostr_subscription_unsubscribe(sub);
@@ -1215,6 +1291,7 @@ static void pool_drain_all(NostrSimplePool *pool,
                 pthread_mutex_unlock(&pool->pool_mutex);
                 break;
             }
+            pthread_mutex_unlock(&pool->pool_mutex);
         }
         /* A bounded drain leaves a known accepted backlog, not a timer poll.
          * Re-signal once so fairness does not strand data after coalesced wakes. */
@@ -1292,15 +1369,15 @@ static NostrSubscription *pool_prepare_subscription(NostrSimplePool *pool, Nostr
  * pools, which drop subs after EOSE on purpose — reconciling those would
  * resubscribe in a loop. Called from the worker loop (≤200ms cadence). */
 static void pool_reconcile_subs(NostrSimplePool *pool) {
-    if (!pool || pool->auto_unsub_on_eose) return;
+    if (!pool) return;
     pthread_mutex_lock(&pool->pool_mutex);
-    if (!pool->filters_shared) {
+    if (pool->auto_unsub_on_eose || !pool->filters_shared) {
         pthread_mutex_unlock(&pool->pool_mutex);
         return;
     }
     for (size_t i = 0; i < pool->relay_count; i++) {
         NostrRelay *relay = pool->relays[i];
-        if (!relay || !nostr_relay_is_connected(relay)) continue;
+        if (!relay || !nostr_relay_is_connected(relay) || !pool_closed_backoff(pool, relay, 0)) continue;
         bool has_sub = false;
         for (size_t j = 0; j < pool->subs_count; j++) {
             if (pool->subs[j] && nostr_subscription_get_relay(pool->subs[j]) == relay) {
@@ -1512,7 +1589,6 @@ static void pool_subscribe_impl(NostrSimplePool *pool, const char **urls,
                                 size_t url_count, NostrFilters filters,
                                 bool unique, bool dial_inline) {
     if (!pool || !urls || url_count == 0) return;
-    pool->dedup_unique = unique;
     // Ensure relays exist (and, for the blocking variant, are connected)
     for (size_t i = 0; i < url_count; i++) {
         if (!urls[i] || !*urls[i]) continue;
@@ -1532,8 +1608,10 @@ static void pool_subscribe_impl(NostrSimplePool *pool, const char **urls,
             }
         }
     }
-    // Replace pool->filters_shared (must hold mutex — concurrent subscribe calls race)
+    /* Publish the reconnect template and duplicate policy together. Both
+     * reconcile/preparation and event dedup read them under pool_mutex. */
     pthread_mutex_lock(&pool->pool_mutex);
+    pool->dedup_unique = unique;
     if (pool->filters_shared) {
         nostr_filters_free(pool->filters_shared);
     }
@@ -1541,7 +1619,7 @@ static void pool_subscribe_impl(NostrSimplePool *pool, const char **urls,
     // Create and fire subscriptions per relay
     for (size_t i = 0; i < pool->relay_count; i++) {
         NostrRelay *relay = pool->relays[i];
-        if (!relay) continue;
+        if (!relay || !pool_closed_backoff(pool, relay, 0)) continue;
         NostrSubscription *sub = pool_prepare_subscription(pool, relay, pool->filters_shared);
         if (!sub) continue;
         nostr_subscription_set_duplicate_delivery(sub, !pool->dedup_unique);

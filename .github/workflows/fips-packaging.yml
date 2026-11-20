@@ -1,0 +1,334 @@
+# fipsd packaging (nostrc-iq1n9.5): on a fipsd-v<version> tag, or by hand,
+# build every fipsd package from one source archive, install each one and
+# smoke-test it, and keep the results as run artifacts.
+#
+# Shape of .github/workflows/groundhog-release.yml: one source archive
+# (scripts/make-desktop-source-archive.sh, fipsd name), one job per format in
+# that format's own container, a native build per architecture, no QEMU.
+# The .deb is built in an ubuntu:24.04 container and then installed on the
+# ubuntu-24.04 runner itself, whose systemd is PID 1, so the unit really
+# starts and the control socket really answers; the Fedora container has no
+# systemd, so the rpm smoke runs the packaged daemon directly. macOS builds
+# the .pkg, installs it with the runner's sudo and checks the launchd job.
+#
+# The version is the one fipsd/CMakeLists.txt declares
+# (fipsd/packaging/common/version.sh); a tag that disagrees with it fails in
+# the source job. Dispatch runs on a branch build 0.0.0-<sha> packages.
+# Publishing a GitHub release is not done here: scripts/tag_release.py
+# records the tag in VERSION_MANIFEST.md, and the artifacts of a tag run are
+# what a release attaches.
+name: FIPS packaging
+
+on:
+  push:
+    tags:
+      - 'fipsd-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    name: Source archive
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      git_rev: ${{ steps.v.outputs.git_rev }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - id: v
+        run: |
+          declared=$(sh fipsd/packaging/common/version.sh)
+          v="${GITHUB_REF_NAME#fipsd-v}"
+          if [ "${GITHUB_REF_NAME}" = "$v" ]; then
+            v="0.0.0-$(git rev-parse --short HEAD)"
+          elif [ "$v" != "$declared" ]; then
+            echo "tag version $v does not match fipsd/CMakeLists.txt ($declared)" >&2
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "git_rev=$(git rev-parse --short=10 HEAD)" >> "$GITHUB_OUTPUT"
+      - run: scripts/make-desktop-source-archive.sh "${{ steps.v.outputs.version }}" dist fipsd
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source
+          path: dist/fipsd-*.tar.gz
+          if-no-files-found: error
+
+  deb-build:
+    name: Debian package (${{ matrix.arch }})
+    needs: source
+    runs-on: ${{ matrix.runner }}
+    container: ubuntu:24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64,  runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Cache apt package downloads
+        id: apt-cache
+        uses: ./.github/actions/cache-apt
+        with:
+          variant: ubuntu:24.04
+      - uses: actions/download-artifact@v4
+        with: { name: source, path: src }
+      - name: Build
+        env:
+          FIPSD_GIT_REV: ${{ needs.source.outputs.git_rev }}
+        run: |
+          set -eux
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq devscripts equivs git ca-certificates >/dev/null
+          tar -xzf src/fipsd-*.tar.gz
+          cd fipsd-*/
+          rm -rf debian && cp -r fipsd/packaging/debian debian
+          mk-build-deps -i -r -t 'apt-get -y -qq' debian/control
+          # One deb per distribution release, named after it (as the
+          # Groundhog release does); a branch build names its commit.
+          version=$(sh fipsd/packaging/common/version.sh --deb)
+          case "${{ needs.source.outputs.version }}" in
+            0.0.0-*) version="${version%-1}~git${FIPSD_GIT_REV}-1" ;;
+          esac
+          sed -i "1s/(\([^)]*\))/($version~ubuntu24.04)/" debian/changelog
+          dpkg-buildpackage -b -us -uc
+          mkdir -p ../dist && cp ../*.deb ../dist/
+          fipsd/packaging/check-deb-depends.sh ../dist/*.deb
+          fipsd/packaging/check-glibc-floor.sh ../dist/*.deb
+          dpkg-deb -c ../dist/fipsd_*.deb
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-ubuntu24.04-${{ matrix.arch }}
+          path: dist/*.deb
+          if-no-files-found: error
+
+  deb-install:
+    name: Debian install smoke (${{ matrix.arch }})
+    needs: deb-build
+    # Not in a container: the smoke starts the unit under the runner's own
+    # systemd and queries the control socket in /run/fips.
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64,  runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: fipsd/packaging/testing
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with: { name: 'deb-ubuntu24.04-${{ matrix.arch }}', path: dist }
+      - name: Install, start, query, remove, purge
+        run: |
+          set -eux
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ./dist/fipsd_*.deb ./dist/fips-gateway_*.deb nftables ./dist/libfipsnative0_*.deb ./dist/libfipsnative-dev_*.deb
+          fipsd --version
+          pkg-config --modversion libfipsnative
+          sudo fipsd/packaging/testing/smoke-systemd.sh
+          sudo timeout 90 python3 fipsd/packaging/testing/smoke-gateway.py
+          sudo apt-get remove -y -qq fips-gateway fipsd
+          test -f /etc/fips/fips.yaml            # remove keeps the config
+          sudo apt-get purge -y -qq fips-gateway fipsd libfipsnative-dev libfipsnative0
+          test ! -e /etc/fips                    # purge removes it
+          test ! -e /run/fips/gateway.sock
+          test ! -e /run/fips-gateway
+          ! getent group fips
+
+  rpm:
+    name: Fedora package (${{ matrix.arch }})
+    needs: source
+    runs-on: ${{ matrix.runner }}
+    container: registry.fedoraproject.org/fedora:42
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64,  runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: source, path: src }
+      - name: Build
+        env:
+          UPSTREAM_VERSION: ${{ needs.source.outputs.version }}
+          FIPSD_GIT_REV: ${{ needs.source.outputs.git_rev }}
+        run: |
+          set -eux
+          dnf install -y -q rpm-build rpmdevtools dnf-plugins-core
+          tar -xzf src/fipsd-*.tar.gz
+          rpmdev-setuptree
+          cp src/fipsd-*.tar.gz ~/rpmbuild/SOURCES/
+          tree=$(echo fipsd-*)
+          spec=$tree/fipsd/packaging/rpm/fipsd.spec
+          # The spec names the archive by its pinned release; a branch build
+          # carries a 0.0.0-<sha> version instead, so point the spec at the
+          # archive actually built (the rpm Version cannot hold a hyphen).
+          sed -i "s/^%global upstream_version .*/%global upstream_version ${UPSTREAM_VERSION}/" "$spec"
+          # Quote the ~: bash 5.2 tilde-expands an unquoted replacement to $HOME.
+          rpm_version=${UPSTREAM_VERSION//-/"~"}
+          sed -i "s/^Version: .*/Version:        ${rpm_version}/" "$spec"
+          dnf builddep -y -q "$spec"
+          defines=(--define "fipsd_git_rev ${FIPSD_GIT_REV}")
+          [ -f "$tree/fipsd/packaging/common/fips-dns-setup" ] && defines+=(--define "_fipsd_has_dns_helpers 1")
+          grep -q 'add_executable(fipsctl' "$tree/fipsd/CMakeLists.txt" "$tree/fipsd/src/fipsctl/CMakeLists.txt" 2>/dev/null \
+            && defines+=(--define "_fipsd_has_fipsctl 1")
+          rpmbuild -ba "${defines[@]}" "$spec"
+          mkdir -p dist && cp ~/rpmbuild/RPMS/*/*.rpm ~/rpmbuild/SRPMS/*.rpm dist/
+      - name: Install, run, query, remove
+        run: |
+          set -eux
+          # python3 for control-query.py (the base image has none).
+          arch=$(rpm --eval '%{_arch}')
+          dnf install -y -q python3 dist/fipsd-*."$arch".rpm dist/fips-gateway-*."$arch".rpm dist/libfipsnative-*."$arch".rpm
+          fipsd --version
+          pkg-config --modversion libfipsnative
+          getent group fips
+          test -f /etc/fips/fips.yaml
+          # No systemd in the container: the unit files must at least parse,
+          # and the packaged daemon runs directly from a config of the shipped shape.
+          rpm -ql fipsd fips-gateway
+          fips-gateway --version
+          systemd-analyze verify /usr/lib/systemd/system/fips-gateway.service
+          "$(echo fipsd-*)/fipsd/packaging/testing/smoke-direct.sh"
+          dnf remove -y -q fips-gateway fipsd libfipsnative-devel libfipsnative
+          test -f /etc/fips/fips.yaml            # rpm erase keeps the config and keys
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm-${{ matrix.arch }}
+          path: dist/*.rpm
+          if-no-files-found: error
+
+  rpm-install:
+    name: Fedora fresh-container gateway smoke (${{ matrix.arch }})
+    needs: [source, rpm]
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: registry.fedoraproject.org/fedora:42
+      options: --cap-add=NET_ADMIN --device=/dev/net/tun --tmpfs=/run --sysctl=net.ipv6.conf.all.forwarding=1 --sysctl=net.ipv6.conf.all.proxy_ndp=1
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: 'rpm-${{ matrix.arch }}', path: dist }
+      - uses: actions/download-artifact@v4
+        with: { name: source, path: src }
+      - name: Install, start, query, stop, erase
+        run: |
+          set -eux
+          arch=$(rpm --eval '%{_arch}')
+          dnf install -y -q python3 procps-ng nftables iproute \
+            dist/fipsd-*."$arch".rpm dist/fips-gateway-*."$arch".rpm
+          tar -xzf src/fipsd-*.tar.gz --wildcards '*/fipsd/packaging/testing/*'
+          timeout 90 python3 "$(echo fipsd-*)/fipsd/packaging/testing/smoke-gateway.py" --direct
+          dnf remove -y -q fips-gateway fipsd
+          test ! -e /usr/bin/fips-gateway
+          test ! -e /usr/lib/systemd/system/fips-gateway.service
+          test ! -e /run/fips/gateway.sock
+          test ! -e /run/fips-gateway
+
+  arch:
+    name: Arch package (x86_64)
+    needs: source
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: source, path: src }
+      - name: Build
+        env:
+          UPSTREAM_VERSION: ${{ needs.source.outputs.version }}
+        run: |
+          set -eux
+          # pacman 7 downloads as a Landlock-sandboxed user; container kernels
+          # without Landlock make every download fail (scripts/ci/build-arch-package.sh).
+          grep -q '^DisableSandbox' /etc/pacman.conf || sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
+          pacman -Syu --noconfirm --needed base-devel sudo python
+          id build >/dev/null 2>&1 || useradd -m build
+          echo 'build ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/build
+          work=/home/build/pkg
+          mkdir -p "$work"
+          tar -xzf src/fipsd-*.tar.gz -C "$work" --strip-components=4 "fipsd-${UPSTREAM_VERSION}/fipsd/packaging/arch"
+          cp src/fipsd-*.tar.gz "$work/"
+          # The PKGBUILD names the archive by its pinned release; point it at
+          # the archive that is actually here so makepkg never downloads.
+          sed -i "s/^_version=.*/_version=${UPSTREAM_VERSION}/" "$work/PKGBUILD"
+          chown -R build "$work"
+          su build -c "cd $work && PKGDEST=$work PKGEXT=.pkg.tar.zst makepkg -s --noconfirm"
+          mkdir -p dist && cp "$work"/*.pkg.tar.zst dist/
+      - name: Install, run, query, remove
+        run: |
+          set -eux
+          pacman -U --noconfirm dist/*.pkg.tar.zst
+          fipsd --version
+          fips-gateway --version
+          getent group fips
+          test -f /etc/fips/fips.yaml
+          tar -xzf src/fipsd-*.tar.gz --wildcards '*/fipsd/packaging/testing/*'
+          "$(echo fipsd-*)/fipsd/packaging/testing/smoke-direct.sh"
+          pacman -R --noconfirm fipsd
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch-x86_64
+          path: dist/*.pkg.tar.zst
+          if-no-files-found: error
+
+  macos:
+    name: macOS package
+    needs: source
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Install dependencies
+        run: |
+          brew install cmake ninja pkg-config jansson libyaml secp256k1 libsodium openssl@3 curl libwebsockets glib nsync
+      - name: Build the .pkg
+        env:
+          VERSION: ${{ needs.source.outputs.version }}
+        run: |
+          set -eux
+          # pkgbuild versions are numeric; a branch build keeps the declared
+          # version and names its commit in the package file only.
+          case "$VERSION" in
+            0.0.0-*) fipsd/packaging/macos/build-pkg.sh --output-dir dist ;;
+            *)       fipsd/packaging/macos/build-pkg.sh --output-dir dist --version "$VERSION" ;;
+          esac
+          pkgutil --payload-files dist/*.pkg
+      - name: Install, load, query, uninstall
+        run: |
+          set -eux
+          sudo installer -pkg dist/*.pkg -target /
+          sudo fipsd/packaging/testing/smoke-launchd.sh
+          sudo fipsd/packaging/macos/uninstall.sh
+          test ! -e /Library/LaunchDaemons/com.fips.fipsd.plist
+          test ! -e /usr/local/bin/fipsd
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ runner.arch }}
+          path: dist/*.pkg
+          if-no-files-found: error

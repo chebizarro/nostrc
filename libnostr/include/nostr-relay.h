@@ -171,9 +171,31 @@ NOSTR_API bool        nostr_relay_publish_and_wait(NostrRelay *relay, NostrEvent
  * nostr_relay_auth:
  * @relay: (nullable): relay
  * @sign: (nullable): sign callback
+ *
+ * Signs the current challenge and publishes the NIP-42 AUTH event without
+ * waiting for the relay's OK; the OK/false still reaches the relay's OK
+ * callback. Safe to call from a GLib main context. A missing challenge or a
+ * signing failure sets @err.
+ *
  * @err: (out) (optional) (nullable): error out param
  */
 NOSTR_API void        nostr_relay_auth(NostrRelay *relay, void (*sign)(NostrEvent *, Error **), Error **err);
+
+/**
+ * nostr_relay_auth_wait:
+ * @relay: (nullable): relay
+ * @sign: (nullable): sign callback
+ * @timeout_ms: OK deadline in milliseconds (0 selects 5000)
+ * @err: (out) (optional) (nullable): error out param
+ *
+ * Like nostr_relay_auth() but blocks until the relay answers the AUTH event
+ * with OK. Call off the relay reader thread and off any UI main loop. A
+ * missing challenge, signing failure, negative OK or deadline sets @err.
+ *
+ * Returns: true only when the relay sends OK with ok=true.
+ */
+NOSTR_API bool        nostr_relay_auth_wait(NostrRelay *relay, void (*sign)(NostrEvent *, Error **),
+                                            uint64_t timeout_ms, Error **err);
 
 /**
  * nostr_relay_get_auth_challenge:

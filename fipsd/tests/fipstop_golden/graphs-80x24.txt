@@ -1,0 +1,24 @@
+┌ fipstop 0.1.0 ───────────────────────────────────────────────────────────────┐
+│Node │ Peers | Transports │ Sessions | Tree | Filters | Performance | Routing │
+└──────────────────────────────────────────────────────────────────────────────┘
+  mode: node   window: 10m   granularity: 1s   scroll: 0
+  [↑/↓] scroll   [←/→] window   [m] mode   [n/N] cycle
+╭ Graphs — Node ───────────────────────────────────────────────────────────────╮
+│  mesh_size  [nodes]    min 0.00   max 0.00   last -   samples 10             │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│  tree_depth  [hops]    min 0.00   max 0.00   last -   samples 10             │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│  peer_count  [peers]    min 0.00   max 0.00   last -   samples 10            │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ Connected | Refresh: 2s | Updated: 0.0s ago [Enter] expand [m] mode [?] Help

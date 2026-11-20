@@ -1,0 +1,4598 @@
+{
+  "cases": {
+    "clock": "legacy model tick + current next_wake; 10ms channel latency",
+    "entropy_seed_hex": "00000072656b6579",
+    "events": [
+      {
+        "at_ms": 59000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6579",
+        "event": 0,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-0-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00000e0000000000000000009b8afbf096d4b76610a5ef95bcbe25946677089f8a3e83951d1b46eb1ed3",
+              "length": 42,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "0da51e22cbd5055db28a5f1337d80e47ba08e7bc9214f571706fe60790004b82"
+            },
+            "counter": 0,
+            "k": false,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "78e6000010000000000000000000",
+            "sequence": 0
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": false,
+          "last_rx_ms": 0,
+          "link_since_ms": 0,
+          "next_wake_ms": 30000,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 1
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": false,
+          "last_rx_ms": 0,
+          "link_since_ms": 0,
+          "next_wake_ms": 105000,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 0
+        }
+      },
+      {
+        "at_ms": 59020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "78e6000010000000000000000000",
+            "range": [
+              12,
+              26
+            ],
+            "slot": "Current",
+            "tag": 0
+          }
+        ],
+        "entropy_seed_hex": "00000072656b657a",
+        "event": 1,
+        "input": "Frame",
+        "input_hex": "00000e000000000000000000c0ca92fdcf3294e6272268edbe190396dd900d94244b56a48fda1b4eb723",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(0), range: 12..26 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": false,
+          "last_rx_ms": 59020,
+          "link_since_ms": 0,
+          "next_wake_ms": 105000,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 1
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": false,
+          "last_rx_ms": 0,
+          "link_since_ms": 0,
+          "next_wake_ms": 30000,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 1
+        }
+      },
+      {
+        "at_ms": 60010,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b657b",
+        "event": 2,
+        "input": "Setup",
+        "input_hex": "036affe8a4a8dc0e0b53e49d0d39af25157eeefec07db67ed540a59631c6c99035",
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-2-0.bin",
+              "generator_version": "0.1.0",
+              "hex": "02d0e321d04f015b263d9063b9c3f8f14fe0a34f7c0dd7ef3601593815de3e32292b2b7f702c8d0dc8eb88dcecd69c713ab14fad5a775b097d",
+              "length": 57,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "8336f53c809939296b3853f03a521a46941af39cf016560ccb54ade395f59d41"
+            },
+            "kind": "Send",
+            "message_kind": "Ack",
+            "route": "Established { fallback: false }"
+          }
+        ],
+        "state_after": {
+          "candidates": 1,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": false,
+          "last_rx_ms": 59020,
+          "link_since_ms": 0,
+          "next_wake_ms": 100010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 1
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": false,
+          "last_rx_ms": 59020,
+          "link_since_ms": 0,
+          "next_wake_ms": 105000,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 1
+        }
+      },
+      {
+        "at_ms": 60030,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b657c",
+        "event": 3,
+        "input": "Msg3",
+        "input_hex": "7d508ba875317bd4123df2bf5c8efc36067e4c70232639fb3e2c417873f14e7478ccc330352d6218a99dc12f46669b2bf1f669583e5e1ef65790536c0307117888854ac82be9c0fac0",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Installed { tag: EpochTag(1), role: Responder, evidence: Proof }"
+          },
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-3-1.bin",
+              "generator_version": "0.1.0",
+              "hex": "000206000000000000000000289da8597350165b14ccaa440113054aafdd9d30658d",
+              "length": 34,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "f4c64105d4694dfe69f5afdce1d34c6a604ded74041894187add941268783e91"
+            },
+            "counter": 0,
+            "k": true,
+            "kind": "Prompt",
+            "plaintext_hex": "000000001400",
+            "tag": 1
+          },
+          {
+            "debug": "Rekeyed { role: Responder }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 59020,
+          "link_since_ms": 0,
+          "next_wake_ms": 61030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 1
+        },
+        "state_before": {
+          "candidates": 1,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": false,
+          "last_rx_ms": 59020,
+          "link_since_ms": 0,
+          "next_wake_ms": 100010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 1
+        }
+      },
+      {
+        "at_ms": 61000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b657d",
+        "event": 4,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 59020,
+          "link_since_ms": 0,
+          "next_wake_ms": 61030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 1
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 59020,
+          "link_since_ms": 0,
+          "next_wake_ms": 61030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 1
+        }
+      },
+      {
+        "at_ms": 61000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b657e",
+        "event": 5,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-5-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00020e000100000000000000591d7c14ced019a511d521ef71e1b748ea3611fceefd3ca04d80e05a795e",
+              "length": 42,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "1b72b7d9fda36eb9b6a4f8e63a22293284ca49dad26f784493a7d5d0eb7fffe2"
+            },
+            "counter": 1,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "ca03000010000100000000000000",
+            "sequence": 1
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 59020,
+          "link_since_ms": 0,
+          "next_wake_ms": 61030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 2
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 59020,
+          "link_since_ms": 0,
+          "next_wake_ms": 61030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 1
+        }
+      },
+      {
+        "at_ms": 61020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "48ee000010000100000000000000",
+            "range": [
+              12,
+              26
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b657f",
+        "event": 6,
+        "input": "Frame",
+        "input_hex": "00020e000000000000000000c885095306955e02acf37bb9adfc9a6cc1d375fda60054ad6b5c03eb6aad",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..26 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 61020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 2
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 59020,
+          "link_since_ms": 0,
+          "next_wake_ms": 61030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 2
+        }
+      },
+      {
+        "at_ms": 62000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6580",
+        "event": 7,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 61020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 2
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 61020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 2
+        }
+      },
+      {
+        "at_ms": 62000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6581",
+        "event": 8,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-8-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00020e000200000000000000a05663e5a6f82c51c4248d36728bbf18025b1973e559155bc39a7b860486",
+              "length": 42,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "9b15d8e5da0db54c793b83cfcdc558c687725d72839c477594b7a26a9a6ffebc"
+            },
+            "counter": 2,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "b207000010000200000000000000",
+            "sequence": 2
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 61020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 3
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 61020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 2
+        }
+      },
+      {
+        "at_ms": 62020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "30f2000010000200000000000000",
+            "range": [
+              12,
+              26
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b6582",
+        "event": 9,
+        "input": "Frame",
+        "input_hex": "00020e00010000000000000056d817928bf51bc0be21fc56677cb1a2fbc965fa94834f09fa48d94e455a",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..26 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 62020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 3
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 61020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 3
+        }
+      },
+      {
+        "at_ms": 63000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6583",
+        "event": 10,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 62020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 3
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 62020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 3
+        }
+      },
+      {
+        "at_ms": 63000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6584",
+        "event": 11,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-11-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00020e000300000000000000797ffc04b2f51f956c91f33c7680f4f23823363243e7a34692fbc0e2c1db",
+              "length": 42,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "bace9f58f81359257ad5568f1bed7acfb676cfe9653a3bfb2e89678ade6b8acf"
+            },
+            "counter": 3,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "9a0b000010000300000000000000",
+            "sequence": 3
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 62020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 4
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 62020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 3
+        }
+      },
+      {
+        "at_ms": 63020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "18f6000010000300000000000000",
+            "range": [
+              12,
+              26
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b6585",
+        "event": 12,
+        "input": "Frame",
+        "input_hex": "00020e0002000000000000004c7a5d99f2ef4f39d6ba1ba4f2c368845751b9a94360895a509384b5d37a",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..26 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 63020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 4
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 62020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 4
+        }
+      },
+      {
+        "at_ms": 64000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6586",
+        "event": 13,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 63020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 4
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 63020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 4
+        }
+      },
+      {
+        "at_ms": 64000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6587",
+        "event": 14,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-14-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00020e0004000000000000004ae5df6ba76be827064f51a337b8790f5e8ba7219a4117c00c4db9849c89",
+              "length": 42,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "33016318ce04ce6f457219fe1c550f9d21473044d733402a5b9b719ee62d7e64"
+            },
+            "counter": 4,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "820f000010000400000000000000",
+            "sequence": 4
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 63020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 5
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 63020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 4
+        }
+      },
+      {
+        "at_ms": 64020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "00fa000010000400000000000000",
+            "range": [
+              12,
+              26
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b6588",
+        "event": 15,
+        "input": "Frame",
+        "input_hex": "00020e00030000000000000029f0c093f5a1da1b34da3fb83e0c2a4b49afc130dd0149427b2753b860ac",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..26 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 64020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 5
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 63020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 5
+        }
+      },
+      {
+        "at_ms": 65000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6589",
+        "event": 16,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 64020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 5
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 64020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 5
+        }
+      },
+      {
+        "at_ms": 65000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b658a",
+        "event": 17,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-17-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00020e00050000000000000042a00fe212ee2c8d0244600359fd99bc36cfb5d7e47d6e83d3c7f062b6dc",
+              "length": 42,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "5ed5a0086019eff67a59e12d51abfe6d4d468c17180e4e287b4979a37712117b"
+            },
+            "counter": 5,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "6a13000010000500000000000000",
+            "sequence": 5
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 64020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 6
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 64020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 5
+        }
+      },
+      {
+        "at_ms": 65020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "e8fd000010000500000000000000",
+            "range": [
+              12,
+              26
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b658b",
+        "event": 18,
+        "input": "Frame",
+        "input_hex": "00020e000400000000000000a76d8cbdd6e7d46f7dea4db707e040d35a2e0997806f99b13b2b0f762c5a",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..26 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 65020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 6
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 64020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 6
+        }
+      },
+      {
+        "at_ms": 66000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b658c",
+        "event": 19,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 65020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 6
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 65020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 6
+        }
+      },
+      {
+        "at_ms": 66000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b658d",
+        "event": 20,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-20-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00020e00060000000000000043306ee33bd75bb1c2d3c7a719c60e1c400b34863b2c0d88bb2586b853d2",
+              "length": 42,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "462f33efc01d0d2c742475f41c61aafa1fda615644f109720dffd9700512568f"
+            },
+            "counter": 6,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "5217000010000600000000000000",
+            "sequence": 6
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 65020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 7
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 65020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 6
+        }
+      },
+      {
+        "at_ms": 66020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "d001010010000600000000000000",
+            "range": [
+              12,
+              26
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b658e",
+        "event": 21,
+        "input": "Frame",
+        "input_hex": "00020e00050000000000000070f0f30c39354e846aff945d3d083a2acdf42d77ad9f440dd748ab8a3644",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..26 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 66020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 7
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 65020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 7
+        }
+      },
+      {
+        "at_ms": 67000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b658f",
+        "event": 22,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 66020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 7
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 66020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 7
+        }
+      },
+      {
+        "at_ms": 67000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6590",
+        "event": 23,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-23-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00020e000700000000000000fc627122aa2143ed527915ffa31f5e586bfd087fcc73a482bb98ae202e58",
+              "length": 42,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "7822cd12df5a66eb18242ef3265ebb3e46e7d358a79d58fa93ef66c1f3cba3e6"
+            },
+            "counter": 7,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "3a1b000010000700000000000000",
+            "sequence": 7
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 66020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 8
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 66020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 7
+        }
+      },
+      {
+        "at_ms": 67020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "b805010010000700000000000000",
+            "range": [
+              12,
+              26
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b6591",
+        "event": 24,
+        "input": "Frame",
+        "input_hex": "00020e00060000000000000020e02d3ad7df0eb69e647df24d50445d2b29ea5d26f1b91d1fac174509c8",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..26 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 67020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 8
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 66020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 8
+        }
+      },
+      {
+        "at_ms": 68000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6592",
+        "event": 25,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 67020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 8
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 67020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 8
+        }
+      },
+      {
+        "at_ms": 68000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6593",
+        "event": 26,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-26-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00020e000800000000000000202d3a04a93fa6cc7c70d0073efa3e2af94925c1d2db34d70070ee00ebb0",
+              "length": 42,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "6bf84d66942d78e4a55f5bb43a6d4b66f3e0596ee5b81d2a03825b94a997838d"
+            },
+            "counter": 8,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "221f000010000800000000000000",
+            "sequence": 8
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 67020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 9
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 67020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 8
+        }
+      },
+      {
+        "at_ms": 68020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "a009010010000800000000000000",
+            "range": [
+              12,
+              26
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b6594",
+        "event": 27,
+        "input": "Frame",
+        "input_hex": "00020e000700000000000000f0927965261889fe0006548e2084c1966c74724d30922525ec2e84de2afd",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..26 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 68020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 9
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 67020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 9
+        }
+      },
+      {
+        "at_ms": 69000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6595",
+        "event": 28,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 68020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 9
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 68020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 9
+        }
+      },
+      {
+        "at_ms": 69000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6596",
+        "event": 29,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-29-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00020e0009000000000000006a373d0a88fb7318baea1f1541647e544ef6fea3a9b03b2edb5e66b95eeb",
+              "length": 42,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "34590d4552025de0ed30a8f95c53d66a8a95552a563ab3e85dc2683808c3e318"
+            },
+            "counter": 9,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "0a23000010000900000000000000",
+            "sequence": 9
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 68020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 10
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 68020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 9
+        }
+      },
+      {
+        "at_ms": 69020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "880d010010000900000000000000",
+            "range": [
+              12,
+              26
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b6597",
+        "event": 30,
+        "input": "Frame",
+        "input_hex": "00020e0008000000000000008501fd5c8ebd10e3f9a2f0eb55c02cbfdb521b9322850533395a58b92b1e",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..26 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 69020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 10
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 68020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 10
+        }
+      },
+      {
+        "at_ms": 70000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6598",
+        "event": 31,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 69020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 10
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 69020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 10
+        }
+      },
+      {
+        "at_ms": 70000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6599",
+        "event": 32,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-32-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00020e000a0000000000000085ceb77d1051b8f4f8aefa8c95b9148c822e66cb11325fb8b76c60c5e7b2",
+              "length": 42,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "a0d5be8c03ea6fc70e5be1069bb2cc5dc5e9cd6f59507bcc794fdebe372c8d07"
+            },
+            "counter": 10,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "f226000010000a00000000000000",
+            "sequence": 10
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 69020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 11
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 69020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 10
+        }
+      },
+      {
+        "at_ms": 70020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "7011010010000a00000000000000",
+            "range": [
+              12,
+              26
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b659a",
+        "event": 33,
+        "input": "Frame",
+        "input_hex": "00020e000900000000000000e32f6b0c96eddaefc92113c5455af07604df3b41e61374b2cf3e6f8202d5",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..26 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 70020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 11
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 69020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 11
+        }
+      },
+      {
+        "at_ms": 71000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b659b",
+        "event": 34,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 70020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 11
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 70020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 11
+        }
+      },
+      {
+        "at_ms": 71000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b659c",
+        "event": 35,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-35-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00020e000b0000000000000081f86b2e178483f3ddd1a63ceb5d7d192c67ca0b548eb7346d0178568d17",
+              "length": 42,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "20d5eca6c939e1890e881e8893e430cb769cfc6b3598475613466f21daa6d5d8"
+            },
+            "counter": 11,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "da2a000010000b00000000000000",
+            "sequence": 11
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 70020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 12
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 70020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 11
+        }
+      },
+      {
+        "at_ms": 71020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "5815010010000b00000000000000",
+            "range": [
+              12,
+              26
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b659d",
+        "event": 36,
+        "input": "Frame",
+        "input_hex": "00020e000a00000000000000e61a0443643eb224e751b3578fef5efd5fe47ba9d5a8575e65906b5c5864",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..26 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 71020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 12
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 70020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 12
+        }
+      },
+      {
+        "at_ms": 71020,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b659e",
+        "event": 37,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Retired { tag: EpochTag(0) }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 71020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 12
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 71020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 12
+        }
+      },
+      {
+        "at_ms": 72000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b659f",
+        "event": 38,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 71020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 12
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 71020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 12
+        }
+      },
+      {
+        "at_ms": 72000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65a0",
+        "event": 39,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-39-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00020e000c0000000000000045394b8a0d8036ab50cefc0b93c614a2c4823ab1b3eb02092b5a2b543824",
+              "length": 42,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "509411a882e9a98afa5c829d12258611a9b7cdd01d8661f12b2bcdc1c848c16c"
+            },
+            "counter": 12,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "c22e000010000c00000000000000",
+            "sequence": 12
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 71020,
+          "link_since_ms": 0,
+          "next_wake_ms": 101020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 13
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 71020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 12
+        }
+      },
+      {
+        "at_ms": 72020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "4019010010000c00000000000000",
+            "range": [
+              12,
+              26
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b65a1",
+        "event": 40,
+        "input": "Frame",
+        "input_hex": "00020e000b0000000000000034a4c693852e43e8b2c94a6688f7b712d2e694404f35a8169b53eb2b1f63",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..26 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 72020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 13
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 71020,
+          "link_since_ms": 0,
+          "next_wake_ms": 101020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 13
+        }
+      },
+      {
+        "at_ms": 73000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65a2",
+        "event": 41,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 72020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 13
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 72020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 13
+        }
+      },
+      {
+        "at_ms": 73000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65a3",
+        "event": 42,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-42-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00020e000d00000000000000f2e6a32d91d99d26cce5736f23191ed4ad84d7e687c2fe208c78ff8cdef3",
+              "length": 42,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "064122d366669a5d13f13f75efbea322cf8db320fca8e8bdde1b63be9a1ba31a"
+            },
+            "counter": 13,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "aa32000010000d00000000000000",
+            "sequence": 13
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 72020,
+          "link_since_ms": 0,
+          "next_wake_ms": 102020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 14
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 72020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 13
+        }
+      },
+      {
+        "at_ms": 73020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "281d010010000d00000000000000",
+            "range": [
+              12,
+              26
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b65a4",
+        "event": 43,
+        "input": "Frame",
+        "input_hex": "00020e000c00000000000000280b3fd0b51fe79b63220e15a2eba090a13d3dab540befe238e522657200",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..26 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 73020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 14
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 72020,
+          "link_since_ms": 0,
+          "next_wake_ms": 102020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 14
+        }
+      },
+      {
+        "at_ms": 74000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65a5",
+        "event": 44,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 73020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 14
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 73020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 14
+        }
+      },
+      {
+        "at_ms": 74000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65a6",
+        "event": 45,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-45-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00020e000e00000000000000b989e1399b427f616761c1aadcdef1e686274e975ee2a14fc3041bed56a5",
+              "length": 42,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "5b3cbd7865cf115e2d03252de80b22b95370be201a23856e33cf54990056cbd7"
+            },
+            "counter": 14,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "9236000010000e00000000000000",
+            "sequence": 14
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 73020,
+          "link_since_ms": 0,
+          "next_wake_ms": 103020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 15
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 73020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 14
+        }
+      },
+      {
+        "at_ms": 74020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "1021010010000e00000000000000",
+            "range": [
+              12,
+              26
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b65a7",
+        "event": 46,
+        "input": "Frame",
+        "input_hex": "00020e000d000000000000006c7fd7d6a9fb360482ea4568f5d1f8b9604c6df30b1669a0c7ff0418892f",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..26 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 74020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 15
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 73020,
+          "link_since_ms": 0,
+          "next_wake_ms": 103020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 15
+        }
+      },
+      {
+        "at_ms": 75000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65a8",
+        "event": 47,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 74020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 15
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 74020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 15
+        }
+      },
+      {
+        "at_ms": 75000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65a9",
+        "event": 48,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-48-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00020e000f00000000000000c6229c88cd6fc2a88a0aeaaa8208797497e17d773058ecc6d23cf0274ab7",
+              "length": 42,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "1e15e2c03c30979ba095ec9a4de406082b4354ce1156c3c0b1dd85daa6e365f9"
+            },
+            "counter": 15,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "7a3a000010000f00000000000000",
+            "sequence": 15
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 74020,
+          "link_since_ms": 0,
+          "next_wake_ms": 104020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 16
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 74020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 15
+        }
+      },
+      {
+        "at_ms": 75020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "f824010010000f00000000000000",
+            "range": [
+              12,
+              26
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b65aa",
+        "event": 49,
+        "input": "Frame",
+        "input_hex": "00020e000e000000000000002ae2d230019da8f5a5d634028497060bd8fb993fe95032fe686e24ceb310",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..26 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 75020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 16
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 74020,
+          "link_since_ms": 0,
+          "next_wake_ms": 104020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 16
+        }
+      },
+      {
+        "at_ms": 76000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65ab",
+        "event": 50,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 75020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 16
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 75020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 16
+        }
+      },
+      {
+        "at_ms": 76000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65ac",
+        "event": 51,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-51-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00020e00100000000000000016706e527d3f0835272aa14512001ab43c5914263966f7045b95d896e673",
+              "length": 42,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "ff21826260f6a311cb59c0f3a955c79f0d4cd8cc0ae8c529d79f8761dc61f2a5"
+            },
+            "counter": 16,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "623e000010001000000000000000",
+            "sequence": 16
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 75020,
+          "link_since_ms": 0,
+          "next_wake_ms": 105020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 17
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 75020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 16
+        }
+      },
+      {
+        "at_ms": 76020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "e028010010001000000000000000",
+            "range": [
+              12,
+              26
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b65ad",
+        "event": 52,
+        "input": "Frame",
+        "input_hex": "00020e000f00000000000000f7af98486734bb1af6543abce526ddf504a0bb7b28380224a027b89109b2",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..26 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 76020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 17
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 75020,
+          "link_since_ms": 0,
+          "next_wake_ms": 105020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 17
+        }
+      },
+      {
+        "at_ms": 77000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65ae",
+        "event": 53,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 76020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 17
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 76020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 17
+        }
+      },
+      {
+        "at_ms": 77000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65af",
+        "event": 54,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-54-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00020e0011000000000000008d0ff3c679d6d555f1239a218226abf92aeb34357630b9576da3340d4aa5",
+              "length": 42,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "85714e672a8bb397400ea721b624be6f55dfaf2a2574e000a1932e4e7b820129"
+            },
+            "counter": 17,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "4a42000010001100000000000000",
+            "sequence": 17
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 76020,
+          "link_since_ms": 0,
+          "next_wake_ms": 106020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 18
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 76020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 17
+        }
+      },
+      {
+        "at_ms": 77020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "c82c010010001100000000000000",
+            "range": [
+              12,
+              26
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b65b0",
+        "event": 55,
+        "input": "Frame",
+        "input_hex": "00020e001000000000000000df2f026e30f10cec1a3375b5aab4b39ec53d6b4958b9e66a8685ced6d13f",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..26 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 77020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 18
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 76020,
+          "link_since_ms": 0,
+          "next_wake_ms": 106020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 18
+        }
+      },
+      {
+        "at_ms": 78000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65b1",
+        "event": 56,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 77020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 18
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 77020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 18
+        }
+      },
+      {
+        "at_ms": 78000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65b2",
+        "event": 57,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-57-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00020e00120000000000000022af50874404564ec1d08dcd6efe819b778f2568138d035c9acd80c10c05",
+              "length": 42,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "3687a9e1395719bbcbba85aff724e1407f7385d190a5ccb86c8c808a6b18737a"
+            },
+            "counter": 18,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "3246000010001200000000000000",
+            "sequence": 18
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 77020,
+          "link_since_ms": 0,
+          "next_wake_ms": 107020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 19
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 77020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 18
+        }
+      },
+      {
+        "at_ms": 78020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "b030010010001200000000000000",
+            "range": [
+              12,
+              26
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b65b3",
+        "event": 58,
+        "input": "Frame",
+        "input_hex": "00020e0011000000000000001dead6d78311ebd2ee2cc6a1157838bdaf2961e4036ef7770f0d3497884c",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..26 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 78020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 19
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 77020,
+          "link_since_ms": 0,
+          "next_wake_ms": 107020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 19
+        }
+      },
+      {
+        "at_ms": 79000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65b4",
+        "event": 59,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 78020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 19
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 78020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 19
+        }
+      },
+      {
+        "at_ms": 79000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65b5",
+        "event": 60,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-60-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00020e0013000000000000009535b9abf6532a3a2152257741cbdcceafae75ac31f106a2f81e6b18d700",
+              "length": 42,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "4f028715e9af9f39f51a2aea1a53b451329f87f463eb92adcafb04de8dcba1b3"
+            },
+            "counter": 19,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "1a4a000010001300000000000000",
+            "sequence": 19
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 78020,
+          "link_since_ms": 0,
+          "next_wake_ms": 108020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 20
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 78020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 19
+        }
+      },
+      {
+        "at_ms": 79020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "9834010010001300000000000000",
+            "range": [
+              12,
+              26
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b65b6",
+        "event": 61,
+        "input": "Frame",
+        "input_hex": "00020e001200000000000000f023a4ad781341f1968154b9577156a4790132eccda7aa32f563466c1c05",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..26 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 79020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 20
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 78020,
+          "link_since_ms": 0,
+          "next_wake_ms": 108020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 20
+        }
+      },
+      {
+        "at_ms": 80000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65b7",
+        "event": 62,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 79020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 20
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 79020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 20
+        }
+      },
+      {
+        "at_ms": 80000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65b8",
+        "event": 63,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v053-fsp-legacy-initiates-63-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00020e0014000000000000008d5bed68c117c9ac999783a3ccc3024c16fb18298e55723d107e89c0953f",
+              "length": 42,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "2c4d994ba8f28961dd44af9397a6e1ea5d5773dda70945fce5e93cfd65656f91"
+            },
+            "counter": 20,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "024e000010001400000000000000",
+            "sequence": 20
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 79020,
+          "link_since_ms": 0,
+          "next_wake_ms": 109020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 21
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 79020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 20
+        }
+      },
+      {
+        "at_ms": 80020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "8038010010001400000000000000",
+            "range": [
+              12,
+              26
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b65b9",
+        "event": 64,
+        "input": "Frame",
+        "input_hex": "00020e00130000000000000089beda67e6d32d1f7aabae266847ec26c13a32fe8842eab8575e09fdd3b6",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..26 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 80020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 21
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 60030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 79020,
+          "link_since_ms": 0,
+          "next_wake_ms": 109020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 21
+        }
+      }
+    ],
+    "final_state": [
+      {
+        "candidates": 0,
+        "current": {
+          "base_ms": 60030,
+          "k": true,
+          "recv": "Here",
+          "role": "Responder",
+          "started_ms": 60030,
+          "tag": 1
+        },
+        "cycle": "Idle",
+        "identity": "Proven(PeerKey(cd759a0e))",
+        "k": true,
+        "last_rx_ms": 80020,
+        "link_since_ms": 0,
+        "next_wake_ms": 165030,
+        "peer_epoch_hex": "0123456789abcdef",
+        "pending": null,
+        "previous": null,
+        "sent": 21
+      }
+    ],
+    "initial_handshake": "noise.json XK (before frame exports)",
+    "initial_state": [
+      {
+        "candidates": 0,
+        "current": {
+          "base_ms": 0,
+          "k": false,
+          "recv": "Here",
+          "role": "Initiator",
+          "started_ms": 0,
+          "tag": 0
+        },
+        "cycle": "Idle",
+        "identity": "Proven(PeerKey(cd759a0e))",
+        "k": false,
+        "last_rx_ms": 0,
+        "link_since_ms": 0,
+        "next_wake_ms": 105000,
+        "peer_epoch_hex": "0123456789abcdef",
+        "pending": null,
+        "previous": null,
+        "sent": 0
+      }
+    ],
+    "keypair_seeds": [
+      0,
+      1
+    ],
+    "legacy_initiates": true,
+    "legacy_release": "V053",
+    "params_debug": "Config { after: 120s, jitter: 15, messages: 65536, handshake: 30s, check: 1s, drain: 10s, retention: 120s, hold: 120s, revert: 10s, dampening: 30s, ttl: 40s, young: 5s, link_age: 30s, session_age: 10s, floor_link: 0ns, floor_session: 0ns, floor_cutover: 10s, silence: 30s, resends: 5, soft: 4611686018427387904, hard: 18446744073708503040, delay: 2s, arrival: false }",
+    "profile": "FspProfile<SeededEntropy> (Noise XK)",
+    "startup_epoch_hex": "0123456789abcdef"
+  },
+  "family": "rekey-legacy",
+  "gaps": [
+    "Representative lossless rotations in both initiation directions; not the exhaustive legacy fault/explorer suite."
+  ],
+  "generator": "fips-vectors",
+  "generator_version": "0.1.0",
+  "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+  "schema_version": 1
+}

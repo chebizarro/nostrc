@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdint.h>
 #include "go.h"
 #include "counter.h"
 #include "wait_group.h"
@@ -15,6 +16,7 @@ static void *worker(void *arg){
 
 int main(void){
     LongAdder *ad = long_adder_create();
+    if (!ad || (uintptr_t)ad % _Alignof(LongAdder) != 0) return 3;
     GoWaitGroup wg; go_wait_group_init(&wg);
 
     int threads = 8; int per=50000;

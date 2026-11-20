@@ -1,0 +1,23 @@
+{
+  "on": {
+    "byte_cap": 33554432,
+    "interval_secs": 10,
+    "path": "/Users/bizarro/Documents/Projects/nostrc-wt/fips-profiler/p/profile-20261117T015624Z.tsv",
+    "state": "running"
+  },
+  "off": {
+    "bytes": 2335,
+    "path": "/Users/bizarro/Documents/Projects/nostrc-wt/fips-profiler/p/profile-20261117T015624Z.tsv",
+    "state": "idle",
+    "stopped": true,
+    "stopped_by_cap": false,
+    "stopped_by_error": false
+  },
+  "status": {
+    "byte_cap": 33554432,
+    "bytes": 0,
+    "interval_secs": 10,
+    "path": null,
+    "state": "idle"
+  }
+}

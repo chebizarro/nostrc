@@ -1,0 +1,665 @@
+{
+  "cases": {
+    "common_inputs": {
+      "dst_coord_debug": "TreeCoordinate(depth=1, path=[ff1f → ba4b])",
+      "identity_seeds": [
+        0,
+        1
+      ],
+      "src_coord_debug": "TreeCoordinate(depth=0, path=[ba4b])"
+    },
+    "constants": {
+      "FIPS_OVERHEAD": 106,
+      "FMP_ESTABLISHED_HEADER_SIZE": 16,
+      "FMP_FRAME_OVERHEAD": 36,
+      "FMP_MSG1_WIRE_SIZE": 114,
+      "FMP_MSG2_WIRE_SIZE": 69,
+      "FSP_HEADER_SIZE": 12,
+      "FSP_INNER_HEADER_SIZE": 6,
+      "FSP_PORT_HEADER_SIZE": 4,
+      "SESSION_DATAGRAM_HEADER_SIZE": 36,
+      "payload_limit_1280": 1170
+    },
+    "link_catalog": [
+      {
+        "name": "SessionDatagram",
+        "value": 0
+      },
+      {
+        "name": "SenderReport",
+        "value": 1
+      },
+      {
+        "name": "ReceiverReport",
+        "value": 2
+      },
+      {
+        "name": "TreeAnnounce",
+        "value": 16
+      },
+      {
+        "name": "FilterAnnounce",
+        "value": 32
+      },
+      {
+        "name": "LookupRequest",
+        "value": 48
+      },
+      {
+        "name": "LookupResponse",
+        "value": 49
+      },
+      {
+        "name": "Disconnect",
+        "value": 80
+      },
+      {
+        "name": "Heartbeat",
+        "value": 81
+      },
+      {
+        "name": "PathProbe",
+        "value": 82
+      },
+      {
+        "name": "PathAck",
+        "value": 83
+      },
+      {
+        "name": "PathClose",
+        "value": 84
+      }
+    ],
+    "session_catalog": [
+      {
+        "name": "DataPacket",
+        "value": 16
+      },
+      {
+        "name": "SenderReport",
+        "value": 17
+      },
+      {
+        "name": "ReceiverReport",
+        "value": 18
+      },
+      {
+        "name": "PathMtuNotification",
+        "value": 19
+      },
+      {
+        "name": "CoordsWarmup",
+        "value": 20
+      }
+    ],
+    "wire_cases": [
+      {
+        "bytes": {
+          "file": "proto-coords.bin",
+          "generator_version": "0.1.0",
+          "hex": "0200ff1f02b399b2aaaebd7bd18f77686342ba4b4bd7c8014bbcbf8e96d2688438c1",
+          "length": 34,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "fa6f40400565160f8e999c2242e9bada6347a2b827d32ae99e0b41ccaa0a8703"
+        },
+        "consumed": 34,
+        "decoded_depth": 1,
+        "input": {
+          "addresses_hex": [
+            "ff1f02b399b2aaaebd7bd18f77686342",
+            "ba4b4bd7c8014bbcbf8e96d2688438c1"
+          ]
+        },
+        "name": "coords"
+      },
+      {
+        "bytes": {
+          "file": "proto-coords-empty.bin",
+          "generator_version": "0.1.0",
+          "hex": "0000",
+          "length": 2,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7"
+        },
+        "name": "coords-empty",
+        "optional": null,
+        "required_error": {
+          "debug": "Malformed(\"coordinate with zero entries\")"
+        }
+      },
+      {
+        "bytes": {
+          "file": "proto-bloom.bin",
+          "generator_version": "0.1.0",
+          "hex": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000040000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000",
+          "length": 1024,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "e07e71ccf7d61e66c74137cca18dcba41aeb4604493349a7f5e541058fdde046"
+        },
+        "hash_count": 5,
+        "inserted_node_addrs": [
+          "ba4b4bd7c8014bbcbf8e96d2688438c1",
+          "ff1f02b399b2aaaebd7bd18f77686342"
+        ],
+        "name": "bloom",
+        "num_bits": 8192,
+        "ones": 10
+      },
+      {
+        "bytes": {
+          "file": "proto-filter-announce.bin",
+          "generator_version": "0.1.0",
+          "hex": "20efcdab8967452301050100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000040000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000",
+          "length": 1035,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "4c2ac18a79869e86fbc636320529109bb88520a16700ece3b2eb036b989a6617"
+        },
+        "decode_offset": 1,
+        "decoded_debug": "FilterAnnounce { filter: BloomFilter { bits: 8192, hash_count: 5, fill_ratio: \"0.12%\", est_count: \"2\" }, sequence: 81985529216486895, hash_count: 5, size_class: 1 }",
+        "empty_input_error": {
+          "expected": 10,
+          "got": 0,
+          "variant": "MessageTooShort"
+        },
+        "input": {
+          "filter_case": "bloom",
+          "sequence": 81985529216486895
+        },
+        "name": "filter-announce"
+      },
+      {
+        "aux_entropy_byte": 90,
+        "name": "parent-declaration",
+        "node_addr": "ba4b4bd7c8014bbcbf8e96d2688438c1",
+        "parent_addr": "ba4b4bd7c8014bbcbf8e96d2688438c1",
+        "sequence": 81985529216486895,
+        "signature_hex": "a5600a377a5005933d1bccfb0f97a020087d1631523bb7dc3105d42b3ae9b52c1938d82679dcacde0dd9c11cc9ab0b55b75ae8376a02cda91dbbfd1ca060cd55",
+        "signing_bytes": {
+          "file": "proto-parent-declaration-signing.bin",
+          "generator_version": "0.1.0",
+          "hex": "ba4b4bd7c8014bbcbf8e96d2688438c1ba4b4bd7c8014bbcbf8e96d2688438c1efcdab896745230100f1536500000000",
+          "length": 48,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "170cc481e9ad5b61fb35cc8c50912884b5c53e2faeb484b8d9bc149bbd581a56"
+        },
+        "timestamp": 1700000000
+      },
+      {
+        "bytes": {
+          "file": "proto-tree-announce.bin",
+          "generator_version": "0.1.0",
+          "hex": "1001efcdab896745230100f1536500000000ba4b4bd7c8014bbcbf8e96d2688438c10100ba4b4bd7c8014bbcbf8e96d2688438c1efcdab896745230100f1536500000000a5600a377a5005933d1bccfb0f97a020087d1631523bb7dc3105d42b3ae9b52c1938d82679dcacde0dd9c11cc9ab0b55b75ae8376a02cda91dbbfd1ca060cd55",
+          "length": 132,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "c75398cf810ec45a3a5660bc2f2988b18986ca178fe4e02e59330a5f97f66542"
+        },
+        "decode_offset": 1,
+        "decoded_debug": "TreeAnnounce { declaration: ParentDeclaration { node_addr: NodeAddr(ba4b4bd7c8014bbc), parent_id: NodeAddr(ba4b4bd7c8014bbc), sequence: 81985529216486895, is_root: true, signed: true }, ancestry: TreeCoordinate(depth=0, path=[ba4b]) }",
+        "empty_input_error": {
+          "expected": 99,
+          "got": 0,
+          "variant": "MessageTooShort"
+        },
+        "input": {
+          "ancestry_node_addrs": [
+            "ba4b4bd7c8014bbcbf8e96d2688438c1"
+          ],
+          "declaration_case": "parent-declaration"
+        },
+        "name": "tree-announce"
+      },
+      {
+        "bytes": {
+          "file": "proto-lookup-request.bin",
+          "generator_version": "0.1.0",
+          "hex": "30efcdab8967452301ff1f02b399b2aaaebd7bd18f77686342ba4b4bd7c8014bbcbf8e96d2688438c14000050100ba4b4bd7c8014bbcbf8e96d2688438c1",
+          "length": 62,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "1db87a52a1a04fda10324f184af835abc703a0fe9959962ce4e926048d0e05d8"
+        },
+        "decode_offset": 1,
+        "decoded_debug": "LookupRequest { request_id: 81985529216486895, target: NodeAddr(ff1f02b399b2aaae), origin: NodeAddr(ba4b4bd7c8014bbc), origin_coords: TreeCoordinate(depth=0, path=[ba4b]), ttl: 64, min_mtu: 1280 }",
+        "empty_input_error": {
+          "expected": 45,
+          "got": 0,
+          "variant": "MessageTooShort"
+        },
+        "input": {
+          "min_mtu": 1280,
+          "origin_coord": "src",
+          "origin_seed": 0,
+          "request_id": 81985529216486895,
+          "target_seed": 1,
+          "ttl": 64
+        },
+        "name": "lookup-request"
+      },
+      {
+        "bytes": {
+          "file": "proto-lookup-response.bin",
+          "generator_version": "0.1.0",
+          "hex": "31efcdab8967452301ff1f02b399b2aaaebd7bd18f77686342ffff0200ff1f02b399b2aaaebd7bd18f77686342ba4b4bd7c8014bbcbf8e96d2688438c100ac6578b93370ad728bd17fadcef59d8557a2ddace141702cd473b6967654445c6ec228f39cbaa2ed9c54ae97dbd1d508fe66d464e7d57f665aa8df708c5375",
+          "length": 125,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "273801bc80dbd8fb0bbc7e1a85f118bc85d0de724a9002f123447510a8cdadcd"
+        },
+        "decode_offset": 1,
+        "decoded_debug": "LookupResponse { request_id: 81985529216486895, target: NodeAddr(ff1f02b399b2aaae), path_mtu: 65535, target_coords: TreeCoordinate(depth=1, path=[ff1f → ba4b]), proof: Signature(00ac6578b93370ad728bd17fadcef59d8557a2ddace141702cd473b6967654445c6ec228f39cbaa2ed9c54ae97dbd1d508fe66d464e7d57f665aa8df708c5375) }",
+        "empty_input_error": {
+          "expected": 92,
+          "got": 0,
+          "variant": "MessageTooShort"
+        },
+        "input": {
+          "aux_entropy_byte": 90,
+          "proof_hex": "00ac6578b93370ad728bd17fadcef59d8557a2ddace141702cd473b6967654445c6ec228f39cbaa2ed9c54ae97dbd1d508fe66d464e7d57f665aa8df708c5375",
+          "proof_signing_hex": "efcdab8967452301ff1f02b399b2aaaebd7bd18f776863420200ff1f02b399b2aaaebd7bd18f77686342ba4b4bd7c8014bbcbf8e96d2688438c1",
+          "request_id": 81985529216486895,
+          "target_coord": "dst",
+          "target_seed": 1
+        },
+        "name": "lookup-response"
+      },
+      {
+        "bytes": {
+          "file": "proto-sender-report.bin",
+          "generator_version": "0.1.0",
+          "hex": "01000000efcdab8967452301ffcdab8967452301efcdab89ffffffff403020108877665544332211ffffffffffffffff",
+          "length": 48,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "75f4996227d50468f5646ffa7bbb2220575944ed1430c83be93842f5bbf6c210"
+        },
+        "decode_offset": 1,
+        "decoded_debug": "SenderReport { interval_start_counter: 81985529216486895, interval_end_counter: 81985529216486911, interval_start_timestamp: 2309737967, interval_end_timestamp: 4294967295, interval_bytes_sent: 270544960, cumulative_packets_sent: 1234605616436508552, cumulative_bytes_sent: 18446744073709551615 }",
+        "empty_input_error": {
+          "expected": 47,
+          "got": 0,
+          "variant": "MessageTooShort"
+        },
+        "input": {
+          "cumulative_bytes_sent": 18446744073709551615,
+          "cumulative_packets_sent": 1234605616436508552,
+          "interval_bytes_sent": 270544960,
+          "interval_end_counter": 81985529216486911,
+          "interval_end_timestamp": 4294967295,
+          "interval_start_counter": 81985529216486895,
+          "interval_start_timestamp": 2309737967
+        },
+        "name": "sender-report"
+      },
+      {
+        "bytes": {
+          "file": "proto-session-sender-report.bin",
+          "generator_version": "0.1.0",
+          "hex": "0000efcdab8967452301ffcdab8967452301efcdab89ffffffff403020108877665544332211ffffffffffffffff",
+          "length": 46,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "f01c84765840013455ce5458ff7eedc1cc2cf61ab3f26c4d3837b2924a049bca"
+        },
+        "decode_offset": 0,
+        "decoded_debug": "SessionSenderReport { interval_start_counter: 81985529216486895, interval_end_counter: 81985529216486911, interval_start_timestamp: 2309737967, interval_end_timestamp: 4294967295, interval_bytes_sent: 270544960, cumulative_packets_sent: 1234605616436508552, cumulative_bytes_sent: 18446744073709551615 }",
+        "empty_input_error": {
+          "expected": 46,
+          "got": 0,
+          "variant": "MessageTooShort"
+        },
+        "input": {
+          "cumulative_bytes_sent": 18446744073709551615,
+          "cumulative_packets_sent": 1234605616436508552,
+          "interval_bytes_sent": 270544960,
+          "interval_end_counter": 81985529216486911,
+          "interval_end_timestamp": 4294967295,
+          "interval_start_counter": 81985529216486895,
+          "interval_start_timestamp": 2309737967
+        },
+        "name": "session-sender-report"
+      },
+      {
+        "bytes": {
+          "file": "proto-receiver-report.bin",
+          "generator_version": "0.1.0",
+          "hex": "02000000efcdab8967452301ffffffffffffffff8877665544332211efcdab89cdabffff070000007856341205000000b29e43ff03000000020000006300000039300000",
+          "length": 68,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "2a68719c62522e29c3189edcfb9e8ba4e40392bc89ea11aa917894884ada7523"
+        },
+        "decode_offset": 1,
+        "decoded_debug": "ReceiverReport { highest_counter: 81985529216486895, cumulative_packets_recv: 18446744073709551615, cumulative_bytes_recv: 1234605616436508552, timestamp_echo: 2309737967, dwell_time: 43981, max_burst_loss: 65535, mean_burst_loss: 7, jitter: 305419896, ecn_ce_count: 5, owd_trend: -12345678, burst_loss_count: 3, cumulative_reorder_count: 2, interval_packets_recv: 99, interval_bytes_recv: 12345 }",
+        "empty_input_error": {
+          "expected": 67,
+          "got": 0,
+          "variant": "MessageTooShort"
+        },
+        "input": {
+          "burst_loss_count": 3,
+          "cumulative_bytes_recv": 1234605616436508552,
+          "cumulative_packets_recv": 18446744073709551615,
+          "cumulative_reorder_count": 2,
+          "dwell_time": 43981,
+          "ecn_ce_count": 5,
+          "highest_counter": 81985529216486895,
+          "interval_bytes_recv": 12345,
+          "interval_packets_recv": 99,
+          "jitter": 305419896,
+          "max_burst_loss": 65535,
+          "mean_burst_loss": 7,
+          "owd_trend": -12345678,
+          "timestamp_echo": 2309737967
+        },
+        "name": "receiver-report"
+      },
+      {
+        "bytes": {
+          "file": "proto-session-receiver-report.bin",
+          "generator_version": "0.1.0",
+          "hex": "0000efcdab8967452301ffffffffffffffff8877665544332211efcdab89cdabffff070000007856341205000000b29e43ff03000000020000006300000039300000",
+          "length": 66,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "467f16c6ec9a267aafcc2ab982c92b6641fb67655ae1652b539372f9e94d4e4f"
+        },
+        "decode_offset": 0,
+        "decoded_debug": "SessionReceiverReport { highest_counter: 81985529216486895, cumulative_packets_recv: 18446744073709551615, cumulative_bytes_recv: 1234605616436508552, timestamp_echo: 2309737967, dwell_time: 43981, max_burst_loss: 65535, mean_burst_loss: 7, jitter: 305419896, ecn_ce_count: 5, owd_trend: -12345678, burst_loss_count: 3, cumulative_reorder_count: 2, interval_packets_recv: 99, interval_bytes_recv: 12345 }",
+        "empty_input_error": {
+          "expected": 66,
+          "got": 0,
+          "variant": "MessageTooShort"
+        },
+        "input": {
+          "burst_loss_count": 3,
+          "cumulative_bytes_recv": 1234605616436508552,
+          "cumulative_packets_recv": 18446744073709551615,
+          "cumulative_reorder_count": 2,
+          "dwell_time": 43981,
+          "ecn_ce_count": 5,
+          "highest_counter": 81985529216486895,
+          "interval_bytes_recv": 12345,
+          "interval_packets_recv": 99,
+          "jitter": 305419896,
+          "max_burst_loss": 65535,
+          "mean_burst_loss": 7,
+          "owd_trend": -12345678,
+          "timestamp_echo": 2309737967
+        },
+        "name": "session-receiver-report"
+      },
+      {
+        "bytes": {
+          "file": "proto-path-mtu.bin",
+          "generator_version": "0.1.0",
+          "hex": "0005",
+          "length": 2,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "9f1afa4dc124cba73134e82ff50f17c8f7164257c79fed9a13f5943a6acb8e3d"
+        },
+        "decode_offset": 0,
+        "decoded_debug": "PathMtuNotification { path_mtu: 1280 }",
+        "empty_input_error": {
+          "expected": 2,
+          "got": 0,
+          "variant": "MessageTooShort"
+        },
+        "input": {
+          "path_mtu": 1280
+        },
+        "name": "path-mtu"
+      },
+      {
+        "bytes": {
+          "file": "proto-path-probe.bin",
+          "generator_version": "0.1.0",
+          "hex": "52efcdab890178563412010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+          "length": 64,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "fb41fd242859aa11c19d3c927f7bc51ea633413084d005a237bab058e8145108"
+        },
+        "decode_offset": 1,
+        "decoded_debug": "PathProbe { probe_id: 2309737967, flags: PathFlags(1), path_id: 305419896, caps: PathCaps(1), len: 64 }",
+        "empty_input_error": {
+          "expected": 10,
+          "got": 0,
+          "variant": "MessageTooShort"
+        },
+        "input": {
+          "active": true,
+          "aggregate": true,
+          "len": 64,
+          "path_id": 305419896,
+          "probe_id": 2309737967
+        },
+        "name": "path-probe"
+      },
+      {
+        "bytes": {
+          "file": "proto-path-ack.bin",
+          "generator_version": "0.1.0",
+          "hex": "53efcdab890044332211785634120178563412443322118877665500000000000000000000000000000000000000000000000000000000000000000000000000",
+          "length": 64,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "ab973c85cfe1afd577e3195752fa120461bec5db21a1b03d338c0882425554b6"
+        },
+        "decode_offset": 1,
+        "decoded_debug": "PathAck { probe_id: 2309737967, flags: PathFlags(0), path_id: 287454020, echo_path_id: 305419896, caps: PathCaps(1), rx_time_us: 305419896, rx_frames: 287454020, rx_bytes: 1432778632, len: 64 }",
+        "empty_input_error": {
+          "expected": 26,
+          "got": 0,
+          "variant": "MessageTooShort"
+        },
+        "input": {
+          "active": false,
+          "aggregate": true,
+          "echo_path_id": 305419896,
+          "len": 64,
+          "path_id": 287454020,
+          "probe_id": 2309737967,
+          "rx_bytes": 1432778632,
+          "rx_frames": 287454020,
+          "rx_time_us": 305419896
+        },
+        "name": "path-ack"
+      },
+      {
+        "bytes": {
+          "file": "proto-path-close.bin",
+          "generator_version": "0.1.0",
+          "hex": "54443322110100",
+          "length": 7,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "1b2834aa1e4190991c7e4dfbbd48beb6ae5733d1925bff67a9784fcf4cc96ebc"
+        },
+        "decode_offset": 1,
+        "decoded_debug": "PathClose { path_id: 287454020, reason: InterfaceGone }",
+        "empty_input_error": {
+          "expected": 6,
+          "got": 0,
+          "variant": "MessageTooShort"
+        },
+        "input": {
+          "path_id": 287454020,
+          "reason": "InterfaceGone"
+        },
+        "name": "path-close"
+      },
+      {
+        "bytes": {
+          "file": "proto-disconnect.bin",
+          "generator_version": "0.1.0",
+          "hex": "5001",
+          "length": 2,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "5be9f96cecf3f618a6be49e939858b1638b3f57b76a3b10028af9189921808ea"
+        },
+        "decode_offset": 1,
+        "decoded_debug": "Disconnect { reason: Restart }",
+        "empty_input_error": {
+          "expected": 1,
+          "got": 0,
+          "variant": "MessageTooShort"
+        },
+        "input": {
+          "reason": "Restart"
+        },
+        "name": "disconnect"
+      },
+      {
+        "bytes": {
+          "file": "proto-fmp-msg-1.bin",
+          "generator_version": "0.1.0",
+          "hex": "01006e0044332211031b41e632ad8afba548f0de71d01426d684c4221c95a5c230fa261546e0f8439f12a09d1b041ea7e121ba57d18fc96c4139cf6ba964279bc243edef62899aa36048979038f74a4a099d618d1a9155d9a3ac8a9ff75c217c9bb537e406a24822d293e68a9cad5b370810",
+          "length": 114,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "b055d903d08b212700cd5b1ec54b9736f87b08430f825b9e3bd021337a506ad8"
+        },
+        "name": "fmp-msg-1",
+        "noise_case": "ik-msg-1",
+        "receiver_idx": null,
+        "sender_idx": 287454020
+      },
+      {
+        "bytes": {
+          "file": "proto-fmp-msg-2.bin",
+          "generator_version": "0.1.0",
+          "hex": "02004100887766554433221103bcd7d39e31a731fba63f6891503f027babfb54822c746e204f97f4363c6ac4f67f59e06bd04a9bb53176918a42bf66d53998dc9322b1fca5",
+          "length": 69,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "604eb2ff79e7f0f3a2aae62a54f5a32a2c5fba731da2006f4ee8b09dc6629135"
+        },
+        "name": "fmp-msg-2",
+        "noise_case": "ik-msg-2",
+        "receiver_idx": 287454020,
+        "sender_idx": 1432778632
+      },
+      {
+        "bytes": {
+          "file": "proto-fsp-setup.bin",
+          "generator_version": "0.1.0",
+          "hex": "01005800000100ba4b4bd7c8014bbcbf8e96d2688438c10200ff1f02b399b2aaaebd7bd18f77686342ba4b4bd7c8014bbcbf8e96d2688438c12100027c998ef9a338d2adf536efbf2fc7657ff3ec54184264529517e01e188a2d7007",
+          "length": 92,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "f21931386b040f02d42b916806aebac0f722a64bae29d7fb0f9235bb8f0d6c65"
+        },
+        "decode_offset": 4,
+        "decoded_debug": "SessionSetup { src_coords: TreeCoordinate(depth=0, path=[ba4b]), dest_coords: TreeCoordinate(depth=1, path=[ff1f → ba4b]), flags: SessionFlags(0), handshake_payload: [2, 124, 153, 142, 249, 163, 56, 210, 173, 245, 54, 239, 191, 47, 199, 101, 127, 243, 236, 84, 24, 66, 100, 82, 149, 23, 224, 30, 24, 138, 45, 112, 7] }",
+        "empty_input_error": {
+          "expected": 1,
+          "got": 0,
+          "variant": "MessageTooShort"
+        },
+        "input": {
+          "dest_coord": "dst",
+          "noise_case": "xk-msg-1",
+          "src_coord": "src"
+        },
+        "name": "fsp-setup"
+      },
+      {
+        "bytes": {
+          "file": "proto-fsp-ack.bin",
+          "generator_version": "0.1.0",
+          "hex": "02007000000200ff1f02b399b2aaaebd7bd18f77686342ba4b4bd7c8014bbcbf8e96d2688438c10100ba4b4bd7c8014bbcbf8e96d2688438c1390003ae9881ef1f89e3ff6b8d910e0904d11568079b7af7027a9ae214c9f4dc7cdbaf4c33322230eedee5c0163771320610b57734a0794b583c05",
+          "length": 116,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "337257e4dd96aed4ad5faf4674775cebe66fce42f5dccdfb6788290441449f08"
+        },
+        "decode_offset": 4,
+        "decoded_debug": "SessionAck { src_coords: TreeCoordinate(depth=1, path=[ff1f → ba4b]), dest_coords: TreeCoordinate(depth=0, path=[ba4b]), flags: 0, handshake_payload: [3, 174, 152, 129, 239, 31, 137, 227, 255, 107, 141, 145, 14, 9, 4, 209, 21, 104, 7, 155, 122, 247, 2, 122, 154, 226, 20, 201, 244, 220, 124, 219, 175, 76, 51, 50, 34, 48, 238, 222, 229, 192, 22, 55, 113, 50, 6, 16, 181, 119, 52, 160, 121, 75, 88, 60, 5] }",
+        "empty_input_error": {
+          "expected": 1,
+          "got": 0,
+          "variant": "MessageTooShort"
+        },
+        "input": {
+          "dest_coord": "src",
+          "noise_case": "xk-msg-2",
+          "src_coord": "dst"
+        },
+        "name": "fsp-ack"
+      },
+      {
+        "bytes": {
+          "file": "proto-fsp-msg3.bin",
+          "generator_version": "0.1.0",
+          "hex": "03004c000049002804c0cf83344167d18071c680c4e8877b98b0e34e232f12652307dda79af52ba1fa5ed1d4b68186058ebbb20d3aec87034c9cf1d012e4c9251db2c9fd6e6cdfe66af30145768c0583",
+          "length": 80,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "251427ff8821456f23dbfd54fa232c0656c1832462c3d4501b043cb9bbf7f44b"
+        },
+        "decode_offset": 4,
+        "decoded_debug": "SessionMsg3 { flags: 0, handshake_payload: [40, 4, 192, 207, 131, 52, 65, 103, 209, 128, 113, 198, 128, 196, 232, 135, 123, 152, 176, 227, 78, 35, 47, 18, 101, 35, 7, 221, 167, 154, 245, 43, 161, 250, 94, 209, 212, 182, 129, 134, 5, 142, 187, 178, 13, 58, 236, 135, 3, 76, 156, 241, 208, 18, 228, 201, 37, 29, 178, 201, 253, 110, 108, 223, 230, 106, 243, 1, 69, 118, 140, 5, 131] }",
+        "empty_input_error": {
+          "expected": 1,
+          "got": 0,
+          "variant": "MessageTooShort"
+        },
+        "input": {
+          "noise_case": "xk-msg-3"
+        },
+        "name": "fsp-msg3"
+      },
+      {
+        "bytes": {
+          "file": "proto-fsp-encrypted.bin",
+          "generator_version": "0.1.0",
+          "hex": "00020b0000000000000000009b3acfe296d5b76712a6eb2a91ad6f76624706c83ff6a48b538114",
+          "length": 39,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "51d8f7996b07156610c30781a1db196f3e73ca06a8d45bc12f57d32ac3681110"
+        },
+        "counter": 0,
+        "flags": 2,
+        "header_hex": "00020b000000000000000000",
+        "inner_hex": "7856341210010001020304",
+        "name": "fsp-encrypted"
+      },
+      {
+        "bytes": {
+          "file": "proto-session-datagram.bin",
+          "generator_version": "0.1.0",
+          "hex": "00400005ba4b4bd7c8014bbcbf8e96d2688438c1ff1f02b399b2aaaebd7bd18f7768634200020b0000000000000000009b3acfe296d5b76712a6eb2a91ad6f76624706c83ff6a48b538114",
+          "length": 75,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "abe778981a199aee7ec0b79eda8956abde20885b0dcf13ee70c27fcca7f49a50"
+        },
+        "decode_offset": 1,
+        "decoded_debug": "SessionDatagram { src_addr: NodeAddr(ba4b4bd7c8014bbc), dest_addr: NodeAddr(ff1f02b399b2aaae), ttl: 64, path_mtu: 1280, payload: [0, 2, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 155, 58, 207, 226, 150, 213, 183, 103, 18, 166, 235, 42, 145, 173, 111, 118, 98, 71, 6, 200, 63, 246, 164, 139, 83, 129, 20] }",
+        "empty_input_error": {
+          "expected": 35,
+          "got": 0,
+          "variant": "MessageTooShort"
+        },
+        "input": {
+          "dest_seed": 1,
+          "path_mtu": 1280,
+          "payload_case": "fsp-encrypted",
+          "src_seed": 0,
+          "ttl": 64
+        },
+        "name": "session-datagram"
+      },
+      {
+        "bytes": {
+          "file": "proto-fmp-encrypted.bin",
+          "generator_version": "0.1.0",
+          "hex": "00014f00887766550000000000000000fa74d1c939b4aac2fa64efdfcbac7db9b7c5c1d140995885dfef9624bbcc314b5bf098bd1f67a11e2a8d6eab2d80b556f7e8c71a774be864ad4e0cd589d59d6c43373195de5b451a9119a9cb1dbc247bf16bd96429ddab96bd88c5c5c428da",
+          "length": 111,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "102d7c5f39a622837f08784fc725f635ded9079646a535c329e99b8e09099d60"
+        },
+        "counter": 0,
+        "flags": 1,
+        "header_hex": "00014f00887766550000000000000000",
+        "inner_hex": "efcdab8900400005ba4b4bd7c8014bbcbf8e96d2688438c1ff1f02b399b2aaaebd7bd18f7768634200020b0000000000000000009b3acfe296d5b76712a6eb2a91ad6f76624706c83ff6a48b538114",
+        "name": "fmp-encrypted",
+        "receiver_idx": 1432778632
+      }
+    ]
+  },
+  "family": "proto",
+  "gaps": [
+    "Representative wire cases only: not an exhaustive malformed-message, routing, probe, settlement or state-machine sweep.",
+    "FIPS_IPV6_OVERHEAD lives in the host IPv6 module, not fips-core; core FIPS_OVERHEAD is 106 (110 including port header)."
+  ],
+  "generator": "fips-vectors",
+  "generator_version": "0.1.0",
+  "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+  "schema_version": 1
+}

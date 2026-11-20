@@ -7,6 +7,20 @@
 #include "../stack/stack.h"
 #include "../include/libgo/fiber.h" /* for gof_sched_stats */
 
+/* Clang exposes sanitizer features through __has_feature; GCC uses
+ * __SANITIZE_THREAD__. Keep non-sanitized builds free of runtime references. */
+#if defined(__has_feature)
+# if __has_feature(thread_sanitizer)
+#  define GOF_TSAN 1
+# endif
+#endif
+#if defined(__SANITIZE_THREAD__) && !defined(GOF_TSAN)
+# define GOF_TSAN 1
+#endif
+#ifndef GOF_TSAN
+# define GOF_TSAN 0
+#endif
+
 /* Fiber lifecycle states.
  *
  * RUNNABLE  - on a run queue or executing on a worker.
@@ -37,13 +51,20 @@ typedef struct gof_fiber {
   const char *name;
   _Atomic gof_state state;
   gof_context ctx;
+#if GOF_TSAN
+  void       *tsan_fiber;
+#endif
   gof_stack   stack;
   void      (*entry)(void*);
   void       *arg;
   int         w_affinity; /* preferred worker index for affinity (-1 if none) */
-  int         wait_fd;    /* fd this fiber is currently waiting on (-1 if none) */
-  int         wait_events;/* GOF_POLL_READ/WRITE bitmask for current wait */
+  /* Registry mutation is under io_mu; atomic metadata also permits scheduler
+   * tracing across no-sync TSan contexts without ordering application data. */
+  _Atomic gof_socket_t wait_fd; /* fd waited on (GOF_INVALID_SOCKET if none) */
+  _Atomic int wait_events;/* GOF_POLL_READ/WRITE bitmask for current wait */
 } gof_fiber;
+
+void gof_register_channel_hooks(void);
 
 void gof_sched_init(size_t default_stack_bytes);
 void gof_sched_enqueue(gof_fiber *f);
@@ -104,5 +125,6 @@ void gof_sched_wake_all(void);
 
 /* Check if background stop has been requested (provided by api.c) */
 int gof_bg_stop_requested(void);
+int gof_bg_running(void);
 
 #endif /* LIBGO_FIBER_SCHED_SCHED_H */

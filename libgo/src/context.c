@@ -102,10 +102,9 @@ void go_context_free(GoContext *ctx) {
         if (ctx->vtable->free) ctx->vtable->free(ctx);
         return;
     }
-    /* nostrc-jw23: go_context_background() sets no vtable, so neither its
-     * last go_context_unref() nor go_context_free() ever freed it (nor its
-     * done channel): every background context leaked. It is a plain base
-     * context; free it as one. */
+    /* Plain base contexts initialized without a vtable still need cleanup
+     * (nostrc-jw23). Background contexts use the vtable path above, whose
+     * destructor owns both the context and its vtable. */
     base_context_free(ctx);
 }
 
@@ -143,6 +142,14 @@ GoContext *go_context_background(void) {
     atomic_store_explicit(&ctx->canceled, 0, memory_order_relaxed);
     atomic_store_explicit(&ctx->err_msg, NULL, memory_order_relaxed);
     atomic_store_explicit(&ctx->refcount, 1, memory_order_relaxed);
+
+    ctx->vtable = calloc(1, sizeof(GoContextInterface));
+    ctx->vtable->is_canceled = base_context_is_canceled;
+    ctx->vtable->wait = base_context_wait;
+    ctx->vtable->free = base_context_free;
+    ctx->vtable->done = base_context_done;
+    ctx->vtable->err = base_context_err;
+
     return ctx;
 }
 

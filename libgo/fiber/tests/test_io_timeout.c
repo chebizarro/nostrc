@@ -1,24 +1,22 @@
-#include "../include/libgo/fiber.h"
+#include "test_net.h"
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
+#if !defined(_WIN32)
 #include <arpa/inet.h>
+#endif
 
 static int g_result = -1;
 static int g_saved_errno = 0;
 
 static void run_fiber(void *arg) {
   (void)arg;
-  int lsock = socket(AF_INET, SOCK_STREAM, 0);
-  assert(lsock >= 0);
+  gof_socket_t lsock = socket(AF_INET, SOCK_STREAM, 0);
+  assert(lsock != GOF_INVALID_SOCKET);
 
   int opt = 1;
-  setsockopt(lsock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+  setsockopt(lsock, SOL_SOCKET, SO_REUSEADDR, (const char *)&opt, sizeof(opt));
 
   struct sockaddr_in addr;
   memset(&addr, 0, sizeof(addr));
@@ -37,11 +35,11 @@ static void run_fiber(void *arg) {
 
   /* No client connects. Accept with a short timeout and expect ETIMEDOUT.
    * Capture the fiber's errno for diagnostics (main's is unrelated). */
-  int c = gof_accept(lsock, NULL, NULL, 50);
-  g_saved_errno = errno;
-  close(lsock);
-  if (c != -1) {
-    close(c);
+  gof_socket_t c = gof_accept(lsock, NULL, NULL, 50);
+  g_saved_errno = test_errno();
+  test_close(lsock);
+  if (c != GOF_INVALID_SOCKET) {
+    test_close(c);
     g_result = 1;
     return;
   }
@@ -49,6 +47,7 @@ static void run_fiber(void *arg) {
 }
 
 int main(void) {
+  test_net_init();
   gof_init(0);
   gof_spawn(run_fiber, NULL, 0);
   gof_run();

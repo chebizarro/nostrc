@@ -131,6 +131,10 @@
 /* NIP-47: Wallet Connect */
 #define NOSTR_KIND_NWC_WALLET_INFO               13194
 
+/* FIPS rendezvous (same identity key as the overlay). */
+#define NOSTR_KIND_FIPS_OVERLAY_ADVERT           37195
+#define NOSTR_KIND_FIPS_TRAVERSAL                21059
+
 /* Ephemeral events (20000-29999) */
 #define NOSTR_KIND_LIGHTNING_PUB_RPC             21000
 #define NOSTR_KIND_EPHEMERAL_GIFT_WRAP           21059

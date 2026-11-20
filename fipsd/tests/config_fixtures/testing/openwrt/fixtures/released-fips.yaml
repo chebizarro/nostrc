@@ -1,0 +1,56 @@
+
+node:
+  identity:
+  rendezvous:
+
+
+tun:
+  enabled: true
+  name: fips0
+  mtu: 1280
+
+dns:
+  enabled: true
+  port: 5354
+
+transports:
+  udp:
+    bind_addr: "[::]:2121"
+
+  tcp:
+    bind_addr: "0.0.0.0:8443"
+
+  ethernet:
+    wan:
+      interface: "eth0"
+      listen: true
+      announce: true
+      auto_connect: true
+      accept_connections: true
+    wwan:
+      interface: "phy0-sta0"
+      listen: true
+      announce: true
+      auto_connect: true
+      accept_connections: true
+    lan:
+      interface: "br-lan"
+      listen: true
+      announce: true
+      auto_connect: true
+      accept_connections: true
+
+
+
+
+gateway:
+  enabled: true
+  pool: "fd01::/112"
+  lan_interface: "br-lan"
+  dns:
+    listen: "[::1]:5353"
+    upstream: "[::1]:5354"
+    ttl: 60
+  pool_grace_period: 60
+
+peers: []

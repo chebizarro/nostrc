@@ -207,6 +207,11 @@ target_include_directories(nostr PUBLIC ${LWS_INCLUDE_DIRS})
 target_link_directories(nostr PUBLIC ${LWS_LIBRARY_DIRS})
 find_package(OpenSSL REQUIRED)
 find_library(SECP256K1_LIB NAMES secp256k1 REQUIRED)
+# The header as well: libnostr (and NIP modules linking it) include <secp256k1.h>,
+# which is off the default include path under Homebrew. Without this the build
+# only worked when another dependency happened to add the same prefix.
+find_path(SECP256K1_INCLUDE_DIR NAMES secp256k1.h REQUIRED)
+target_include_directories(nostr SYSTEM PUBLIC ${SECP256K1_INCLUDE_DIR})
 # libnostr uses SSL_CTX APIs (TLS policy), so link both SSL and Crypto
 target_link_libraries(nostr PUBLIC ${LWS_LIBRARIES} libgo OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIB})
 if(NOSTR_WITH_GLIB)
@@ -413,6 +418,11 @@ if(LIBNOSTR_BUILD_TESTS)
   target_include_directories(test_subscription_dispatch PRIVATE include src)
   add_test(NAME libnostr_subscription_dispatch COMMAND test_subscription_dispatch)
   set_tests_properties(libnostr_subscription_dispatch PROPERTIES TIMEOUT 60)
+  add_test(NAME libnostr_pool_config_concurrent COMMAND test_subscription_dispatch pool-config)
+  set_tests_properties(libnostr_pool_config_concurrent PROPERTIES TIMEOUT 60 LABELS "libnostr;pool")
+  if(COMMAND nostrc_describe_test)
+    nostrc_describe_test(libnostr_pool_config_concurrent OWNER libnostr TARGETS test_subscription_dispatch)
+  endif()
 
   # Deterministically poison private malloc storage before the real constructor.
   add_executable(test_subscription_initialization tests/test_subscription_initialization.c)
@@ -535,6 +545,18 @@ if(LIBNOSTR_BUILD_TESTS)
   target_include_directories(test_misc_audit PRIVATE include)
   target_link_libraries(test_misc_audit PRIVATE Threads::Threads)
   add_test(NAME libnostr_misc_audit COMMAND test_misc_audit)
+
+  # Exercise the same private cache helper as relay/connection with both backends.
+  foreach(_metrics_enabled 0 1)
+    set(_metrics_target test_metrics_concurrent_${_metrics_enabled})
+    add_executable(${_metrics_target} tests/test_metrics_concurrent.c src/metrics.c)
+    target_compile_definitions(${_metrics_target} PRIVATE NOSTR_ENABLE_METRICS=${_metrics_enabled} NOSTR_STATIC_DEFINE)
+    target_include_directories(${_metrics_target} PRIVATE include src "${CMAKE_CURRENT_BINARY_DIR}/include")
+    target_link_libraries(${_metrics_target} PRIVATE Threads::Threads)
+    apply_warnings(${_metrics_target})
+    add_test(NAME libnostr_metrics_concurrent_${_metrics_enabled} COMMAND ${_metrics_target})
+    set_tests_properties(libnostr_metrics_concurrent_${_metrics_enabled} PROPERTIES TIMEOUT 30)
+  endforeach()
 endif()
 
 # Install rules
@@ -575,7 +597,9 @@ if(COMMAND nostrc_describe_test)
       "libnostr_connection_teardown_stress|test_connection_teardown_stress"
       "libnostr_filter_limit_zero|test_filter_limit_zero"
       "libnostr_store_txn_audit|test_store_txn_audit"
-      "libnostr_crypto_audit|test_crypto_audit" "libnostr_misc_audit|test_misc_audit")
+      "libnostr_crypto_audit|test_crypto_audit" "libnostr_misc_audit|test_misc_audit"
+      "libnostr_metrics_concurrent_0|test_metrics_concurrent_0"
+      "libnostr_metrics_concurrent_1|test_metrics_concurrent_1")
     string(REPLACE "|" ";" _pair "${_pair}")
     list(GET _pair 0 _test)
     list(GET _pair 1 _target)

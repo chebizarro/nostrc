@@ -1,0 +1,296 @@
+{
+  "schema": 1,
+  "reference_commit": "ffca1748e48b87267105189e515619a600a686fd",
+  "rust_commit": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+  "tolerance": 0.1,
+  "comparison": "same-runner reference for CI; absolute numbers only on matching machine",
+  "machine": {
+    "system": "Darwin",
+    "release": "27.0.0",
+    "arch": "arm64",
+    "cpu": "Apple M4 Max",
+    "logical_cpus": 14
+  },
+  "config": {
+    "runs": 3,
+    "iterations": 1000,
+    "seconds": 5,
+    "latency_samples": 1000,
+    "payload_bytes": 1200,
+    "window": 0,
+    "workers": 2
+  },
+  "metrics": {
+    "loopback/c-c/cpu0_ns_per_datagram": {
+      "value": 14992.630027374187,
+      "direction": "lower"
+    },
+    "loopback/c-c/cpu1_ns_per_datagram": {
+      "value": 16007.201834217149,
+      "direction": "lower"
+    },
+    "loopback/c-c/one_way/p50_us": {
+      "value": 76.0,
+      "direction": "lower"
+    },
+    "loopback/c-c/one_way/p99_us": {
+      "value": 119.0,
+      "direction": "lower"
+    },
+    "loopback/c-c/reverse_one_way/p50_us": {
+      "value": 78.0,
+      "direction": "lower"
+    },
+    "loopback/c-c/reverse_one_way/p99_us": {
+      "value": 128.0,
+      "direction": "lower"
+    },
+    "loopback/c-c/rtt/p50_us": {
+      "value": 155.0,
+      "direction": "lower"
+    },
+    "loopback/c-c/rtt/p99_us": {
+      "value": 236.0,
+      "direction": "lower"
+    },
+    "loopback/c-c/throughput_mbps": {
+      "value": 683.856,
+      "direction": "higher"
+    },
+    "loopback/c-rust/cpu0_ns_per_datagram": {
+      "value": 15640.048875152732,
+      "direction": "lower"
+    },
+    "loopback/c-rust/cpu1_ns_per_datagram": {
+      "value": 16394.627651115385,
+      "direction": "lower"
+    },
+    "loopback/c-rust/one_way/p50_us": {
+      "value": 69.0,
+      "direction": "lower"
+    },
+    "loopback/c-rust/one_way/p99_us": {
+      "value": 120.0,
+      "direction": "lower"
+    },
+    "loopback/c-rust/reverse_one_way/p50_us": {
+      "value": 72.0,
+      "direction": "lower"
+    },
+    "loopback/c-rust/reverse_one_way/p99_us": {
+      "value": 122.0,
+      "direction": "lower"
+    },
+    "loopback/c-rust/rtt/p50_us": {
+      "value": 142.0,
+      "direction": "lower"
+    },
+    "loopback/c-rust/rtt/p99_us": {
+      "value": 220.0,
+      "direction": "lower"
+    },
+    "loopback/c-rust/throughput_mbps": {
+      "value": 664.34304,
+      "direction": "higher"
+    },
+    "loopback/rust-rust/cpu0_ns_per_datagram": {
+      "value": 14450.840106581938,
+      "direction": "lower"
+    },
+    "loopback/rust-rust/cpu1_ns_per_datagram": {
+      "value": 15308.567390327446,
+      "direction": "lower"
+    },
+    "loopback/rust-rust/one_way/p50_us": {
+      "value": 62.0,
+      "direction": "lower"
+    },
+    "loopback/rust-rust/one_way/p99_us": {
+      "value": 112.0,
+      "direction": "lower"
+    },
+    "loopback/rust-rust/reverse_one_way/p50_us": {
+      "value": 62.0,
+      "direction": "lower"
+    },
+    "loopback/rust-rust/reverse_one_way/p99_us": {
+      "value": 108.0,
+      "direction": "lower"
+    },
+    "loopback/rust-rust/rtt/p50_us": {
+      "value": 125.0,
+      "direction": "lower"
+    },
+    "loopback/rust-rust/rtt/p99_us": {
+      "value": 201.0,
+      "direction": "lower"
+    },
+    "loopback/rust-rust/throughput_mbps": {
+      "value": 1029.69792,
+      "direction": "higher"
+    },
+    "micro/coord_cache/get_hit/1000/median_ns": {
+      "value": 17.0,
+      "direction": "lower"
+    },
+    "micro/coord_cache/get_hit/50000/median_ns": {
+      "value": 26.0,
+      "direction": "lower"
+    },
+    "micro/coord_cache/get_miss/1000/median_ns": {
+      "value": 11.0,
+      "direction": "lower"
+    },
+    "micro/coord_cache/get_miss/50000/median_ns": {
+      "value": 15.0,
+      "direction": "lower"
+    },
+    "micro/find_next_hop/current_borrowed/128/median_ns": {
+      "value": 17612.0,
+      "direction": "lower"
+    },
+    "micro/find_next_hop/current_borrowed/256/median_ns": {
+      "value": 35124.0,
+      "direction": "lower"
+    },
+    "micro/find_next_hop/current_borrowed/32/median_ns": {
+      "value": 4380.0,
+      "direction": "lower"
+    },
+    "micro/find_next_hop/current_borrowed/8/median_ns": {
+      "value": 1095.0,
+      "direction": "lower"
+    },
+    "micro/find_next_hop/former_allocating/128/median_ns": {
+      "value": 18557.0,
+      "direction": "lower"
+    },
+    "micro/find_next_hop/former_allocating/256/median_ns": {
+      "value": 38038.0,
+      "direction": "lower"
+    },
+    "micro/find_next_hop/former_allocating/32/median_ns": {
+      "value": 4646.0,
+      "direction": "lower"
+    },
+    "micro/find_next_hop/former_allocating/8/median_ns": {
+      "value": 1175.0,
+      "direction": "lower"
+    },
+    "micro/handout/send_cipher_clone/median_ns": {
+      "value": 6.0,
+      "direction": "lower"
+    },
+    "micro/session/open/1400/median_ns": {
+      "value": 2173.0,
+      "direction": "lower"
+    },
+    "micro/session/open/64/median_ns": {
+      "value": 283.0,
+      "direction": "lower"
+    },
+    "micro/session/seal/1400/median_ns": {
+      "value": 2080.0,
+      "direction": "lower"
+    },
+    "micro/session/seal/64/median_ns": {
+      "value": 199.0,
+      "direction": "lower"
+    },
+    "micro/transport_addr_clone/former_vec/18/median_ns": {
+      "value": 10.0,
+      "direction": "lower"
+    },
+    "micro/transport_addr_clone/former_vec/58/median_ns": {
+      "value": 11.0,
+      "direction": "lower"
+    },
+    "micro/transport_addr_clone/former_vec/6/median_ns": {
+      "value": 10.0,
+      "direction": "lower"
+    },
+    "micro/transport_addr_clone/shared/18/median_ns": {
+      "value": 5.0,
+      "direction": "lower"
+    },
+    "micro/transport_addr_clone/shared/58/median_ns": {
+      "value": 5.0,
+      "direction": "lower"
+    },
+    "micro/transport_addr_clone/shared/6/median_ns": {
+      "value": 5.0,
+      "direction": "lower"
+    },
+    "micro/transport_addr_cross_thread/former_vec/18/median_ns": {
+      "value": 68.0,
+      "direction": "lower"
+    },
+    "micro/transport_addr_cross_thread/former_vec/58/median_ns": {
+      "value": 68.0,
+      "direction": "lower"
+    },
+    "micro/transport_addr_cross_thread/former_vec/6/median_ns": {
+      "value": 58.0,
+      "direction": "lower"
+    },
+    "micro/transport_addr_cross_thread/shared/18/median_ns": {
+      "value": 58.0,
+      "direction": "lower"
+    },
+    "micro/transport_addr_cross_thread/shared/58/median_ns": {
+      "value": 56.0,
+      "direction": "lower"
+    },
+    "micro/transport_addr_cross_thread/shared/6/median_ns": {
+      "value": 58.0,
+      "direction": "lower"
+    },
+    "micro/transport_addr_socket_and_clone/former_vec/ipv4/median_ns": {
+      "value": 174.0,
+      "direction": "lower"
+    },
+    "micro/transport_addr_socket_and_clone/former_vec/ipv6/median_ns": {
+      "value": 170.0,
+      "direction": "lower"
+    },
+    "micro/transport_addr_socket_and_clone/former_vec/scoped_ipv6/median_ns": {
+      "value": 346.0,
+      "direction": "lower"
+    },
+    "micro/transport_addr_socket_and_clone/shared/ipv4/median_ns": {
+      "value": 27.0,
+      "direction": "lower"
+    },
+    "micro/transport_addr_socket_and_clone/shared/ipv6/median_ns": {
+      "value": 27.0,
+      "direction": "lower"
+    },
+    "micro/transport_addr_socket_and_clone/shared/scoped_ipv6/median_ns": {
+      "value": 52.0,
+      "direction": "lower"
+    },
+    "micro/worker/open/1400/median_ns": {
+      "value": 2191.0,
+      "direction": "lower"
+    },
+    "micro/worker/open/64/median_ns": {
+      "value": 285.0,
+      "direction": "lower"
+    },
+    "micro/worker/seal/1400/median_ns": {
+      "value": 2098.0,
+      "direction": "lower"
+    },
+    "micro/worker/seal/64/median_ns": {
+      "value": 207.0,
+      "direction": "lower"
+    }
+  },
+  "build": {
+    "CMAKE_BUILD_TYPE": "Release",
+    "CMAKE_C_COMPILER": "/usr/bin/cc",
+    "CMAKE_C_FLAGS": "",
+    "CMAKE_C_FLAGS_RELEASE": "-O3 -DNDEBUG",
+    "GO_WARNINGS_AS_ERRORS": "ON"
+  }
+}

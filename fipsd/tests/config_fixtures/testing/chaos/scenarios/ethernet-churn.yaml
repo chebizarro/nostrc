@@ -1,0 +1,56 @@
+
+scenario:
+  name: "ethernet-churn"
+  seed: 42
+  duration_secs: 240
+
+topology:
+  algorithm: explicit
+  num_nodes: 4
+  default_transport: ethernet
+  params:
+    adjacency:
+      - [n01, n02]
+      - [n02, n03]
+      - [n03, n04]
+      - [n04, n01]
+
+netem:
+  enabled: true
+  default_policy:
+    delay_ms: [1, 5]
+    jitter_ms: [0, 1]
+    loss_pct: [0, 0.5]
+
+link_flaps:
+  enabled: false
+
+traffic:
+  enabled: true
+  max_concurrent: 2
+  interval_secs: {min: 10, max: 20}
+  duration_secs: {min: 15, max: 25}
+  parallel_streams: 2
+
+node_churn:
+  enabled: true
+  interval_secs: {min: 45, max: 60}
+  max_down_nodes: 1
+  down_duration_secs: {min: 20, max: 35}
+  protect_connectivity: true
+
+assertions:
+  baseline:
+    min_nodes_reporting: 4
+    max_roots: 1
+    min_nodes_parented: 3
+
+  min_traffic:
+    min_sessions_ok: 2
+
+  max_errors:
+    max_total: 0
+
+logging:
+  rust_log: "info"
+  output_dir: "./sim-results"

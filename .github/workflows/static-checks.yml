@@ -47,6 +47,10 @@ jobs:
         run: python3 scripts/check-gui-test-gdk-frame.py --self-test
       - name: Local Linux image mirrors the CI package lists
         run: python3 scripts/check-linux-ci-packages.py --self-test
+      - name: No direct errno read after a libgo fiber park
+        run: |
+          python3 scripts/check-errno-after-park.py --self-test
+          python3 scripts/check-errno-after-park.py
       - name: Pre-push hook behaviour
         run: bash scripts/test-pre-push.sh
       - name: Opt-in full gate behaviour

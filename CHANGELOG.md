@@ -4,7 +4,42 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Released
+- fipsd 0.1.0 (`fipsd-v0.1.0`, 2026-11-20): first release of the C FIPS
+  daemon and its components (libfips-core, libfipsnative, fipsctl, fipstop,
+  fips-gateway, fips-ble-agent, all 0.1.0), wire-compatible with upstream
+  `jmcorgan/fips@6aa80504`. It includes the deep optimization pass
+  (nostrc-u19cz):
+  - OpenSSL EVP ChaCha20-Poly1305;
+  - crypto on dedicated threads, with worker-side UDP send and fused inbound
+    opens;
+  - Linux `recvmmsg`/`sendmmsg`/GSO batching;
+  - batched native delivery;
+  - cached timer deadlines.
+
+  C↔C loopback goodput rose from about 600 to 800–1,300 Mbit/s on an M4 Max,
+  and from about 500 to 1,000–1,160 Mbit/s on a Linux aarch64 VM. CPU per
+  datagram at 100 Mbit/s fell by about a third.
+  See `fipsd/docs/release-notes-0.1.0.md`.
+
 ### Added
+- fips-gateway 0.1.0 (Unreleased): ship the Linux gateway and opt-in systemd
+  unit in Debian/RPM `fips-gateway` packages with libnftables dependencies;
+  Arch includes them in `fipsd`, following upstream. Hosted Linux FIPS CI
+  installs libnftables headers and builds the gateway; packaging smokes query
+  the installed gateway and verify clean network teardown (nostrc-f586b).
+- fipsd 0.1.0 (unreleased): packaging under `fipsd/packaging/` mirroring
+  upstream fips -- Debian (`fipsd`, `libfipsnative0`, `libfipsnative-dev`),
+  RPM, Arch, generated systemd units (`fipsd`, `fips-dns`, opt-in
+  `fips-firewall` with upstream's `fips.nft`), tmpfiles/sysusers fragments
+  for `/run/fips` and the `fips` group, an example `fips.yaml`, and a macOS
+  `.pkg` with a launchd daemon. `cmake --install <build>/fipsd` now stages
+  the whole payload (config example, conffiles, units, fragments, `fipsctl`
+  and the DNS helpers when present); `FIPSD_GIT_REV` embeds the revision in
+  exported-tree builds. The `fips-packaging` workflow builds and
+  install-tests every format; `make-desktop-source-archive.sh` takes an
+  archive name; `test-release-packaging.py` checks the recipes against the
+  declared version (nostrc-iq1n9.5).
 - libvault 0.7.0: `vault_file_export_nip94` / `vault_nip94_tags_free` project
   ONE vault file for a recipient who never holds the vault (interop alignment
   §2 A2). The file is read through the authenticated chunk reader with exact

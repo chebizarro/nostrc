@@ -38,6 +38,8 @@
 #include "nostr-keys.h"
 #include "nostr-relay.h"
 #include "nostr-subscription.h"
+#include "nostr-simple-pool.h"
+#include <errno.h>
 #include "../src/relay-private.h"
 #include "../src/subscription-private.h"
 
@@ -131,11 +133,12 @@ typedef struct {
     pthread_t thread;
     char *event_json;        /* signed kind-1 event served for every REQ */
     atomic_int reqs_seen;
+    bool close_first; /* pool regression: CLOSED forces worker reconciliation */
     atomic_int protocol_headers_seen;
 } FixtureRelay;
 
 typedef struct {
-    char *queue[8];          /* pending outbound text frames */
+    char *queue[256];          /* pending outbound text frames */
     int n;
 } FixtureConn;
 
@@ -166,7 +169,16 @@ static int fx_callback(struct lws *wsi, enum lws_callback_reasons reason,
             const char *end = memchr(sid, '"', len - plen);
             if (!end) break;
             int sid_len = (int)(end - sid);
-            atomic_fetch_add(&g_fx.reqs_seen, 1);
+            int req = atomic_fetch_add(&g_fx.reqs_seen, 1);
+            if (g_fx.close_first && req == 0) {
+                char *closed = malloc((size_t)sid_len + 48);
+                CHECK(closed);
+                snprintf(closed, (size_t)sid_len + 48,
+                         "[\"CLOSED\",\"%.*s\",\"error: retry fixture\"]", sid_len, sid);
+                fx_enqueue(c, closed);
+                lws_callback_on_writable(wsi);
+                break;
+            }
             size_t need = strlen(g_fx.event_json) + (size_t)sid_len + 32;
             char *ev = malloc(need);
             snprintf(ev, need, "[\"EVENT\",\"%.*s\",%s]", sid_len, sid, g_fx.event_json);
@@ -230,8 +242,9 @@ static int pick_free_port(void) {
     return ntohs(sa.sin_port);
 }
 
-static void fx_start(const char *event_json) {
+static void fx_start_mode(const char *event_json, bool close_first) {
     memset(&g_fx, 0, sizeof(g_fx));
+    g_fx.close_first = close_first;
     g_fx.event_json = strdup(event_json);
     g_fx.port = pick_free_port();
     struct lws_context_creation_info info;
@@ -245,6 +258,10 @@ static void fx_start(const char *event_json) {
     CHECK(g_fx.ctx != NULL);
     atomic_store(&g_fx.running, true);
     CHECK(pthread_create(&g_fx.thread, NULL, fx_service, NULL) == 0);
+}
+
+static void fx_start(const char *event_json) {
+    fx_start_mode(event_json, false);
 }
 
 static void fx_stop(void) {
@@ -345,7 +362,172 @@ static void test_loopback_fixture_relay(void) {
     printf("  [ok] loopback fixture relay: EVENT+EOSE reach new()+fire and prepare(NULL) subs\n");
 }
 
-int main(void) {
+/* Concurrent public configuration against the real pool worker, transport and
+ * relay fixture above. CLOSED, not a sleep/disconnect timer, makes the worker
+ * prepare replacement subscriptions; EOSE progress gates the subscribe load
+ * (not a per-REQ acknowledgement once the two subscriber threads overlap). */
+typedef struct {
+    NostrSimplePool *pool;
+    char url[64];
+    pthread_mutex_t mutex;
+    pthread_cond_t changed;
+    unsigned eose, closed, delivered[4];
+    atomic_bool stop;
+} PoolConfigTest;
+
+static PoolConfigTest config_test;
+static int token_a, token_b;
+
+static void config_boundary(NostrRelay *relay, const char *state,
+                            const char *reason, void *data) {
+    (void)relay; (void)reason;
+    PoolConfigTest *t = data;
+    pthread_mutex_lock(&t->mutex);
+    if (strcmp(state, "EOSE") == 0) t->eose++;
+    if (strcmp(state, "CLOSED") == 0) t->closed++;
+    pthread_cond_broadcast(&t->changed);
+    pthread_mutex_unlock(&t->mutex);
+}
+
+static void config_delivered(NostrIncomingEvent *ev, unsigned mode) {
+    /* Re-enter a pool API: middleware must never execute under pool_mutex. */
+    (void)nostr_simple_pool_get_brown_list_enabled(config_test.pool);
+    pthread_mutex_lock(&config_test.mutex);
+    config_test.delivered[mode]++;
+    pthread_cond_broadcast(&config_test.changed);
+    pthread_mutex_unlock(&config_test.mutex);
+    nostr_event_free(ev->event);
+}
+
+static void config_legacy(NostrIncomingEvent *ev) { config_delivered(ev, 0); }
+static void config_ex_a(NostrIncomingEvent *ev, void *data) {
+    CHECK(data == &token_a);
+    config_delivered(ev, 1);
+}
+static void config_ex_b(NostrIncomingEvent *ev, void *data) {
+    CHECK(data == &token_b);
+    config_delivered(ev, 2);
+}
+static void config_batch(NostrIncomingEvent *ev, size_t n) {
+    for (size_t i = 0; i < n; i++) config_delivered(&ev[i], 3);
+}
+
+static void config_set_mode(NostrSimplePool *pool, unsigned mode) {
+    nostr_simple_pool_set_batch_middleware(pool, mode == 3 ? config_batch : NULL);
+    if (mode == 0) nostr_simple_pool_set_event_middleware(pool, config_legacy);
+    else nostr_simple_pool_set_event_middleware_ex(pool,
+        mode == 1 ? config_ex_a : config_ex_b, mode == 1 ? &token_a : &token_b);
+}
+
+static void *config_writer(void *arg) {
+    PoolConfigTest *t = arg;
+    unsigned i = 0;
+    while (!atomic_load_explicit(&t->stop, memory_order_acquire)) {
+        config_set_mode(t->pool, i % 4);
+        nostr_simple_pool_set_auto_unsub_on_eose(t->pool, i % 2 != 0);
+        CHECK(nostr_simple_pool_set_recovery_window(t->pool, i % 3));
+        CHECK(nostr_simple_pool_set_closed_backoff(t->pool, i % 2, 2));
+        nostr_simple_pool_set_subscription_callback(t->pool, config_boundary, t);
+        /* Bound log volume while still overlapping the first dial/redial. */
+        if (i < 32) nostr_simple_pool_set_brown_list_enabled(t->pool, i % 2 != 0);
+        i++;
+    }
+    nostr_simple_pool_set_auto_unsub_on_eose(t->pool, false);
+    return NULL;
+}
+
+static void config_subscribe(PoolConfigTest *t, const char *url, bool unique,
+                             bool async) {
+    pthread_mutex_lock(&t->mutex);
+    unsigned target = t->eose + 1;
+    pthread_mutex_unlock(&t->mutex);
+    NostrFilters *filters = kind1_filters();
+    /* Alternate filter content, checking replacement ownership under TSan/ASan. */
+    nostr_filter_set_limit(&filters->filters[0], unique ? 1 : 2);
+    if (async) nostr_simple_pool_subscribe_async(t->pool, &url, 1, *filters, unique);
+    else nostr_simple_pool_subscribe(t->pool, &url, 1, *filters, unique);
+    nostr_filters_free(filters);
+    struct timespec deadline;
+    clock_gettime(CLOCK_REALTIME, &deadline);
+    deadline.tv_sec += 10;
+    pthread_mutex_lock(&t->mutex);
+    while (t->eose < target)
+        CHECK(pthread_cond_timedwait(&t->changed, &t->mutex, &deadline) == 0);
+    pthread_mutex_unlock(&t->mutex);
+}
+
+static void *config_subscriber(void *arg) {
+    PoolConfigTest *t = arg;
+    for (unsigned i = 0; i < 32; i++)
+        config_subscribe(t, t->url, i % 2 == 0, true);
+    return NULL;
+}
+
+static void test_pool_config_concurrent(void) {
+    unsetenv("NOSTR_TEST_MODE");
+    char *sk = nostr_key_generate_private();
+    CHECK(sk);
+    NostrEvent *event = nostr_event_new();
+    nostr_event_set_kind(event, 1);
+    nostr_event_set_content(event, "pool configuration race fixture");
+    nostr_event_set_created_at(event, (int64_t)time(NULL));
+    CHECK(nostr_event_sign(event, sk) == 0);
+    char *json = nostr_event_serialize(event);
+    CHECK(json);
+    free(sk);
+    nostr_event_free(event);
+    fx_start_mode(json, true);
+    free(json);
+    char url[64];
+    snprintf(url, sizeof(url), "ws://127.0.0.1:%d", g_fx.port);
+    PoolConfigTest *t = &config_test;
+    CHECK(pthread_mutex_init(&t->mutex, NULL) == 0);
+    CHECK(pthread_cond_init(&t->changed, NULL) == 0);
+    t->pool = nostr_simple_pool_new();
+    CHECK(t->pool);
+    nostr_simple_pool_set_subscription_callback(t->pool, config_boundary, t);
+    nostr_simple_pool_start(t->pool);
+    snprintf(t->url, sizeof(t->url), "%s", url);
+    config_set_mode(t->pool, 0);
+    pthread_t writer, subscriber;
+    CHECK(pthread_create(&writer, NULL, config_writer, t) == 0);
+    /* With no competing live subscription, the fixture's first CLOSED must
+     * be recovered by reconcile (the caller only sent one subscribe). */
+    config_subscribe(t, url, false, true);
+    CHECK(atomic_load(&g_fx.reqs_seen) >= 2);
+    CHECK(pthread_create(&subscriber, NULL, config_subscriber, t) == 0);
+    for (unsigned i = 0; i < 32; i++) config_subscribe(t, url, i % 2 != 0, false);
+    CHECK(pthread_join(subscriber, NULL) == 0);
+    atomic_store_explicit(&t->stop, true, memory_order_release);
+    CHECK(pthread_join(writer, NULL) == 0);
+    CHECK(nostr_simple_pool_set_closed_backoff(t->pool, 0, 0));
+    for (unsigned mode = 0; mode < 4; mode++) {
+        config_set_mode(t->pool, mode);
+        config_subscribe(t, url, false, false);
+        struct timespec deadline;
+        clock_gettime(CLOCK_REALTIME, &deadline);
+        deadline.tv_sec += 10;
+        pthread_mutex_lock(&t->mutex);
+        while (!t->delivered[mode])
+            CHECK(pthread_cond_timedwait(&t->changed, &t->mutex, &deadline) == 0);
+        pthread_mutex_unlock(&t->mutex);
+    }
+    nostr_simple_pool_stop(t->pool);
+    CHECK(t->eose >= 36 && t->closed > 0);
+    nostr_simple_pool_free(t->pool);
+    CHECK(atomic_load(&g_fx.reqs_seen) > 36);
+    CHECK(atomic_load(&g_fx.protocol_headers_seen) == 0);
+    fx_stop();
+    pthread_cond_destroy(&t->changed);
+    pthread_mutex_destroy(&t->mutex);
+    puts("  [ok] concurrent pool config/subscribe + CLOSED reconcile + EVENT/EOSE");
+}
+
+int main(int argc, char **argv) {
+    if (argc == 2 && strcmp(argv[1], "pool-config") == 0) {
+        test_pool_config_concurrent();
+        return 0;
+    }
     printf("test_subscription_dispatch (nostrc-prqu.4)\n");
     test_offline_registration();
     test_loopback_fixture_relay();

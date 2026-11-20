@@ -1,0 +1,21 @@
+if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
+  message(FATAL_ERROR "FIPSD_ENABLE_FUZZERS requires clang/libFuzzer")
+endif()
+if(GNOSTR_ENABLE_TSAN OR GO_ENABLE_TSAN)
+  message(FATAL_ERROR "fipsd fuzzers cannot be combined with TSan")
+endif()
+# Instrument the production parsers, not just the adapters.
+target_compile_options(fipsd_lib PRIVATE -fsanitize=fuzzer-no-link)
+# Ordinary consumers also need coverage support, but never a libFuzzer main.
+target_link_options(fipsd_lib INTERFACE -fsanitize=fuzzer-no-link)
+foreach(_surface control config)
+  set(_target fipsd_fuzz_${_surface})
+  add_executable(${_target} fuzz_${_surface}.c)
+  target_link_libraries(${_target} PRIVATE fipsd_lib)
+  set_target_properties(${_target} PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+  apply_warnings(${_target})
+  apply_sanitizers(${_target})
+  target_compile_options(${_target} PRIVATE -fsanitize=fuzzer)
+  target_link_options(${_target} PRIVATE -fsanitize=fuzzer)
+endforeach()
