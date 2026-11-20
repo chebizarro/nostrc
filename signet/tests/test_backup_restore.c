@@ -247,6 +247,92 @@ static void test_backup_restore_roundtrip(void) {
   printf("test_backup_restore_roundtrip: PASS\n");
 }
 
+/* Before f367b0af9, base64 masters were treated as raw ASCII by the KDF.
+ * Derive a real old custody envelope, not random corruption. Mixed stores can
+ * retain those rows alongside newer, independently authenticatable envelopes.
+ * Restore preserves old rows; it does not migrate or repair their key material. */
+static void test_legacy_envelope_restore(void) {
+  if (!signet_store_sqlcipher_available()) {
+    printf("test_legacy_envelope_restore: SKIP (no SQLCipher)\n");
+    return;
+  }
+  const char *domain = "signet-agent-nsec-v1";
+  uint8_t legacy_dek[32], sk[32] = {1}, nonce[24] = {2}, ct[48];
+  /* Hex masters used the same KDF then and now: a wholly old hex envelope
+   * remains readable without any newer envelope to vouch for the master. */
+  const int cases[] = {3, 0, 1, 2};
+  for (size_t i = 0; i < G_N_ELEMENTS(cases); i++) {
+    int evidence = cases[i];
+    const char *master = evidence == 3 ? MASTER_KEY :
+        "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
+    uint8_t ikm[64];
+    size_t ikm_len = strlen(master);
+    if (evidence == 3) {
+      CHECK(sodium_hex2bin(ikm, sizeof(ikm), master, strlen(master),
+                          NULL, &ikm_len, NULL) == 0);
+    } else {
+      memcpy(ikm, master, ikm_len);
+    }
+    CHECK(crypto_generichash(legacy_dek, sizeof(legacy_dek),
+        (const uint8_t *)domain, strlen(domain), ikm, ikm_len) == 0);
+    CHECK(crypto_secretbox_easy(ct, sk, sizeof(sk), nonce, legacy_dek) == 0);
+    sodium_memzero(ikm, sizeof(ikm));
+    sodium_memzero(legacy_dek, sizeof(legacy_dek));
+    char *db = temp_path("legacy"), *bak = temp_path("legacy-bak");
+    char *target = temp_path("legacy-target");
+    SignetStore *store = open_store(db, master);
+    CHECK(store != NULL);
+    char alpha[70], beta[70];
+    populate(store, alpha, beta);
+    sqlite3 *raw = signet_store_get_db(store);
+    sqlite3_stmt *st = NULL;
+    CHECK(sqlite3_prepare_v2(raw,
+        "UPDATE agents SET encrypted_nsec = ?, nonce = ? WHERE agent_id = 'owner'",
+        -1, &st, NULL) == SQLITE_OK);
+    CHECK(sqlite3_bind_blob(st, 1, ct, sizeof(ct), SQLITE_TRANSIENT) == SQLITE_OK);
+    CHECK(sqlite3_bind_blob(st, 2, nonce, sizeof(nonce), SQLITE_TRANSIENT) == SQLITE_OK);
+    CHECK(sqlite3_step(st) == SQLITE_DONE);
+    CHECK(sqlite3_finalize(st) == SQLITE_OK);
+    if (evidence != 2)
+      CHECK(sqlite3_exec(raw, "DELETE FROM secrets", NULL, NULL, NULL) == SQLITE_OK);
+    if (evidence == 1)
+      CHECK(signet_store_put_agent(store, "later-valid", sk, sizeof(sk), NULL, NOW) == 0);
+    CHECK(signet_store_backup(store, bak, BACKUP_KEY) == 0);
+    signet_store_close(store);
+
+    CHECK(signet_store_restore_backup(bak, BACKUP_KEY, target, WRONG_KEY) == -1);
+    CHECK(!g_file_test(target, G_FILE_TEST_EXISTS));
+    CHECK(signet_store_restore_backup(bak, BACKUP_KEY, target, master) ==
+          (evidence == 0 ? -1 : 0));
+    if (evidence == 0) {
+      CHECK(!g_file_test(target, G_FILE_TEST_EXISTS));
+    } else {
+      store = open_store(target, master);
+      CHECK(store != NULL);
+      if (evidence == 2) verify_populated(store, alpha, beta);
+      if (evidence == 1 || evidence == 3) {
+        SignetAgentRecord rec = {0};
+        CHECK(signet_store_get_agent(store,
+            evidence == 3 ? "owner" : "later-valid", &rec) == 0);
+        CHECK(rec.secret_key_len == sizeof(sk));
+        CHECK(memcmp(rec.secret_key, sk, sizeof(sk)) == 0);
+        signet_agent_record_clear(&rec);
+      }
+      signet_store_close(store);
+    }
+    remove_sidecars(db);
+    remove_sidecars(target);
+    unlink(db);
+    unlink(bak);
+    unlink(target);
+    g_free(db);
+    g_free(bak);
+    g_free(target);
+  }
+  sodium_memzero(sk, sizeof(sk));
+  printf("test_legacy_envelope_restore: PASS\n");
+}
+
 /* Wrong keys fail closed: restore with a wrong backup key, and open with a
  * wrong master key. */
 static void test_wrong_keys_fail_closed(void) {
@@ -519,6 +605,7 @@ int main(int argc, char **argv) {
   test_restart_durability();
   test_envelope_tamper_rejected();
   test_backup_restore_roundtrip();
+  test_legacy_envelope_restore();
   test_online_backup_consistency();
   test_wrong_keys_fail_closed();
   test_backup_refusals();
