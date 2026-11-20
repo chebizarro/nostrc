@@ -154,7 +154,7 @@ runs it and lints them with PSScriptAnalyzer.
 ## Smoke tests
 
 `testing/` holds what the workflow runs between install and uninstall:
-`smoke-systemd.sh` (root, systemd as PID 1: start the unit, `fipsctl status`
+`smoke-systemd.sh` (root, systemd as PID 1: start the unit, `fipsctl show status`
 or `control-query.py show_status`, check the socket's group and mode, stop),
 `smoke-direct.sh` (no systemd, for containers: the packaged daemon from a
 throwaway config with the TUN off), `smoke-launchd.sh` (macOS: the installed

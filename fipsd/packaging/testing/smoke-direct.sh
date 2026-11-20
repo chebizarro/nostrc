@@ -42,7 +42,7 @@ if command -v fipsctl >/dev/null 2>&1; then
         [ -S "$work/control.sock" ] && break
         sleep 0.5
     done
-    fipsctl -s "$work/control.sock" status || fipsctl -s "$work/control.sock" show_status
+    fipsctl -s "$work/control.sock" show status
 else
     python3 "$here/control-query.py" --socket "$work/control.sock" --retry 20 show_status
 fi

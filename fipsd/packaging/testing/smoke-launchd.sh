@@ -21,7 +21,12 @@ if [ "$(id -u)" -eq 0 ] && [ $# -eq 0 ]; then
     /usr/local/bin/fipsd --version
     launchctl print system/com.fips.fipsd | grep -E 'state|pid' | head -3
     if command -v fipsctl >/dev/null 2>&1; then
-        fipsctl status || fipsctl show_status
+		# Same 20-try bound as control-query.py --retry 20; the socket may not exist yet.
+		for try in $(seq 1 20); do
+			fipsctl show status && break
+			[ "$try" -lt 20 ] || exit 1
+			sleep 0.5
+		done
     else
         python3 "$here/control-query.py" --socket /var/run/fips/control.sock --retry 20 show_status
     fi
