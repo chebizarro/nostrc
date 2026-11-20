@@ -61,10 +61,10 @@ one session on a shared host, so treat ranges as indicative.
 
 | Linux aarch64 VM (10 vCPU) | Before the pass | 0.1.0 | Rust↔Rust, same runs |
 |---|---|---|---|
-| C↔C unpaced delivered | 429–504 Mbit/s | **818–929 Mbit/s** | 75–82 Mbit/s (97% loss) |
-| C↔C sustainable (<1% loss) | 291 Mbit/s | **394 Mbit/s** | 48–86 Mbit/s |
-| CPU µs/datagram at 100 Mbit/s, tx / rx | 84 / 67 | 94–96 / 66 | 55–57 / 69–70 |
-| One-way latency p50 at 100 Mbit/s | 371–517 µs | 277–324 µs | 333–366 µs |
+| C↔C unpaced delivered | 494–540 Mbit/s | **1,009–1,163 Mbit/s** | 82–92 Mbit/s (97% loss) |
+| C↔C sustainable (<1% loss) | 394 Mbit/s | **800 Mbit/s** | 197–356 Mbit/s |
+| CPU µs/datagram at 100 Mbit/s, tx / rx | 85 / 69–71 | **60 / 52–53** | 54–68 / 70–99 |
+| One-way latency p50 at 100 Mbit/s | 326–380 µs | 294–298 µs | 256–347 µs |
 
 What changed in the pass:
 - **AEAD:** ChaCha20-Poly1305 moved to OpenSSL EVP (NEON/AVX) for payloads of
@@ -79,6 +79,8 @@ What changed in the pass:
 - **Native delivery:** batched, with direct client writes.
 - **Hot path:** cached timer deadlines; exact-extent wipes; no per-datagram
   `fcntl`.
+- **Moderate load:** inline crypto while only a short backlog is queued, and
+  libgo skips redundant idle-worker wakes on Linux.
 
 Details and the full measurements are in [`perf.md`](perf.md).
 

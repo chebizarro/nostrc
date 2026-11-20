@@ -18,7 +18,8 @@ All notable changes to this project will be documented in this file.
   - cached timer deadlines.
 
   C↔C loopback goodput rose from about 600 to 800–1,300 Mbit/s on an M4 Max,
-  and CPU per datagram at 100 Mbit/s fell by about a third.
+  and from about 500 to 1,000–1,160 Mbit/s on a Linux aarch64 VM. CPU per
+  datagram at 100 Mbit/s fell by about a third.
   See `fipsd/docs/release-notes-0.1.0.md`.
 
 ### Added

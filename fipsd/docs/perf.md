@@ -17,6 +17,7 @@ section below:
 | Cached per-subsystem deadlines | [Dispatcher timer scans](#dispatcher-timer-scans-nostrc-w3tfz) (w3tfz) |
 | Count-bounded rekey-output wipes; cached non-blocking check in libgo | Noise audit addendum R-1, libgo README (02p6s, bmsti) |
 | Linux `recvmmsg`, batched `sendmmsg`/UDP GSO | [UDP syscall batching on Linux](#udp-syscall-batching-on-linux-nostrc-u19cz4) (u19cz.4) |
+| Inline crypto under a short backlog; libgo skips redundant idle wakes | u19cz.14 section below (u19cz.14) |
 
 The final head-to-head against the pre-pass baseline `5b3c987c8`, on macOS and
 on the Linux VM with Rust↔Rust as the control in every run, is tabulated in
@@ -25,7 +26,12 @@ on the Linux VM with Rust↔Rust as the control in every run, is tabulated in
 - The sustainable rate (<1% loss) went from 244–650 to 506–1,200 Mbit/s.
 - CPU per datagram at 100 Mbit/s fell from about 60 to about 41 µs.
 
-On the Linux VM, unpaced goodput roughly doubled (429–504 to 818–929 Mbit/s).
+On the Linux VM:
+- Unpaced goodput went from 494–540 to 1,009–1,163 Mbit/s.
+- The sustainable rate went from 394 to 800 Mbit/s.
+- CPU per datagram at 100 Mbit/s went from 85/70 to 60/53 µs (tx/rx). Rust is
+  54–68/70–99 µs in the same runs.
+
 Follow-ups are filed under the epic.
 
 ## Paced sustainable rate
