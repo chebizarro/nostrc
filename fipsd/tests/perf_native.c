@@ -24,6 +24,15 @@ static uint64_t now(void)
     struct timespec ts; CHECK(!clock_gettime(CLOCK_MONOTONIC, &ts));
     return (uint64_t)ts.tv_sec * UINT64_C(1000000000) + (uint64_t)ts.tv_nsec;
 }
+/* Opt-in handshake keeps direct callers and stdout unchanged. The harness
+ * samples both daemon CPU clocks before acknowledging each boundary. */
+static void cpu_marker(const char *name)
+{
+    if (!getenv("FIPSD_PERF_CPU_MARKERS")) return;
+    CHECK(fprintf(stderr, "FIPSD_PERF_TRAFFIC_%s\n", name) > 0);
+    CHECK(!fflush(stderr));
+    CHECK(getchar() == '\n');
+}
 static void readable(int fd)
 {
     struct pollfd p = {.fd=fd, .events=POLLIN}; int rc;
@@ -163,6 +172,7 @@ int main(int argc, char **argv)
     pthread_t thread; CHECK(!pthread_create(&thread, NULL, drain, &r));
     CHECK(!pthread_mutex_lock(&r.mu));
     while (!r.ready) CHECK(!pthread_cond_wait(&r.cv, &r.mu));
+    cpu_marker("START");
     uint64_t sent = 0, offered = 0, backpressure = 0, start = now();
     uint64_t elapsed = (uint64_t)(seconds * 1e9);
     uint64_t send_deadline = start + elapsed;
@@ -206,6 +216,10 @@ int main(int argc, char **argv)
             CHECK(rc == 0); ++sent;
         }
     }
+    /* A final partial batch can exhaust the offer count just before the
+     * deadline. Keep the end boundary at the deadline, not that batch. */
+    while (now() < send_deadline) { }
+    cpu_marker("END");
     CHECK(!pthread_join(thread, NULL));
     CHECK(!pthread_cond_destroy(&r.cv)); CHECK(!pthread_mutex_destroy(&r.mu));
     uint64_t received = r.received;

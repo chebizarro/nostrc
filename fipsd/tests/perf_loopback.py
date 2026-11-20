@@ -3,9 +3,9 @@
 
 The C traffic driver uses libfipsnative with BOTH implementations. Throughput
 is delivered 1200-byte payload Mbit/s under unpaced offered load (loss reported); latency is
-serial same-clock one-way and round-trip, not RTT/2. CPU samples cover the
-traffic driver interval; wait4-equivalent getrusage deltas also record each
-child's full lifetime. Setup observations are outside all timed intervals.
+serial same-clock one-way and round-trip, not RTT/2. CPU accounting records
+both the marked send window and the whole driver invocation; getrusage deltas
+also record each child's full lifetime. Setup observations are outside traffic.
 """
 import argparse
 import json
@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import threading
 
 from udp_interop import Daemon, Node, Failure, ControlError, NativeFlow, reserve_port
 
@@ -59,6 +60,49 @@ def cpu_seconds(pid):
     for part in parts:
         result = result * 60 + part
     return result + days * 86400
+
+
+def run_driver(command, pids, timeout):
+    """Read CPU boundary events without polling; retain a bounded child timeout."""
+    boundaries, errors, stderr = [], [], []
+    with tempfile.TemporaryFile(mode='w+t') as output:
+        with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.PIPE,
+                              text=True, env=dict(os.environ, FIPSD_PERF_CPU_MARKERS='1')) as driver:
+            def read_markers():
+                try:
+                    for line in driver.stderr:
+                        if line.startswith('FIPSD_PERF_TRAFFIC_'):
+                            expected = ('START', 'END')
+                            if (len(boundaries) >= 2
+                                    or line.strip() != 'FIPSD_PERF_TRAFFIC_' + expected[len(boundaries)]):
+                                raise Failure(f'unexpected driver CPU marker: {line.strip()}')
+                            boundaries.append([cpu_seconds(pid) for pid in pids])
+                            driver.stdin.write('\n')
+                            driver.stdin.flush()
+                        else:
+                            stderr.append(line)
+                except BaseException as error:
+                    errors.append(error)
+                    driver.kill()
+
+            reader = threading.Thread(target=read_markers)
+            reader.start()
+            try:
+                driver.wait(timeout=timeout)
+            finally:
+                if driver.poll() is None:
+                    driver.kill()
+                    driver.wait()
+                reader.join()
+            output.seek(0)
+            stdout = output.read()
+            if errors:
+                raise errors[0]
+            if driver.returncode:
+                raise subprocess.CalledProcessError(driver.returncode, command, stdout, ''.join(stderr))
+            if len(boundaries) != 2:
+                raise Failure('driver did not provide both CPU window markers')
+    return stdout, boundaries[0], boundaries[1]
 
 
 def sustainable_search(probe, args):
@@ -197,20 +241,28 @@ transports:
                 # Native listener teardown is asynchronous. A distinct port
                 # isolates each probe without restarting either daemon.
                 command.extend((str(rate), str(4243 + probe_index)))
-            driver = subprocess.run(command, text=True, capture_output=True,
-                                    timeout=seconds + 120, check=True)
+            stdout, traffic_before, traffic_after = run_driver(
+                command, [node.daemon.proc.pid for node in nodes], timeout=seconds + 120)
             elapsed = time.monotonic() - start
             after = [cpu_seconds(node.daemon.proc.pid) for node in nodes]
-            row = json.loads(driver.stdout)
+            row = json.loads(stdout)
             row['traffic_wall_s'] = elapsed
             row['cpu'] = [{'role': role, 'traffic_s': max(0, end - begin),
                            'traffic_percent_one_core': 100 * max(0, end - begin) / elapsed,
-                           'us_per_delivered_datagram': (max(0, end - begin) * 1e6 / row['received']
-                                                         if row['received'] else None)}
-                          for role, begin, end in zip(roles, before, after)]
+                           'traffic_cpu_s': max(0, traffic_end - traffic_begin),
+                           'us_per_delivered_datagram': (max(0, traffic_end - traffic_begin) * 1e6 / row['received']
+                                                         if row['received'] else None),
+                           'us_per_delivered_datagram_run': (max(0, end - begin) * 1e6 / row['received']
+                                                             if row['received'] else None)}
+                          for role, begin, end, traffic_begin, traffic_end in
+                          zip(roles, before, after, traffic_before, traffic_after)]
             return row
 
-        result = sustainable_search(probe, args) if getattr(args, 'paced', False) else probe()
+        if getattr(args, 'paced_rate', None) is not None:
+            result = probe(args.paced_rate)
+            result['paced_rate_mbps'] = args.paced_rate
+        else:
+            result = sustainable_search(probe, args) if getattr(args, 'paced', False) else probe()
         if captures:
             result['tick_profiles'] = []
             result['pipeline_reports'] = [[line[line.index('[pipe '):] for line in node.daemon.text().splitlines()
@@ -256,7 +308,9 @@ def main():
     p.add_argument('--profile-dir', type=Path, help='Capture sink (non-root; root uses /var/log/fips)')
     p.add_argument('--rust', default=os.environ.get('FIPSD_UDP_INTEROP_RUST_BINARY', ''))
     p.add_argument('--native-tool', required=True)
-    p.add_argument('--paced', action='store_true', help='report-only sustainable offered-rate search')
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument('--paced', action='store_true', help='report-only sustainable offered-rate search')
+    mode.add_argument('--paced-rate', type=float, metavar='MBPS', help='one fixed-rate probe per pairing')
     p.add_argument('--paced-seconds', type=float, default=3)
     p.add_argument('--loss-threshold', type=float, default=.01, help='fraction, strict upper bound')
     p.add_argument('--paced-resolution', type=float, default=.02, help='relative bracket width')
@@ -275,7 +329,9 @@ def main():
     if not (.1 <= args.paced_seconds <= 3600 and 0 < args.loss_threshold < 1
             and .001 <= args.paced_resolution <= .5 and 1 <= args.paced_max_mbps <= 100000):
         p.error('invalid paced duration, loss fraction, resolution or ceiling')
-    if args.paced and args.fipsctl:
+    if args.paced_rate is not None and not 0 < args.paced_rate <= 100000:
+        p.error('--paced-rate must be positive and <=100000 Mbit/s')
+    if (args.paced or args.paced_rate is not None) and args.fipsctl:
         p.error('profile captures require unpaced mode (one measurement per capture)')
     for key in ('fipsd', 'rust', 'native_tool'):
         setattr(args, key, str(Path(getattr(args, key)).resolve(strict=True)))
@@ -284,9 +340,9 @@ def main():
     args.work_dir.mkdir(parents=True, exist_ok=True)
     output = {'schema': 1, 'machine': {'system': platform.system(), 'release': platform.release(),
               'arch': platform.machine(), 'cpus': os.cpu_count()}, 'seconds': args.seconds, 'runs': []}
-    if args.paced:
+    if args.paced or args.paced_rate is not None:
         output['paced'] = {key: getattr(args, key) for key in
-                           ('paced_seconds', 'loss_threshold', 'paced_resolution', 'paced_max_mbps')}
+                           ('paced_seconds', 'loss_threshold', 'paced_resolution', 'paced_max_mbps', 'paced_rate')}
     for run in range(args.runs):
         rows = []
         # Rotate pair ordering across runs, without parallel measurements.

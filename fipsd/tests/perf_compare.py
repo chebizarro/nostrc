@@ -93,7 +93,11 @@ def report_only(data):
         for row in run:
             for i, cpu in enumerate(row['cpu']):
                 name = f"loopback/{row['pairing']}/cpu{i}_us_per_delivered_datagram"
-                samples.setdefault(name, []).append(positive(cpu['traffic_s']) * 1e6 / positive(row['received']))
+                value = cpu.get('us_per_delivered_datagram',
+                                positive(cpu['traffic_s']) * 1e6 / positive(row['received']))
+                samples.setdefault(name, []).append(value)
+                if 'us_per_delivered_datagram_run' in cpu:
+                    samples.setdefault(name + '_run', []).append(cpu['us_per_delivered_datagram_run'])
     paced = data.get('paced_loopback')
     if paced:
         if len(paced['runs']) != data['config']['runs']:
@@ -104,19 +108,25 @@ def report_only(data):
             for row in run:
                 name = f"paced/{row['pairing']}"
                 # No passing probe is a reported unavailable rate, not a gate failure.
-                if row['sustainable_mbps'] is None:
+                fixed = 'paced_rate_mbps' in row
+                if not fixed and row['sustainable_mbps'] is None:
                     samples.setdefault(f'{name}/sustainable_mbps', []).append(None)
                     continue
-                rate = positive(row['sustainable_mbps'])
-                loss = row['sustainable_loss']
+                rate = positive(row['offered_mbps'] if fixed else row['sustainable_mbps'])
+                loss = row['loss_fraction'] if fixed else row['sustainable_loss']
                 if (isinstance(loss, bool) or not isinstance(loss, (int, float))
-                        or not math.isfinite(loss) or not 0 <= loss < paced['paced']['loss_threshold']):
+                        or not math.isfinite(loss) or not 0 <= loss <= 1
+                        or (not fixed and loss >= paced['paced']['loss_threshold'])):
                     raise ValueError('invalid sustainable loss')
-                samples.setdefault(f'{name}/sustainable_mbps', []).append(rate)
+                rate_key = 'fixed_rate_mbps' if fixed else 'sustainable_mbps'
+                samples.setdefault(f'{name}/{rate_key}', []).append(rate)
                 samples.setdefault(f'{name}/loss_fraction', []).append(loss)
                 for i, cpu in enumerate(row['cpu']):
-                    value = positive(cpu['us_per_delivered_datagram'])
+                    value = cpu['us_per_delivered_datagram']
                     samples.setdefault(f'{name}/cpu{i}_us_per_delivered_datagram', []).append(value)
+                    if 'us_per_delivered_datagram_run' in cpu:
+                        samples.setdefault(f'{name}/cpu{i}_us_per_delivered_datagram_run', []).append(
+                            cpu['us_per_delivered_datagram_run'])
                 if row.get('loaded_one_way'):
                     for percentile in ('p50_us', 'p99_us'):
                         value = positive(row['loaded_one_way'][percentile])

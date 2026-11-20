@@ -2,9 +2,12 @@
 """Search algorithm tests; real daemon/driver smoke runs remain separate."""
 import contextlib
 import io
+import subprocess
+import sys
+from unittest.mock import patch
 from types import SimpleNamespace
 import unittest
-from perf_loopback import sustainable_search
+from perf_loopback import Failure, run_driver, sustainable_search
 
 
 class SearchTest(unittest.TestCase):
@@ -36,6 +39,36 @@ class SearchTest(unittest.TestCase):
         result = self.search(10000, ceiling=200)
         self.assertEqual(result['sustainable_mbps'], 200)
         self.assertTrue(result['search_ceiling_reached'])
+
+
+class CpuWindowTest(unittest.TestCase):
+    def test_markers_are_sampled_and_acknowledged_in_order(self):
+        script = """
+import sys
+for marker in ('START', 'END'):
+    print('FIPSD_PERF_TRAFFIC_' + marker, file=sys.stderr, flush=True)
+    assert sys.stdin.readline() == '\\n'
+print('{}')
+"""
+        with patch('perf_loopback.cpu_seconds', side_effect=[1, 2, 4, 6]) as cpu:
+            stdout, begin, end = run_driver([sys.executable, '-c', script], [11, 22], 5)
+        self.assertEqual(stdout.strip(), '{}')
+        self.assertEqual(begin, [1, 2])
+        self.assertEqual(end, [4, 6])
+        self.assertEqual([call.args[0] for call in cpu.call_args_list], [11, 22, 11, 22])
+
+    def test_missing_or_out_of_order_markers_fail(self):
+        for script in ("print('{}')", "import sys; print('FIPSD_PERF_TRAFFIC_END', file=sys.stderr)"):
+            with self.subTest(script=script), self.assertRaises(Failure):
+                run_driver([sys.executable, '-c', script], [], 5)
+
+    def test_cpu_sampling_failure_and_child_timeout_are_propagated(self):
+        script = "import sys; print('FIPSD_PERF_TRAFFIC_START', file=sys.stderr, flush=True); sys.stdin.read()"
+        with patch('perf_loopback.cpu_seconds', side_effect=OSError('CPU unavailable')):
+            with self.assertRaisesRegex(OSError, 'CPU unavailable'):
+                run_driver([sys.executable, '-c', script], [11], 5)
+        with self.assertRaises(subprocess.TimeoutExpired):
+            run_driver([sys.executable, '-c', 'import sys; sys.stdin.read()'], [], .1)
 
 
 if __name__ == '__main__':

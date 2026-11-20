@@ -141,6 +141,28 @@ class ComparisonTest(unittest.TestCase):
         self.assertIsNone(report_only(data)['paced/c-c/sustainable_mbps'])
         self.assertEqual(compare(aggregate(data), original), [])
 
+    def test_window_cpu_and_fixed_rate_remain_report_only(self):
+        data = self.data()
+        original = aggregate(data)
+        for run in data['loopback']['runs']:
+            for row in run:
+                for cpu in row['cpu']:
+                    cpu.update(traffic_cpu_s=.004, us_per_delivered_datagram=4,
+                               us_per_delivered_datagram_run=10)
+        paced = copy.deepcopy(data['loopback'])
+        paced['paced'] = {'paced_rate': 100}
+        for run in paced['runs']:
+            for row in run:
+                row.update(paced_rate_mbps=100, offered_mbps=100, loss_fraction=.2)
+        data['paced_loopback'] = paced
+        report = report_only(data)
+        self.assertEqual(report['loopback/c-c/cpu0_us_per_delivered_datagram'], 4)
+        self.assertEqual(report['loopback/c-c/cpu0_us_per_delivered_datagram_run'], 10)
+        self.assertEqual(report['paced/c-c/fixed_rate_mbps'], 100)
+        self.assertEqual(report['paced/c-c/loss_fraction'], .2)
+        self.assertEqual(report['paced/c-c/cpu0_us_per_delivered_datagram'], 4)
+        self.assertEqual(aggregate(data), original)
+
 
 class HostedPolicyTest(unittest.TestCase):
     """Shared runners gate goodput and noise-qualified, non-cross-thread micros."""
