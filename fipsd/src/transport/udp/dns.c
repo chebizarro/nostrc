@@ -32,19 +32,19 @@ bool fipsd_udp_resolve(fipsd_udp_dns *d, const fips_transport_addr *addr, int fa
     lookup q = {.family = family}; memcpy(q.text, addr->bytes, addr->len);
     if (fipsd_udp_endpoint_numeric(q.text, out)) return out->address.ss_family == family;
     uint64_t now = fipsd_transport_now_ms();
-    nsync_mu_lock(&d->mu);
+    udp_mu_lock(&d->mu);
     for (size_t i = 0; i < FIPSD_UDP_DNS_ENTRIES; ++i) {
         if (d->entries[i].expires > now && !strcmp(d->entries[i].name, q.text) &&
             d->entries[i].endpoint.address.ss_family == family) {
-            *out = d->entries[i].endpoint; nsync_mu_unlock(&d->mu); return true;
+            *out = d->entries[i].endpoint; udp_mu_unlock(&d->mu); return true;
         }
     }
-    nsync_mu_unlock(&d->mu);
+    udp_mu_unlock(&d->mu);
     go_blocking_submit(resolve, &q);
     if (!q.ok) return false;
-    nsync_mu_lock(&d->mu);
+    udp_mu_lock(&d->mu);
     fipsd_udp_dns_entry *e = &d->entries[d->next++ % FIPSD_UDP_DNS_ENTRIES];
     memcpy(e->name, addr->bytes, addr->len); e->name[addr->len] = 0;
     e->endpoint = q.endpoint; e->expires = fipsd_transport_now_ms() + 60000;
-    nsync_mu_unlock(&d->mu); *out = q.endpoint; return true;
+    udp_mu_unlock(&d->mu); *out = q.endpoint; return true;
 }

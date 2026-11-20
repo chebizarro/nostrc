@@ -25,6 +25,11 @@ typedef struct fipsd_crypto_job {
     /* Optional slab return, called after the key is destroyed. The owner wipes
      * whatever its buffers held; without it, destroy wipes and frees them. */
     void (*recycle)(struct fipsd_crypto_job *);
+    /* Optional step on the executing thread (a worker, or the dispatcher for
+     * an inline run) after the AEAD and key destruction, before the completion
+     * is queued: e.g. the owner's transport send. It may use only the job's own
+     * buffers and objects safe from any thread; never dispatcher state. */
+    void (*after)(struct fipsd_crypto_job *);
     void *owner;
     _Atomic uint64_t *worker_counts; /* optional 64 lane success counters */
 } fipsd_crypto_job;

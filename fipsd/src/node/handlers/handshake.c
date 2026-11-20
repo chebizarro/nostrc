@@ -330,6 +330,9 @@ static void remove_peer_carry(handlers *h, peer_rec *rec, fips_rekey_close why, 
      * must establish through the ordinary new-peer path. */
     restart_clear(h, rec, false, hs_now(h));
     rec->disconnecting = true;
+    /* From here a queued data frame comes back unsent and is dropped as stale
+     * at completion, as before worker send; the farewell is dispatcher-sent. */
+    fipsd_dp_link_moved(h, rec);
     {
         char hex[33]; (void)fips_node_addr_format(&rec->addr, hex, sizeof hex);
         FIPSD_INFO(HMOD, "closing link with %s (%s, close=%d)", hex, fips_fmp_disconnect_reason_name(reason), (int)why);

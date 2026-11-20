@@ -85,6 +85,11 @@ typedef struct fipsd_transport_ops {
      * none), and fipsd_transport_send_lane falls back to send. */
     int (*send_lane)(fipsd_transport *, fipsd_transport_lane, const fips_transport_addr *,
                      const uint8_t *, size_t);
+    /* Optional (nostrc-u19cz.3): true when send(to) may run on any OS thread,
+     * concurrently with the dispatcher and other senders, and returns without
+     * parking or waiting on name resolution. Crypto workers then send sealed
+     * data-lane frames to `to` themselves. NULL: dispatcher-only sends. */
+    bool (*send_concurrent)(const fipsd_transport *, const fips_transport_addr *to);
 } fipsd_transport_ops;
 struct fipsd_transport {
     const fipsd_transport_ops *ops;

@@ -13,7 +13,7 @@ static fipsd_bind_result bind_instance(void *arg, fipsd_runtime *rt, GoChannel *
     gate_lock(u);
     if (go_channel_is_closed(stop) || go_context_is_canceled(u->root)) { gate_unlock(u); return FIPSD_BIND_ABSENT; }
     udp_socket *s = fipsd_udp_socket_open(u, &u->bind_to, NULL, generation, FIPS_LINK_INBOUND);
-    nsync_mu_lock(&u->mu); u->listener = s; nsync_mu_unlock(&u->mu);
+    udp_mu_lock(&u->mu); u->listener = s; udp_mu_unlock(&u->mu);
     gate_unlock(u);
     if (!s) return FIPSD_BIND_RETRY;
     (void)go_channel_try_send(u->bound, u);
@@ -25,11 +25,11 @@ static void unbind_instance(void *arg, uint64_t generation)
     udp_instance *u = arg;
     gate_lock(u);
     udp_socket *peers[FIPSD_UDP_MAX_PEERS], *listener;
-    nsync_mu_lock(&u->mu);
-    if (!u->listener || u->listener->generation != generation) { nsync_mu_unlock(&u->mu); gate_unlock(u); return; }
+    udp_mu_lock(&u->mu);
+    if (!u->listener || u->listener->generation != generation) { udp_mu_unlock(&u->mu); gate_unlock(u); return; }
     listener = u->listener; u->listener = NULL;
     memcpy(peers, u->peers, sizeof peers); memset(u->peers, 0, sizeof u->peers); memset(u->routes, 0, sizeof u->routes);
-    nsync_mu_unlock(&u->mu);
+    udp_mu_unlock(&u->mu);
     for (size_t i = 0; i < FIPSD_UDP_MAX_PEERS; ++i) if (peers[i]) {
         fipsd_transport_stats_pool(&u->shared.stats, peers[i]->direction, false);
         fipsd_udp_socket_close(peers[i]);
@@ -59,7 +59,7 @@ static int send_frame(fipsd_transport *t, const fips_transport_addr *to, const u
     fips_transport_addr numeric;
     if (!fipsd_udp_endpoint_addr(&target, &numeric)) return -1;
     fipsd_udp_packet_info source = {0};
-    nsync_mu_lock(&u->mu);
+    udp_mu_lock(&u->mu);
     udp_socket *s = u->listener;
     for (size_t i = 0; i < u->config.peer_capacity; ++i)
         if (u->peers[i] && !go_channel_is_closed(u->peers[i]->done) &&
@@ -67,7 +67,7 @@ static int send_frame(fipsd_transport *t, const fips_transport_addr *to, const u
     for (size_t i = 0; i < FIPSD_UDP_MAX_PEERS; ++i)
         if (u->routes[i].used && fips_transport_addr_equal(&u->routes[i].peer, &numeric)) { source = u->routes[i].info; break; }
     if (s) ++s->users;
-    nsync_mu_unlock(&u->mu);
+    udp_mu_unlock(&u->mu);
     if (!s) return -1;
     struct iovec iov = {.iov_base = (void *)bytes, .iov_len = len};
     union { struct cmsghdr align; uint8_t data[128]; } control;
@@ -102,19 +102,19 @@ static void authenticated(fipsd_transport *t, const fips_transport_addr *address
     if (!fipsd_udp_resolve(&u->dns, address, u->bind_to.address.ss_family, &remote)) return;
     fips_transport_addr numeric;
     if (!fipsd_udp_endpoint_addr(&remote, &numeric)) return;
-    nsync_mu_lock(&u->mu);
+    udp_mu_lock(&u->mu);
     for (size_t i = 0; i < u->config.peer_capacity; ++i)
         if (u->peers[i] && fips_transport_addr_equal(&u->peers[i]->peer, &numeric)) {
-            nsync_mu_unlock(&u->mu); return;
+            udp_mu_unlock(&u->mu); return;
         }
-    nsync_mu_unlock(&u->mu);
+    udp_mu_unlock(&u->mu);
     gate_lock(u);
-    nsync_mu_lock(&u->mu);
+    udp_mu_lock(&u->mu);
     udp_socket *listener = u->listener;
     size_t slot = u->config.peer_capacity;
     for (size_t i = 0; i < u->config.peer_capacity; ++i) {
         if (u->peers[i] && fips_transport_addr_equal(&u->peers[i]->peer, &numeric)) {
-            nsync_mu_unlock(&u->mu); gate_unlock(u); return;
+            udp_mu_unlock(&u->mu); gate_unlock(u); return;
         }
         if (!u->peers[i]) slot = i;
     }
@@ -127,11 +127,11 @@ static void authenticated(fipsd_transport *t, const fips_transport_addr *address
         else ((struct sockaddr_in6 *)&local.address)->sin6_addr = u->routes[i].info.destination.v6;
         break;
     }
-    nsync_mu_unlock(&u->mu);
+    udp_mu_unlock(&u->mu);
     if (listener && slot < u->config.peer_capacity && !go_context_is_canceled(u->root)) {
         udp_socket *s = fipsd_udp_socket_open(u, &local, &remote, listener->generation, direction);
         if (s) {
-            nsync_mu_lock(&u->mu); u->peers[slot] = s; nsync_mu_unlock(&u->mu);
+            udp_mu_lock(&u->mu); u->peers[slot] = s; udp_mu_unlock(&u->mu);
             fipsd_transport_stats_pool(&u->shared.stats, direction, true);
             FIPSD_PERF_EVENT(CONNECTED_UDP_INSTALLED, 1);
         } else {
@@ -150,18 +150,36 @@ static void close_connection(fipsd_transport *t, const fips_transport_addr *addr
     if (!fipsd_udp_endpoint_addr(&remote, &numeric)) return;
     gate_lock(u);
     udp_socket *s = NULL;
-    nsync_mu_lock(&u->mu);
+    udp_mu_lock(&u->mu);
     for (size_t i = 0; i < u->config.peer_capacity; ++i)
         if (u->peers[i] && fips_transport_addr_equal(&u->peers[i]->peer, &numeric)) { s = u->peers[i]; u->peers[i] = NULL; break; }
-    nsync_mu_unlock(&u->mu);
+    udp_mu_unlock(&u->mu);
     if (s) { fipsd_transport_stats_pool(&u->shared.stats, s->direction, false); fipsd_udp_socket_close(s); }
     gate_unlock(u);
 }
 static bool local_addr(const fipsd_transport *t, fips_transport_addr *out)
 { return fipsd_udp_address((fipsd_transport *)t, out); }
+/* send_frame is safe on any thread for a numeric peer: its state is under
+ * u->mu, socket leases hold descriptors open, and the zero-timeout sendmsg
+ * never parks. A hostname may need a blocking lookup: dispatcher only. On
+ * Windows the fiber socket layer issues overlapped I/O: dispatcher only, as
+ * upstream spawns no encrypt workers there. */
+static bool send_concurrent(const fipsd_transport *t, const fips_transport_addr *to)
+{
+    (void)t;
+#if defined(_WIN32)
+    (void)to; return false;
+#else
+    char text[257]; fipsd_udp_endpoint numeric;
+    if (!to || !to->len || to->len >= sizeof text || memchr(to->bytes, 0, to->len)) return false;
+    memcpy(text, to->bytes, to->len); text[to->len] = 0;
+    return fipsd_udp_endpoint_numeric(text, &numeric);
+#endif
+}
 static const fipsd_transport_ops ops = {.local_addr = local_addr, .start_async = start_async, .stop = stop,
     .state = fipsd_transport_shared_state, .mtu = mtu, .send = send_frame, .discover = discover,
-    .close_connection = close_connection, .network_changed = network_changed, .authenticated = authenticated};
+    .close_connection = close_connection, .network_changed = network_changed, .authenticated = authenticated,
+    .send_concurrent = send_concurrent};
 void fipsd_udp_config_default(fipsd_udp_config *c)
 {
     *c = (fipsd_udp_config){.bind_addr = "0.0.0.0:2121", .mtu = 1357, .recv_buf_size = 2097152,
@@ -200,9 +218,9 @@ void fipsd_udp_destroy(fipsd_transport *t)
 }
 bool fipsd_udp_address(fipsd_transport *t, fips_transport_addr *out)
 {
-    udp_instance *u = t->user; nsync_mu_lock(&u->mu);
+    udp_instance *u = t->user; udp_mu_lock(&u->mu);
     bool ok = u->listener && fipsd_udp_endpoint_addr(&u->listener->local, out);
-    nsync_mu_unlock(&u->mu); return ok;
+    udp_mu_unlock(&u->mu); return ok;
 }
 GoChannel *fipsd_udp_bound(fipsd_transport *t) { return ((udp_instance *)t->user)->bound; }
 int fipsd_udp_watch_bound(fipsd_transport *t, GoChannel *ch)
@@ -214,9 +232,9 @@ int fipsd_udp_watch_bound(fipsd_transport *t, GoChannel *ch)
 }
 size_t fipsd_udp_connected_count(fipsd_transport *t)
 {
-    udp_instance *u = t->user; size_t n = 0; nsync_mu_lock(&u->mu);
+    udp_instance *u = t->user; size_t n = 0; udp_mu_lock(&u->mu);
     for (size_t i = 0; i < u->config.peer_capacity; ++i) if (u->peers[i]) ++n;
-    nsync_mu_unlock(&u->mu); return n;
+    udp_mu_unlock(&u->mu); return n;
 }
 bool fipsd_udp_register_classifier(fipsd_transport *t, const char *name, fipsd_udp_classifier fn, void *user)
 {

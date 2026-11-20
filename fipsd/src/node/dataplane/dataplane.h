@@ -7,6 +7,7 @@
 #include <fips/proto/routing/mod.h>
 #include <fips/cache/coord_cache.h>
 #include "swap.h"
+#include <pthread.h>
 
 #define FIPSD_DP_WIRE 2048u
 #define FIPSD_DP_LANES 64u
@@ -125,6 +126,17 @@ typedef enum fipsd_dp_reject {
     FIPSD_DP_DECODE, FIPSD_DP_TTL, FIPSD_DP_NO_ROUTE, FIPSD_DP_MTU,
     FIPSD_DP_SEND, FIPSD_DP_UNKNOWN_INDEX, FIPSD_DP_AUTH, FIPSD_DP_REPLAY
 } fipsd_dp_reject;
+/* Worker send gate, one per peer slot (nostrc-u19cz.3). A worker sends a
+ * sealed frame only while holding mu and seeing the generation captured at
+ * submit. The dispatcher bumps it, under mu, before any change that would make
+ * a completion send differently or not at all: an active pair switch, slot
+ * release, or the link's epoch set changing. So no worker sends on a pair or
+ * epoch after the dispatcher has moved on; a frame it holds then comes back
+ * unsent and the completion resolves it as before (9keoz.12). */
+typedef struct fipsd_dp_gate {
+    pthread_mutex_t mu;
+    _Atomic uint64_t generation; /* written under mu */
+} fipsd_dp_gate;
 typedef struct fipsd_dp_packet {
     fipsd_crypto_job job;
     _Atomic bool busy;
@@ -133,6 +145,13 @@ typedef struct fipsd_dp_packet {
     fips_node_addr peer, carrier;
     fips_transport_id transport;
     fips_transport_addr endpoint;
+    /* Worker send: transport and gate captured at submit; the worker sets
+     * worker_sent (and send_rc) only if it sent. Read at completion. */
+    struct fipsd_transport *via;
+    fipsd_dp_gate *gate;
+    uint64_t gate_generation;
+    int send_rc;
+    bool worker_sent;
     bool session, k, ce, prompt, farewell, path_message, restart; /* restart: tag is the candidate link id */
     uint64_t tag;
     uint32_t timestamp;
@@ -154,6 +173,8 @@ typedef struct fipsd_dataplane {
     size_t clamp_capacity;
     fipsd_dp_stats stats;
     struct fipsd_node_handlers *owner; /* for change-only path MTU notices */
+    fipsd_dp_gate *gates; /* per peer_rec slot */
+    size_t gate_count;
 } fipsd_dataplane;
 
 bool fipsd_dp_init(struct fipsd_node_handlers *);
@@ -186,6 +207,11 @@ void fipsd_dp_link_deliver(struct fipsd_node_handlers *, struct peer_rec *, fips
 /* Dispatcher switch/reseed: discard the old path clamp, seed from the active
  * pair, publish the endpoint, and only lower sessions routed through this peer. */
 bool fipsd_dp_peer_rebind(struct fipsd_node_handlers *, struct peer_rec *);
+/* Bump the slot's worker send gate (fipsd_dp_gate): call before changing the
+ * link's send pair or epoch set, and on releasing the slot. */
+void fipsd_dp_link_moved(struct fipsd_node_handlers *, const struct peer_rec *);
+/* The job's after-step for a worker-sent link frame (exposed for tests). */
+void fipsd_dp_worker_send(fipsd_crypto_job *);
 void fipsd_dp_tighten_via(struct fipsd_node_handlers *, const fips_node_addr *, uint16_t);
 bool fipsd_dp_route(struct fipsd_node_handlers *, const fips_session_datagram *, const fips_node_addr *, bool);
 fips_status fipsd_dp_forward(const fipsd_dp_snapshot *, fips_router *, const fips_session_datagram *,

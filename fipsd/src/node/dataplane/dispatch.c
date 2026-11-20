@@ -20,6 +20,22 @@ static bool generation_matches(const fips_rekey *m, const fipsd_dp_packet *p)
     }
     return false;
 }
+/* A link frame left on the wire: count it, and while its epoch still matches,
+ * account it to the link (statistics, MMP, the machine's DataSent). */
+static void link_sent(handlers *h, peer_rec *rec, fips_rekey *m, const fipsd_dp_packet *p,
+    const fipsd_crypto_job *j, size_t len)
+{
+    ++h->counters.frames_sent;
+    if (!rec || !m || !generation_matches(m, p)) return;
+    ++rec->frames_out; rec->bytes_out += len;
+    fips_link_stats_record_sent(&fipsd_active_peer_data(rec->peer)->link_stats, len);
+    hs_mmp_frame_sent(h, rec, j->counter, p->timestamp, len);
+    if (!p->prompt) {
+        link_exec_result r = {0};
+        (void)hs_link_step(h, rec, (fips_rekey_input){.kind = FIPS_REKEY_IN_DataSent}, NULL, NULL, 0, &r);
+        if (r.teardown) hs_remove_peer(h, rec, FIPS_REKEY_CLOSE_Admin, false, FIPS_FMP_ResourceExhaustion);
+    }
+}
 bool fipsd_dp_result(handlers *h, const fipsd_crypto_job *j)
 {
     FIPSD_PERF_BEGIN(perf_start);
@@ -30,6 +46,13 @@ bool fipsd_dp_result(handlers *h, const fipsd_crypto_job *j)
     fips_session_entry *entry = p->session ? fips_session_table_by_peer(&h->sessions, p->peer) : NULL;
     fips_rekey *m = p->session ? (entry ? &entry->machine : NULL) :
         (rec ? fipsd_active_peer_link_machine(rec->peer) : NULL);
+    if (p->worker_sent) {
+        /* Sent from the worker on its submit-time pair under an unmoved gate
+         * (fipsd_dp_gate): the send the completion below would have made. */
+        if (p->send_rc == 0) link_sent(h, rec, h->running ? m : NULL, p, j, p->body + j->output_size);
+        else { fipsd_dp_reject_frame(h, FIPSD_DP_SEND); ++h->counters.send_failed; }
+        FIPSD_PERF_RETURN(perf_start, LINK_DISPATCH, true);
+    }
     if (!h->running || (!p->farewell && (!m || !generation_matches(m, p)))) {
         ++h->dataplane->stats.stale; FIPSD_PERF_RETURN(perf_start, LINK_DISPATCH, true);
     }
@@ -76,19 +99,7 @@ bool fipsd_dp_result(handlers *h, const fipsd_crypto_job *j)
             }
             ok = t && fipsd_transport_send_lane(t, p->path_message ? FIPSD_TRANSPORT_LANE_CONTROL :
                 FIPSD_TRANSPORT_LANE_DATA, &p->endpoint, p->output, len) == 0;
-            if (ok) {
-                ++h->counters.frames_sent;
-                if (rec && m && generation_matches(m, p)) {
-                    ++rec->frames_out; rec->bytes_out += len;
-                    fips_link_stats_record_sent(&fipsd_active_peer_data(rec->peer)->link_stats, len);
-                    hs_mmp_frame_sent(h, rec, j->counter, p->timestamp, len);
-                    if (!p->prompt) {
-                        link_exec_result r = {0};
-                        (void)hs_link_step(h, rec, (fips_rekey_input){.kind = FIPS_REKEY_IN_DataSent}, NULL, NULL, 0, &r);
-                        if (r.teardown) hs_remove_peer(h, rec, FIPS_REKEY_CLOSE_Admin, false, FIPS_FMP_ResourceExhaustion);
-                    }
-                }
-            }
+            if (ok) link_sent(h, rec, m, p, j, len);
         }
         if (!ok) { fipsd_dp_reject_frame(h, FIPSD_DP_SEND); ++h->counters.send_failed; }
         FIPSD_PERF_RETURN(perf_start, LINK_DISPATCH, true);

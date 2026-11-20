@@ -72,6 +72,7 @@ static void run_job(worker *w, fipsd_crypto_job *j)
     else fipsd_decrypt_worker_execute(j);
     if (j->result == FIPS_NOISE_OK && j->worker_counts) atomic_fetch_add(&j->worker_counts[w->index], 1);
     fips_cipher_state_destroy(&j->key);
+    if (j->after) j->after(j);
 }
 static void execute(worker *w, fipsd_crypto_job *j)
 {

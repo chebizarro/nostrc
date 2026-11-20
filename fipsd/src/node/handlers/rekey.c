@@ -167,6 +167,11 @@ static void effect(void *c, const fips_rekey_output *o, const uint8_t *plaintext
         o->kind == FIPS_REKEY_OUT_Reverted || o->kind == FIPS_REKEY_OUT_PeerRestarted ||
         o->kind == FIPS_REKEY_OUT_Teardown)
         h->dataplane->needs_publish = true;
+    /* The link's epoch set moves: no worker may send under the old view. */
+    if (x->rec && (o->kind == FIPS_REKEY_OUT_Installed || o->kind == FIPS_REKEY_OUT_Retired ||
+            o->kind == FIPS_REKEY_OUT_Reverted || o->kind == FIPS_REKEY_OUT_PeerRestarted ||
+            o->kind == FIPS_REKEY_OUT_Teardown))
+        fipsd_dp_link_moved(h, x->rec);
     switch (o->kind) {
     case FIPS_REKEY_OUT_Deliver:
         if (x->result) { x->result->delivered = true; x->result->begin = o->begin; x->result->end = o->end; }

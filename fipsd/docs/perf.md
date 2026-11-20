@@ -77,6 +77,61 @@ the same way. It is not a send-side regression, and c-rust stays near 2-4%.
 The sender's dispatcher thread is saturated with `__sendmsg`; stage 2 moves
 that send.
 
+### Stage 2: data-lane sends from the worker
+
+The worker that sealed a data-lane link frame now sends it, as upstream's
+encrypt workers do. This applies to transports whose new
+`send_concurrent(to)` op allows it: UDP to a numeric endpoint, POSIX only.
+On Windows the fiber socket layer uses overlapped I/O, and upstream spawns no
+encrypt workers there. The UDP instance and DNS-cache nsync locks are
+published to TSan (`udp/lock.h`), as libgo's `NLOCK` does. TCP, Tor, Nym,
+Ethernet, BLE and the loopback test transport keep the completion-time send,
+as do farewells (which outlive the table) and addressed, control-lane path
+messages.
+
+- Submit resolves the active pair, as the completion would, and checks that
+  pair's MTU (the completion's own check). Counters stay reserved by the
+  dispatcher, and all accounting stays on the completion: `frames_sent`, link
+  statistics, MMP `record_sent`, the machine's `DataSent` and send-failure
+  counts. It runs only for frames the worker reports sent.
+- 9keoz.12 guard. Each peer slot has a gate (mutex + generation). The worker
+  sends only while holding it at the generation captured at submit. The
+  dispatcher bumps it, under the mutex, before a path switch closes the old
+  pair, on rebind, when the link's epoch set changes
+  (installed/retired/reverted/restarted/teardown), when removal starts, and on
+  slot release. A bump waits for an in-progress send. After it, a held frame
+  comes back unsent, and the completion resolves it as before: re-resolve,
+  MTU, stale check, dispatcher send.
+
+| Stage 2, back to back | Baseline `5b3c987c8` | Stage 2 |
+|---|---:|---:|
+| c-c Mbit/s, run 1 (sampled) / run 2 | 509.1 / 709.8 | 271.9 / 613.4 |
+| c-c loss %, run 1 / run 2 | 1.3 / 0.1 | 56.7 / 47.4 |
+| c-c one-way p50 fwd/rev us, run 2 | 78 / 84 | 62 / 63 |
+| c-rust Mbit/s, run 1 (sampled) / run 2 | 712.7 / 676.3 | 878.6 / 1118.9 |
+| c-rust loss %, run 1 / run 2 | 1.1 / 2.0 | 20.8 / 6.1 |
+| daemon CPU % one core, c-c run 2, tx / rx | 102.3 / 113.8 | 247.9 / 183.5 |
+| CPU us/datagram at 100 Mbit/s, c-c tx / rx | 54.4/53.8, 70.1/66.2 | 39.2/40.8, 43.8/45.3 |
+| CPU us/datagram at 100 Mbit/s, c-rust C sender | 66.5, 55.7 | 40.0, 39.6 |
+
+Thread split (`sample`, c-c run 1):
+
+- Sender: `fipsd-crypto-0`, the link worker, 1601/1722 active (`__sendmsg` 942,
+  ChaCha20 362, Poly1305 94, `__fcntl` 53). Dispatcher 1356/1722 with no
+  `__sendmsg`. `fipsd-crypto-1` (FSP seals) 517.
+- Receiver: dispatcher 1141/1579, crypto 403 + 391.
+
+The single-flow sender is now bound by its link worker. C-to-Rust delivers
+1.1 Gbit/s unpaced; C-to-C collapses into receiver overload. The receiver drops
+work it has already partly done: an arrival needs a second slab and job for its
+FSP open, and delivery bursts overflow the native flow queue (stage 3).
+Paced, the picture differs. A direct 400 Mbit/s c-c probe lost 111 of 125000
+datagrams on stage 2 (109 `native.drop_flow_queue_full` at the receiver),
+against 4128 on the baseline (3281 local send refusals, 756
+`drop_flow_queue_full`). Single sustainable-rate searches (<1% loss) were
+dominated by such edge losses and by host load: unchanged Rust-to-Rust ranged
+197-687 Mbit/s between sessions. They are not reported as a stage metric.
+
 ## Dataplane correction: nostrc-pxwaj
 
 Measured **2026-11-16** on the same Apple M4 Max workstation as the original

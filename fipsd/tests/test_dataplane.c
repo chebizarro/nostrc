@@ -291,6 +291,41 @@ static void exact_wipe(void)
     }
     go_refptr_release(&d.current); free(d.packets);
 }
+static size_t gate_sends;
+static int counting_send(fipsd_transport *t, const fips_transport_addr *to, const uint8_t *b, size_t n)
+{ (void)t; (void)to; (void)b; assert(n == 12 + 40); ++gate_sends; return 0; }
+/* nostrc-u19cz.3 worker send (9keoz.12 guard): a sealed frame leaves from the
+ * executing thread only at the gate generation captured at submit; after the
+ * dispatcher moves the link it comes back unsent for the completion. */
+static void worker_send_gate(void)
+{
+    static const fipsd_transport_ops ops = {.send = counting_send};
+    fipsd_transport t = {.ops = &ops};
+    handlers h = {0}; peer_rec recs[2] = {{0}};
+    fipsd_dataplane d = {.packet_count = 2, .gate_count = 2}; h.dataplane = &d; h.recs = recs;
+    d.packets = calloc(2, sizeof *d.packets); d.gates = calloc(2, sizeof *d.gates); assert(d.packets && d.gates);
+    for (size_t i = 0; i < 2; ++i) assert(!pthread_mutex_init(&d.gates[i].mu, NULL));
+    d.current = make_go_refptr(calloc(1, sizeof(fipsd_dp_snapshot)), free); assert(d.current.ptr);
+    for (int moved = 0; moved < 2; ++moved) {
+        fipsd_dp_packet *p = fipsd_dp_packet_take(&d); assert(p && !p->worker_sent && !p->via);
+        p->via = &t; p->gate = &d.gates[1]; p->body = 12;
+        p->gate_generation = atomic_load(&p->gate->generation);
+        p->job.result = FIPS_NOISE_OK; p->job.output_size = 40;
+        if (moved) fipsd_dp_link_moved(&h, &recs[1]);
+        size_t before = gate_sends;
+        fipsd_dp_worker_send(&p->job);
+        assert(p->worker_sent == !moved && gate_sends == before + !moved);
+        fipsd_crypto_job_destroy(&p->job);
+    }
+    fipsd_dp_link_moved(&h, &recs[0]); /* other slots are independent */
+    assert(atomic_load(&d.gates[0].generation) == 1 && atomic_load(&d.gates[1].generation) == 1);
+    fipsd_dp_packet *p = fipsd_dp_packet_take(&d); assert(p);
+    p->via = &t; p->gate = &d.gates[1]; p->gate_generation = 1; p->job.result = FIPS_NOISE_EncryptionFailed;
+    fipsd_dp_worker_send(&p->job); assert(!p->worker_sent); /* nothing sealed, nothing sent */
+    fipsd_crypto_job_destroy(&p->job);
+    for (size_t i = 0; i < 2; ++i) pthread_mutex_destroy(&d.gates[i].mu);
+    go_refptr_release(&d.current); free(d.packets); free(d.gates);
+}
 typedef struct blocked_send { handlers *h; GoChannel *cancel, *started; int result; } blocked_send;
 static void *send_until_cancelled(void *arg)
 {
@@ -360,7 +395,7 @@ static void coalesced_snapshots(void)
 }
 int main(void)
 {
-    concurrent_recycle(); cancelled_mailbox(); exact_wipe();
+    concurrent_recycle(); cancelled_mailbox(); exact_wipe(); worker_send_gate();
     forwarding(); errors(); clamps(); backpressure_and_counters(); authenticate_then_mark(); saturated_trial_retry(); delayed_transport_consumer(); coalesced_snapshots();
     puts("dataplane: forwarding/local/TTL/CE, reject limiter, clamp release, 4-worker unique reserved counters, bounded refusal: ok");
     return 0;
