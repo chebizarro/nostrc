@@ -1733,7 +1733,25 @@ void *simple_pool_thread_func(void *arg) {
     uint64_t wait_ms = POOL_WAIT_NO_DEADLINE_MS;
 
     while (atomic_load_explicit(&pool->running, memory_order_acquire)) {
-        /* 1. Snapshot subscriptions under lock */
+        /* Consume the coalesced wake before reconcile and the snapshot.
+         * A later wake remains for the wait below; new subscriptions cannot
+         * be stranded behind a snapshot taken before the worker slept. */
+        if (pool->wake_ch) {
+            void *dummy = NULL;
+            (void)go_channel_try_receive(pool->wake_ch, &dummy);
+        }
+
+        /* 2. nostrc-el92 / nostrc-7i6w: reissue held CLOSED REQs that are due
+         * and fire the shared template on relays that (re)connected. */
+        wait_ms = POOL_WAIT_NO_DEADLINE_MS;
+        if (atomic_load_explicit(&pool->running, memory_order_acquire))
+            wait_ms = pool_reconcile_subs(pool);
+
+        /* 3. Snapshot subscriptions under lock, after reconcile, so REQs it
+         * just fired are drained in this pass. pool_fire_locked sends a REQ
+         * and records it under the same pool_mutex, so a wake caused by its
+         * first frame cannot be consumed above without the snapshot seeing
+         * the subscription. */
         pthread_mutex_lock(&pool->pool_mutex);
         size_t local_count = pool->subs_count;
         NostrSubscription **local_subs = NULL;
@@ -1744,26 +1762,8 @@ void *simple_pool_thread_func(void *arg) {
         }
         pthread_mutex_unlock(&pool->pool_mutex);
 
-        /* Producers signal this retained wake channel after publishing an EVENT
-         * or protocol fence. Never let select consume a raw EVENT ahead of EOSE. */
-        if (pool->wake_ch) {
-            GoSelectCase wake_case = { .op = GO_SELECT_RECEIVE, .chan = pool->wake_ch };
-            go_select_timeout(&wake_case, 1, wait_ms);
-        }
-
-        /* 5. Drain wake channel (consume any pending wake signals) */
-        if (pool->wake_ch) {
-            void *dummy = NULL;
-            while (go_channel_try_receive(pool->wake_ch, &dummy) == 0) { /* drain */ }
-        }
-
-        /* 5.5 nostrc-el92: re-fire the shared subscription on relays that
-         * (re)connected since the last pass */
-        wait_ms = POOL_WAIT_NO_DEADLINE_MS;
-        if (atomic_load_explicit(&pool->running, memory_order_acquire))
-            wait_ms = pool_reconcile_subs(pool);
-
-        /* Bounded ordered drain of every snapshotted subscription. */
+        /* 4. Bounded ordered drain of every snapshotted subscription. A drain
+         * that hits its budget re-signals the wake channel. */
         PoolIncomingEvent *batch = NULL;
         size_t batch_len = 0, batch_cap = 0;
 
@@ -1772,11 +1772,20 @@ void *simple_pool_thread_func(void *arg) {
                            &batch, &batch_len, &batch_cap);
         }
 
-        /* 7. Deliver batch to middleware outside of any locks */
+        /* 5. Deliver batch to middleware outside of any locks */
         pool_deliver_batch(pool, batch, &batch_len);
 
         free(batch);
         free(local_subs);
+
+        /* 6. Sleep until a producer, lifecycle change or relay listener
+         * signals, or the next CLOSED backoff deadline. Never let select
+         * consume a raw EVENT ahead of EOSE: payloads stay in their own
+         * channels and only this retained wake channel is selected. */
+        if (pool->wake_ch && atomic_load_explicit(&pool->running, memory_order_acquire)) {
+            GoSelectCase wake_case = { .op = GO_SELECT_RECEIVE, .chan = pool->wake_ch };
+            go_select_timeout(&wake_case, 1, wait_ms);
+        }
     }
 
     pool_drain_stopped(pool);

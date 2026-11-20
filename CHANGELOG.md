@@ -74,7 +74,14 @@ All notable changes to this project will be documented in this file.
   now restores the default ladder. `nostr_event_copy()` no longer duplicates
   each tag's key. `gnostr_relay_get_authenticated()` turns TRUE on the relay's
   OK, not on send; `gnostr_relay_set_auth_handler()`/`gnostr_pool_set_auth_handler()`
-  and `nostr_relay_auth()`/`_wait()` are deprecated.
+  and `nostr_relay_auth()`/`_wait()` are deprecated. Superseded AUTH attempts
+  are fenced at queue admission and connection leasing; signer templates use
+  per-attempt nonces so same-second retries cannot consume an old OK. The pool
+  snapshots subscriptions after waking and reconciling. Hand-written AUTH
+  correlation accepts insignificant JSON whitespace, and all registered pools
+  receive result wakes (no eight-listener limit). nostr-gobject discards stale
+  queued AUTH results; NIP-11 auth-required publishes return `AUTH_REQUIRED`
+  until AUTH is accepted, rather than sending EVENT ahead of signing/OK.
 - libporthome 0.7.1: the PCS v1 manifest decoder now reports
   `PORTHOME_ERR_EPOCH` for nonzero chunk key IDs and PCS v2 dir-nodes,
   including through sealed decode, with NULL output. The zero-only rule

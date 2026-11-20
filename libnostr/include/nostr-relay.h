@@ -804,9 +804,13 @@ NOSTR_API bool nostr_relay_auth_start(NostrRelay *relay, Error **err);
  * "challenge" tag equal to the current challenge, created_at within 10
  * minutes), refuses a stale @auth_generation, then queues
  * ["AUTH",event] and tracks its OK exactly like a signer's attempt (state,
- * result callback, pool recovery). Cancels a registered signer's attempt in
- * flight. Never waits for the socket write or the OK; may wait briefly for
- * room in the relay's write queue.
+ * result callback, pool recovery). Caller-signed retries must use distinct
+ * event ids if late OKs from superseded attempts need to be distinguished.
+ * Cancels a registered signer's attempt in
+ * flight. Never waits for the socket write, the OK or queue space: a full
+ * write queue fails the attempt. Queue admission and the writer's connection
+ * lease both reject superseded attempts. Writes already admitted to a
+ * connection cannot be recalled.
  */
 NOSTR_API bool nostr_relay_send_auth(NostrRelay *relay, const NostrEvent *signed_event,
                                     uint64_t auth_generation, Error **err);
@@ -815,7 +819,9 @@ NOSTR_API bool nostr_relay_send_auth(NostrRelay *relay, const NostrEvent *signed
 NOSTR_API NostrRelayAuthRequest *nostr_relay_auth_request_ref(NostrRelayAuthRequest *request);
 NOSTR_API void nostr_relay_auth_request_unref(NostrRelayAuthRequest *request);
 /* The unsigned template: kind 22242, created_at now, empty content, tags
- * ["relay",url] and ["challenge",challenge], pubkey only if expected. */
+ * ["relay",url], ["challenge",challenge] and a unique per-attempt ["nonce",...],
+ * pubkey only if expected. Preserve the nonce when signing: it prevents a
+ * same-second retry from reusing the superseded attempt's event id. */
 NOSTR_API const NostrEvent *nostr_relay_auth_request_get_event(const NostrRelayAuthRequest *request);
 NOSTR_API const char *nostr_relay_auth_request_get_relay_url(const NostrRelayAuthRequest *request);
 NOSTR_API const char *nostr_relay_auth_request_get_challenge(const NostrRelayAuthRequest *request);
@@ -856,7 +862,7 @@ NOSTR_API bool nostr_relay_auth_request_complete_json(NostrRelayAuthRequest *req
  * @challenge: the challenge answered
  * @identity_generation: of the signer that signed (0 for nostr_relay_send_auth())
  * @frame: the OK frame for ACCEPTED/REJECTED; for FAILED the generations in
- *   force and sequence 0
+ *   force when failure was committed (not callback delivery) and sequence 0
  */
 typedef struct NostrRelayAuthResult {
     NostrRelayAuthState state;

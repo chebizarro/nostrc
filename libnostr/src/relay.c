@@ -387,19 +387,27 @@ void nostr_relay_remove_listener(NostrRelay *relay, void *handle) {
 
 void nostr_relay_notify_listeners(NostrRelay *relay, NostrRelayListenEvent event) {
     if (!relay || !relay->priv) return;
-    struct NostrRelayCallbackSlot *slots[8];
-    NostrRelayListenFunc fns[8];
+    struct ListenerCall { struct NostrRelayCallbackSlot *slot; NostrRelayListenFunc fn; };
     size_t n = 0;
     nsync_mu_lock(&relay->priv->mutex);
-    for (struct NostrRelayListener *l = relay->priv->listeners; l && n < 8; l = l->next) {
-        slots[n] = relay_callback_slot_ref_locked(l->slot);
-        fns[n++] = l->fn;
+    for (struct NostrRelayListener *l = relay->priv->listeners; l; l = l->next) n++;
+    struct ListenerCall *calls = n ? calloc(n, sizeof(*calls)) : NULL;
+    if (n && !calls) {
+        nsync_mu_unlock(&relay->priv->mutex);
+        fprintf(stderr, "[relay] could not snapshot listeners\n");
+        return;
+    }
+    size_t i = 0;
+    for (struct NostrRelayListener *l = relay->priv->listeners; l; l = l->next) {
+        calls[i].slot = relay_callback_slot_ref_locked(l->slot);
+        calls[i++].fn = l->fn;
     }
     nsync_mu_unlock(&relay->priv->mutex);
-    for (size_t i = 0; i < n; i++) {
-        fns[i](relay, event, slots[i]->user_data);
-        relay_callback_slot_unref(slots[i]);
+    for (i = 0; i < n; i++) {
+        calls[i].fn(relay, event, calls[i].slot->user_data);
+        relay_callback_slot_unref(calls[i].slot);
     }
+    free(calls);
 }
 
 void nostr_relay_emit_auth_result(NostrRelay *relay, const NostrRelayAuthResult *result) {
@@ -1201,9 +1209,23 @@ static void *write_operations(void *arg) {
         Error *werr = NULL;
         /* nostrc-xfjg: leased, so a reconnect waits for this write before it
          * releases the connection's channels. */
-        NostrConnection *conn = relay_connection_lease(r);
+        NostrConnection *conn = NULL;
+        if (req->auth_attempt) {
+            /* Validate and lease atomically: a queued AUTH of an old
+             * attempt must never be handed to a replacement connection. */
+            nsync_mu_lock(&r->priv->mutex);
+            if (!r->priv->closing && r->priv->auth_attempt == req->auth_attempt &&
+                r->priv->connection_generation == req->connection_generation &&
+                r->priv->auth_state == NOSTR_RELAY_AUTH_STATE_SENT) {
+                conn = r->connection;
+                if (conn) r->priv->conn_leases++;
+            }
+            nsync_mu_unlock(&r->priv->mutex);
+        } else {
+            conn = relay_connection_lease(r);
+        }
         if (!conn) {
-            werr = new_error(1, "no connection");
+            werr = new_error(1, "no current connection or AUTH attempt");
         } else {
             // Metrics: time WS write and count bytes
             nostr_metric_timer t = {0};
@@ -1878,11 +1900,48 @@ int nsync_go_context_is_canceled(const void *ctx) {
     return go_context_is_canceled((GoContext *)ctx);
 }
 
+GoChannel *nostr_relay_write_auth(NostrRelay *r, const char *frame,
+                                 uint64_t attempt, uint64_t connection_generation) {
+    GoChannel *answer = go_channel_create(1);
+    if (!answer) return NULL;
+    go_channel_ref(answer);
+    NostrRelayWriteRequest *req = calloc(1, sizeof(*req));
+    if (req) {
+        req->msg = strdup(frame);
+        req->answer = answer;
+        req->auth_attempt = attempt;
+        req->connection_generation = connection_generation;
+    }
+    bool queued = false;
+    if (req && req->msg) {
+        nsync_mu_lock(&r->priv->mutex);
+        if (!r->priv->closing && attempt && r->priv->auth_attempt == attempt &&
+            r->priv->connection_generation == connection_generation &&
+            r->priv->auth_state == NOSTR_RELAY_AUTH_STATE_SENT)
+            queued = go_channel_try_send(r->priv->write_queue, req) == 0;
+        nsync_mu_unlock(&r->priv->mutex);
+    }
+    if (!queued) {
+        if (req) { free(req->msg); free(req); }
+        write_error(answer);
+    }
+    return answer;
+}
+
 GoChannel *nostr_relay_write(NostrRelay *r, char *msg) {
     if (!r) return NULL;
-    /* nostrc-7i6w: callers that write their own AUTH frames keep the
-     * session (OK correlation, pool AUTH recovery) informed. */
-    if (msg && strncmp(msg, "[\"AUTH\",{", 9) == 0) nostr_relay_auth_observe_frame(r, msg);
+    /* Parse the envelope discriminator, not an exact serializer prefix:
+     * hand-written AUTH is allowed insignificant JSON whitespace. */
+    const char *p = msg;
+    while (p && (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')) p++;
+    if (p && *p++ == '[') {
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+        if (strncmp(p, "\"AUTH\"", 6) == 0) {
+            uint64_t connection_generation = 0;
+            uint64_t attempt = nostr_relay_auth_observe_frame(r, msg, &connection_generation);
+            if (attempt) return nostr_relay_write_auth(r, msg, attempt, connection_generation);
+        }
+    }
     GoChannel *chan = go_channel_create(1);
 
     // hq-e3ach: Bump refcount to 2 so both the caller and write_operations
@@ -1891,7 +1950,7 @@ GoChannel *nostr_relay_write(NostrRelay *r, char *msg) {
 
     // Copy message so caller can free its own buffer safely
     char *msg_copy = strdup(msg ? msg : "");
-    NostrRelayWriteRequest *req = (NostrRelayWriteRequest *)malloc(sizeof(NostrRelayWriteRequest));
+    NostrRelayWriteRequest *req = calloc(1, sizeof(NostrRelayWriteRequest));
     // Unqueued writes: write_error() answers and takes the writer's reference
     // (dropping it here first let the caller free the channel under it).
     if (!req || !msg_copy) {

@@ -108,6 +108,7 @@ struct _NostrRelayPrivate {
     uint64_t control_sequence;
     int auth_state;
     uint64_t auth_state_sequence;
+    uint64_t auth_attempt; /* invalidates signed/queued AUTH on supersession */
     char auth_event_id[65];
     char *auth_event_challenge; /* challenge auth_event_id answers */
     uint64_t auth_identity_generation;
@@ -121,6 +122,8 @@ struct _NostrRelayPrivate {
 typedef struct _NostrRelayWriteRequest {
     char *msg;
     GoChannel *answer;
+    uint64_t auth_attempt; /* 0 for ordinary writes */
+    uint64_t connection_generation;
 } NostrRelayWriteRequest;
 
 typedef void (*NostrRelayOkCallback)(bool, char *);
@@ -251,7 +254,14 @@ void nostr_relay_auth_on_refusal(struct NostrRelay *relay, const char *reason);
 /* nostr_relay_write() of an ["AUTH",{...}] frame written by the caller
  * itself (hand-rolled AUTH): if it answers the current challenge, the session
  * tracks it as SENT so its OK is correlated like nostr_relay_send_auth(). */
-void nostr_relay_auth_observe_frame(struct NostrRelay *relay, const char *frame);
+uint64_t nostr_relay_auth_observe_frame(struct NostrRelay *relay, const char *frame,
+                                       uint64_t *connection_generation);
+/* Generation-fenced, nonblocking AUTH queue admission; does not observe raw
+ * frames again. The writer validates the same token when leasing a connection. */
+GoChannel *nostr_relay_write_auth(struct NostrRelay *relay, const char *frame,
+                                 uint64_t attempt, uint64_t connection_generation);
+/* Private deterministic test barrier between signature admission and enqueue. */
+void nostr_relay_test_set_auth_write_hook(NostrRelayDialHook hook, void *data);
 /* First step of relay teardown: cancels the attempt, drops the signer. */
 void nostr_relay_auth_teardown(struct NostrRelay *relay);
 /* relay.c: the public AUTH result callback, then listeners. No locks held. */

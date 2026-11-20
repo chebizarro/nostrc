@@ -60,6 +60,7 @@ struct NostrRelayAuthRequest {
     char *challenge;
     uint64_t auth_generation;
     uint64_t connection_generation;
+    uint64_t attempt;
 };
 
 const char *nostr_relay_auth_state_name(NostrRelayAuthState state) {
@@ -161,6 +162,7 @@ NostrRelayAuthRequest *nostr_relay_auth_reset_locked(NostrRelay *r, bool new_con
                                                     uint64_t sequence) {
     NostrRelayAuthRequest *stolen = r->priv->auth_request;
     r->priv->auth_request = NULL;
+    r->priv->auth_attempt++;
     r->priv->auth_state = new_connection ? NOSTR_RELAY_AUTH_STATE_NONE
                                          : NOSTR_RELAY_AUTH_STATE_CHALLENGED;
     r->priv->auth_state_sequence = sequence;
@@ -259,21 +261,31 @@ static void emit_result(NostrRelay *r, NostrRelayAuthState state, const char *ev
     };
     if (frame) {
         result.frame = *frame;
-    } else {
-        nsync_mu_lock(&r->priv->mutex);
-        result.frame.connection_generation = r->priv->connection_generation;
-        result.frame.auth_generation = r->priv->auth_generation;
-        result.frame.auth_state = (NostrRelayAuthState)r->priv->auth_state;
-        nsync_mu_unlock(&r->priv->mutex);
     }
     nostr_relay_emit_auth_result(r, &result);
+}
+
+static NostrRelayDialHook auth_write_hook;
+static void *auth_write_hook_data;
+void nostr_relay_test_set_auth_write_hook(NostrRelayDialHook hook, void *data) {
+    auth_write_hook = hook;
+    auth_write_hook_data = data;
+}
+
+static NostrRelayFrameInfo local_frame_locked(NostrRelay *r) {
+    return (NostrRelayFrameInfo) {
+        .connection_generation = r->priv->connection_generation,
+        .auth_generation = r->priv->auth_generation,
+        .auth_state = (NostrRelayAuthState)r->priv->auth_state,
+    };
 }
 
 /* Writes ["AUTH",ev] for @id. A write the relay refuses at once (closing,
  * queue gone) ends the attempt FAILED; a later socket failure surfaces as a
  * disconnect, which resets the session. Never waits for the socket. */
 static bool transmit(NostrRelay *r, const NostrEvent *ev, const char *id,
-                     const char *challenge, uint64_t identity) {
+                     const char *challenge, uint64_t identity, uint64_t attempt,
+                     uint64_t connection_generation) {
     char *json = nostr_event_serialize_compact(ev);
     char *frame = NULL;
     if (json) {
@@ -284,7 +296,8 @@ static bool transmit(NostrRelay *r, const NostrEvent *ev, const char *id,
     free(json);
     const char *why = frame ? NULL : "could not serialize AUTH";
     if (frame) {
-        GoChannel *answer = nostr_relay_write(r, frame);
+        if (auth_write_hook) auth_write_hook(r, auth_write_hook_data);
+        GoChannel *answer = nostr_relay_write_auth(r, frame, attempt, connection_generation);
         free(frame);
         void *immediate = NULL;
         if (!answer) why = "AUTH write could not be queued";
@@ -296,14 +309,17 @@ static bool transmit(NostrRelay *r, const NostrEvent *ev, const char *id,
     }
     if (!why) return true;
     bool current = false;
+    NostrRelayFrameInfo failure_frame = {0};
     nsync_mu_lock(&r->priv->mutex);
-    if (r->priv->auth_state == NOSTR_RELAY_AUTH_STATE_SENT &&
+    if (r->priv->auth_attempt == attempt &&
+        r->priv->auth_state == NOSTR_RELAY_AUTH_STATE_SENT &&
         strcmp(r->priv->auth_event_id, id) == 0) {
         r->priv->auth_state = NOSTR_RELAY_AUTH_STATE_FAILED;
+        failure_frame = local_frame_locked(r);
         current = true;
     }
     nsync_mu_unlock(&r->priv->mutex);
-    if (current) emit_result(r, NOSTR_RELAY_AUTH_STATE_FAILED, id, why, challenge, identity, NULL);
+    if (current) emit_result(r, NOSTR_RELAY_AUTH_STATE_FAILED, id, why, challenge, identity, &failure_frame);
     return false;
 }
 
@@ -317,13 +333,15 @@ static bool admit_locked(NostrRelay *r, NostrRelayAuthRequest *request, uint64_t
                          NostrRelayAuthRequest **stolen, const char **why) {
     *why = NULL;
     if (r->refcount <= 0 || r->priv->closing) { *why = "relay closing"; return false; }
-    if (request && r->priv->auth_request != request) return false; /* stale: silent */
+    if (request && (r->priv->auth_request != request ||
+                    r->priv->auth_attempt != request->attempt)) return false; /* stale: silent */
     if (generation != r->priv->auth_generation || !r->priv->challenge ||
         strcmp(r->priv->challenge, challenge) != 0) {
         *why = "challenge is no longer current";
         return false;
     }
     if (!request) {
+        r->priv->auth_attempt++;
         *stolen = r->priv->auth_request;
         r->priv->auth_request = NULL;
     }
@@ -336,8 +354,11 @@ static bool admit_locked(NostrRelay *r, NostrRelayAuthRequest *request, uint64_t
     return true;
 }
 
-void nostr_relay_auth_observe_frame(NostrRelay *r, const char *frame) {
-    if (!r || !r->priv || !frame) return;
+uint64_t nostr_relay_auth_observe_frame(NostrRelay *r, const char *frame,
+                                       uint64_t *connection_generation) {
+    if (!r || !r->priv || !frame) return 0;
+    uint64_t attempt = 0;
+    NostrRelayAuthRequest *stolen = NULL;
     NostrEnvelope *env = nostr_envelope_parse(frame);
     NostrEvent *ev = env && env->type == NOSTR_ENVELOPE_AUTH ? ((NostrAuthEnvelope *)env)->event : NULL;
     nsync_mu_lock(&r->priv->mutex);
@@ -350,16 +371,27 @@ void nostr_relay_auth_observe_frame(NostrRelay *r, const char *frame) {
         bool known = r->priv->auth_state == NOSTR_RELAY_AUTH_STATE_SENT &&
                      strcmp(r->priv->auth_event_id, id) == 0; /* our own transmit */
         if (!known && !r->priv->closing && generation == r->priv->auth_generation) {
+            r->priv->auth_attempt++;
+            stolen = r->priv->auth_request;
+            r->priv->auth_request = NULL;
             r->priv->auth_state = NOSTR_RELAY_AUTH_STATE_SENT;
             memcpy(r->priv->auth_event_id, id, 65);
             free(r->priv->auth_event_challenge);
             r->priv->auth_event_challenge = strdup(challenge);
             r->priv->auth_identity_generation = 0;
         }
+        if (!r->priv->closing && generation == r->priv->auth_generation &&
+            r->priv->auth_state == NOSTR_RELAY_AUTH_STATE_SENT &&
+            strcmp(r->priv->auth_event_id, id) == 0) {
+            attempt = r->priv->auth_attempt;
+            *connection_generation = r->priv->connection_generation;
+        }
         nsync_mu_unlock(&r->priv->mutex);
     }
+    nostr_relay_auth_request_cancel_stolen(stolen);
     free(challenge);
     if (env) nostr_envelope_free(env);
+    return attempt;
 }
 
 bool nostr_relay_send_auth(NostrRelay *relay, const NostrEvent *signed_event,
@@ -377,13 +409,16 @@ bool nostr_relay_send_auth(NostrRelay *relay, const NostrEvent *signed_event,
                                 : "no AUTH challenge on this connection";
     NostrRelayAuthRequest *stolen = NULL;
     bool admitted = false;
+    uint64_t attempt = 0, connection_generation = 0;
     if (!why) {
         nsync_mu_lock(&relay->priv->mutex);
         admitted = admit_locked(relay, NULL, generation, challenge, id, 0, &stolen, &why);
+        attempt = relay->priv->auth_attempt;
+        connection_generation = relay->priv->connection_generation;
         nsync_mu_unlock(&relay->priv->mutex);
     }
     nostr_relay_auth_request_cancel_stolen(stolen);
-    bool sent = admitted && transmit(relay, signed_event, id, challenge, 0);
+    bool sent = admitted && transmit(relay, signed_event, id, challenge, 0, attempt, connection_generation);
     if (admitted) {
         if (!sent && !why) why = "AUTH write failed";
         nostr_relay_unref(relay);
@@ -412,6 +447,14 @@ bool nostr_relay_auth_request_complete(NostrRelayAuthRequest *request,
         ? auth_event_problem(signed_event, request->url, request->challenge, expected, id)
         : (error_message && *error_message ? error_message : "signer refused");
     bool admitted = false, failed = false;
+    NostrRelayFrameInfo failure_frame = {0};
+    if (!why) {
+        size_t count = 0, template_count = 0;
+        const char *nonce = tag_value(signed_event, "nonce", &count);
+        const char *expected_nonce = tag_value(request->template, "nonce", &template_count);
+        if (count != 1 || !nonce || !expected_nonce || strcmp(nonce, expected_nonce))
+            why = "signer did not preserve the attempt nonce";
+    }
     nsync_mu_lock(&r->priv->mutex);
     if (!why) {
         NostrRelayAuthRequest *unused = NULL;
@@ -420,6 +463,8 @@ bool nostr_relay_auth_request_complete(NostrRelayAuthRequest *request,
                                 id, identity, &unused, &stale);
     } else if (r->refcount > 0 && r->priv->auth_request == request) {
         r->priv->auth_state = NOSTR_RELAY_AUTH_STATE_FAILED;
+        memcpy(r->priv->auth_event_id, id, sizeof(id));
+        failure_frame = local_frame_locked(r);
         r->refcount++;
         failed = true;
     }
@@ -431,12 +476,13 @@ bool nostr_relay_auth_request_complete(NostrRelayAuthRequest *request,
     if (owned) nostr_relay_auth_request_unref(request); /* the relay's reference */
 
     bool sent = false;
-    if (admitted) sent = transmit(r, signed_event, id, request->challenge, identity);
+    if (admitted) sent = transmit(r, signed_event, id, request->challenge, identity,
+                                   request->attempt, request->connection_generation);
     if (failed) {
         char reason[256];
         snprintf(reason, sizeof(reason), "%s%s", signed_event ? "invalid AUTH event: " : "", why);
         emit_result(r, NOSTR_RELAY_AUTH_STATE_FAILED, signed_event ? id : "", reason,
-                    request->challenge, identity, NULL);
+                    request->challenge, identity, &failure_frame);
     }
     if (admitted || failed) nostr_relay_unref(r);
     return sent;
@@ -474,11 +520,15 @@ static NostrRelayAuthRequest *request_new_locked(NostrRelay *r) {
     request->challenge = strdup(r->priv->challenge);
     request->auth_generation = r->priv->auth_generation;
     request->connection_generation = r->priv->connection_generation;
+    request->attempt = ++r->priv->auth_attempt;
     request->signer = signer_ref(r->priv->auth_signer);
     ev->kind = NOSTR_KIND_CLIENT_AUTHENTICATION;
     ev->created_at = (int64_t)time(NULL);
-    nostr_event_set_tags(ev, nostr_tags_new(2, nostr_tag_new("relay", request->url, NULL),
-                                            nostr_tag_new("challenge", request->challenge, NULL)));
+    char nonce[32];
+    snprintf(nonce, sizeof(nonce), "%llu", (unsigned long long)request->attempt);
+    nostr_event_set_tags(ev, nostr_tags_new(3, nostr_tag_new("relay", request->url, NULL),
+                                            nostr_tag_new("challenge", request->challenge, NULL),
+                                            nostr_tag_new("nonce", nonce, NULL)));
     nostr_event_set_content(ev, "");
     if (request->signer->expected_pubkey) nostr_event_set_pubkey(ev, request->signer->expected_pubkey);
     request->template = ev;
@@ -572,6 +622,8 @@ bool nostr_relay_auth_on_ok(NostrRelay *r, const char *event_id, bool ok,
     uint64_t identity = 0;
     nsync_mu_lock(&r->priv->mutex);
     bool ours = r->priv->auth_state == NOSTR_RELAY_AUTH_STATE_SENT &&
+                (!frame || (frame->connection_generation == r->priv->connection_generation &&
+                            frame->auth_generation == r->priv->auth_generation)) &&
                 strcmp(r->priv->auth_event_id, event_id) == 0;
     if (ours) {
         r->priv->auth_state = ok ? NOSTR_RELAY_AUTH_STATE_ACCEPTED : NOSTR_RELAY_AUTH_STATE_REJECTED;
@@ -619,6 +671,7 @@ bool nostr_relay_set_auth_signer_full(NostrRelay *relay, NostrRelayAuthPolicy po
     nsync_mu_lock(&relay->priv->mutex);
     struct NostrRelayAuthSigner *old = relay->priv->auth_signer;
     relay->priv->auth_signer = signer;
+    relay->priv->auth_attempt++;
     NostrRelayAuthRequest *stolen = relay->priv->auth_request;
     relay->priv->auth_request = NULL;
     /* An attempt of the old identity, signing or awaiting its OK, is forgotten. */

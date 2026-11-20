@@ -46,6 +46,7 @@
 #include "nostr-simple-pool.h"
 #include "nostr-subscription.h"
 #include "nostr-tag.h"
+#include "../src/relay-private.h"
 
 #define CHECK(expr) do { if (!(expr)) { \
     fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #expr); \
@@ -194,9 +195,14 @@ static int callback(struct lws *wsi, enum lws_callback_reasons reason,
         char *text = strndup(in, len);
         CHECK(text);
         if (!strncmp(text, "[\"REQ\",\"", 8)) on_req(wsi, c, text);
-        else if (!strncmp(text, "[\"AUTH\",", 8)) on_auth_frame(wsi, c, text);
-        else if (!strncmp(text, "[\"EVENT\",", 9) && strstr(text, "22242"))
-            atomic_fetch_add(&fx.auth_as_event, 1);
+        else {
+            NostrEnvelope *envelope = nostr_envelope_parse(text);
+            if (envelope && envelope->type == NOSTR_ENVELOPE_AUTH)
+                on_auth_frame(wsi, c, text);
+            else if (!strncmp(text, "[\"EVENT\",", 9) && strstr(text, "22242"))
+                atomic_fetch_add(&fx.auth_as_event, 1);
+            if (envelope) nostr_envelope_free(envelope);
+        }
         free(text);
         break;
     }
@@ -544,18 +550,89 @@ static void test_reject_hold(void) {
 static void test_unanswered(void) {
     fixture_start(REQ_GATED, true);
     atomic_store(&fx.foreign_ok, true);
+    obs.async = true;
     NostrRelay *relay = relay_connect();
     CHECK(nostr_relay_set_auth_signer_full(relay, NOSTR_RELAY_AUTH_ON_CHALLENGE, 1, NULL,
                                            sign_fn, NULL, NULL));
+    WAIT_FOR(obs.n_held == 1);
+    NostrEvent *first = sign_template(obs.held[0]);
+    CHECK(nostr_relay_auth_request_complete(obs.held[0], first, NULL));
     WAIT_FOR(obs.ok_frames == 1);
     CHECK(obs.n_results == 0);
     CHECK(status_of(relay).state == NOSTR_RELAY_AUTH_STATE_SENT);
-    atomic_store(&fx.foreign_ok, false);
+    NostrRelayAuthStatus old = status_of(relay);
     Error *err = NULL;
     CHECK(nostr_relay_auth_start(relay, &err));
+    WAIT_FOR(obs.n_held == 2);
+    NostrEvent *second = nostr_event_copy(nostr_relay_auth_request_get_event(obs.held[1]));
+    second->created_at = first->created_at; /* deterministic same-second retry */
+    CHECK(nostr_event_sign(second, obs.sk) == 0);
+    CHECK(nostr_relay_auth_request_complete(obs.held[1], second, NULL));
+    WAIT_FOR(obs.ok_frames == 2);
+    NostrRelayAuthStatus current = status_of(relay);
+    CHECK(strcmp(old.event_id, current.event_id) != 0);
+    /* The old attempt's late OK must not settle the replacement. The
+     * fixture's foreign OKs above give a reader-idle protocol barrier. */
+    char *wire = fmt("[\"OK\",\"%s\",true,\"%s\"]", old.event_id, "late");
+    NostrEnvelope *late = nostr_envelope_parse(wire);
+    CHECK(late);
+    nostr_relay_dispatch_control_envelope(relay, late);
+    nostr_envelope_free(late);
+    free(wire);
+    CHECK(status_of(relay).state == NOSTR_RELAY_AUTH_STATE_SENT && obs.n_results == 0);
+    wire = fmt("[\"OK\",\"%s\",true,\"%s\"]", current.event_id, "current");
+    late = nostr_envelope_parse(wire);
+    CHECK(late);
+    nostr_relay_dispatch_control_envelope(relay, late);
+    nostr_envelope_free(late);
+    free(wire);
+    nostr_event_free(first);
+    nostr_event_free(second);
     WAIT_FOR(obs.n_results == 1);
     CHECK(obs.results[0].state == NOSTR_RELAY_AUTH_STATE_ACCEPTED);
     CHECK(atomic_load(&fx.auths) == 2);
+    nostr_relay_close(relay, NULL);
+    nostr_relay_free(relay);
+    fixture_stop();
+}
+
+static void invalidate_before_enqueue(NostrRelay *relay, void *data) {
+    (void)data;
+    CHECK(nostr_relay_set_auth_signer_full(relay, NOSTR_RELAY_AUTH_ON_DEMAND,
+                                           2, NULL, NULL, NULL, NULL));
+}
+
+static void count_listener(NostrRelay *relay, NostrRelayListenEvent event, void *data) {
+    (void)relay; (void)event;
+    (*(int *)data)++;
+}
+
+static void test_admission(void) {
+    fixture_start(REQ_GATED, true);
+    obs.async = true;
+    NostrRelay *relay = relay_connect();
+    CHECK(nostr_relay_set_auth_signer_full(relay, NOSTR_RELAY_AUTH_ON_CHALLENGE,
+                                           1, NULL, sign_fn, NULL, NULL));
+    WAIT_FOR(obs.n_held == 1);
+    NostrEvent *event = sign_template(obs.held[0]);
+    nostr_relay_test_set_auth_write_hook(invalidate_before_enqueue, NULL);
+    CHECK(!nostr_relay_auth_request_complete(obs.held[0], event, NULL));
+    nostr_relay_test_set_auth_write_hook(NULL, NULL);
+    CHECK(status_of(relay).state == NOSTR_RELAY_AUTH_STATE_CHALLENGED);
+    CHECK(obs.n_results == 0 && atomic_load(&fx.auths) == 0);
+    nostr_event_free(event);
+    /* All registered pools/listeners must receive the AUTH-result wake. */
+    int calls[12] = {0};
+    void *handles[12];
+    for (int i = 0; i < 12; i++) {
+        handles[i] = nostr_relay_add_listener(relay, count_listener, &calls[i], NULL);
+        CHECK(handles[i]);
+    }
+    nostr_relay_notify_listeners(relay, NOSTR_RELAY_LISTEN_AUTH_RESULT);
+    for (int i = 0; i < 12; i++) {
+        CHECK(calls[i] == 1);
+        nostr_relay_remove_listener(relay, handles[i]);
+    }
     nostr_relay_close(relay, NULL);
     nostr_relay_free(relay);
     fixture_stop();
@@ -801,7 +878,12 @@ static void test_pool_handrolled(void) {
     NostrAuthEnvelope auth = { .base.type = NOSTR_ENVELOPE_AUTH, .event = ev };
     char *wire = nostr_envelope_serialize((NostrEnvelope *)&auth);
     CHECK(wire);
-    GoChannel *answer = nostr_relay_write(pc.relay, wire);
+    char *json = nostr_event_serialize_compact(ev);
+    CHECK(json);
+    char *spaced = fmt(" \n[ \t\"AUTH\" , %s ] ", json, NULL);
+    free(json);
+    GoChannel *answer = nostr_relay_write(pc.relay, spaced);
+    free(spaced);
     CHECK(answer);
     go_channel_close(answer);
     void *e = NULL;
@@ -885,7 +967,7 @@ int main(int argc, char **argv) {
     struct { const char *name; void (*fn)(void); } cases[] = {
         { "accept", test_accept }, { "reject-hold", test_reject_hold },
         { "cancel", test_cancel }, { "legacy", test_legacy },
-        { "unanswered", test_unanswered },
+        { "unanswered", test_unanswered }, { "admission", test_admission },
         { "pool-auth", test_pool_auth }, { "pool-reject", test_pool_reject },
         { "pool-refused", test_pool_refused }, { "pool-handrolled", test_pool_handrolled }, { "pool-reconnect", test_pool_reconnect },
         { "pool-blocked", test_pool_blocked }, { "pool-backoff", test_pool_backoff },

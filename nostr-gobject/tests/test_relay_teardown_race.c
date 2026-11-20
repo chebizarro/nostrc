@@ -30,12 +30,16 @@
 #include <nostr-filter.h>
 #include <nostr-keys.h>
 #include <nostr-relay.h>
+#include <nostr-envelope.h>
+#include <nostr-tag.h>
+#include "../../libnostr/src/relay-private.h"
 #include "nostr/testing/mock_relay_server.h"
 #include "nostr_relay_test_hooks.h"
 
 #include <gio/gio.h>
 #include <glib.h>
 #include <stdlib.h>
+#include <time.h>
 
 #define BOUND_US (10 * G_USEC_PER_SEC)
 #define PAYLOAD_MAGIC 0x666c7037 /* "flp7" */
@@ -318,6 +322,65 @@ test_finalize_during_ok_callback(void)
   nostr_mock_server_free(server);
 }
 
+/* An OK queued for the main loop must not authenticate a later challenge.
+ * Wire transport is covered by libnostr's private AUTH-relay suite; this
+ * injects control frames to hold the GObject idle-delivery boundary exactly. */
+static void
+inject_control(NostrRelay *core, const char *wire)
+{
+  NostrEnvelope *envelope = nostr_envelope_parse(wire);
+  g_assert_nonnull(envelope);
+  nostr_relay_dispatch_control_envelope(core, envelope);
+  nostr_envelope_free(envelope);
+}
+
+static void
+count_auth_result(GNostrRelay *relay G_GNUC_UNUSED, gboolean accepted G_GNUC_UNUSED,
+                  const gchar *reason G_GNUC_UNUSED, gpointer data)
+{
+  (*(guint *)data)++;
+}
+
+static void
+test_auth_result_generation(void)
+{
+  NostrMockRelayServerConfig cfg = nostr_mock_server_config_default();
+  NostrMockRelayServer *server = nostr_mock_server_new(&cfg);
+  g_assert_nonnull(server);
+  g_assert_cmpint(nostr_mock_server_start(server), ==, 0);
+  GNostrRelay *relay = connected_private_relay(server);
+  NostrRelay *core = gnostr_relay_get_core_relay(relay);
+  guint results = 0;
+  g_signal_connect(relay, "auth-result", G_CALLBACK(count_auth_result), &results);
+  inject_control(core, "[\"AUTH\",\"first\"]");
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, 22242);
+  nostr_event_set_created_at(event, (int64_t)time(NULL));
+  nostr_event_set_content(event, "");
+  nostr_event_set_tags(event, nostr_tags_new(2,
+      nostr_tag_new("relay", nostr_relay_get_url_const(core), NULL),
+      nostr_tag_new("challenge", "first", NULL)));
+  char *sk = nostr_key_generate_private();
+  g_assert_cmpint(nostr_event_sign(event, sk), ==, 0);
+  free(sk);
+  g_assert_true(nostr_relay_send_auth(core, event, 0, NULL));
+  NostrRelayAuthStatus status;
+  g_assert_true(nostr_relay_get_auth_status(core, &status));
+  gchar *ok = g_strdup_printf("[\"OK\",\"%s\",true,\"\"]", status.event_id);
+  inject_control(core, ok);
+  g_assert_true(gnostr_relay_get_authenticated(relay));
+  inject_control(core, "[\"AUTH\",\"second\"]");
+  g_assert_false(gnostr_relay_get_authenticated(relay));
+  while (g_main_context_iteration(NULL, FALSE)) ;
+  g_assert_false(gnostr_relay_get_authenticated(relay));
+  g_assert_cmpuint(results, ==, 0); /* obsolete first-challenge result */
+  g_free(ok);
+  nostr_event_free(event);
+  g_object_unref(relay);
+  nostr_mock_server_stop(server);
+  nostr_mock_server_free(server);
+}
+
 /* --- The URL registry ---------------------------------------------------- */
 
 static gpointer
@@ -532,6 +595,7 @@ int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
+  g_test_add_func("/relay/auth-result-generation", test_auth_result_generation);
   g_test_add_func("/relay/teardown/finalize-during-state-callback",
                   test_finalize_during_state_callback);
   g_test_add_func("/relay/teardown/finalize-during-ok-callback",

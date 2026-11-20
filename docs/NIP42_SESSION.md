@@ -32,6 +32,13 @@ authoritative; this page shows how the pieces fit.
   never answered, or authenticate a new identity generation).
 * `nostr_relay_send_auth()` is for callers that sign themselves; it gets the
   same verification, correlation, result callback and pool recovery.
+* Library signer templates include a per-attempt nonce: preserve it when
+  signing so same-second retries have distinct ids. Caller-signed retries
+  must likewise use distinct ids to distinguish late OKs.
+* AUTH admission and the writer's connection lease validate the attempt token
+  and connection generation. Superseded queued attempts are discarded; a write
+  already handed to the connection cannot be recalled. A full AUTH write queue
+  fails immediately rather than blocking signing or the relay reader.
 
 ## Wire order (`NostrRelayFrameInfo`)
 
@@ -80,3 +87,17 @@ them. The worker wakes on frames, subscribe, relay connect and AUTH results.
    assumption: in the subscription callback read
    `nostr_simple_pool_get_callback_info()`; `RECONNECT` and `AUTH_REFUSED`
    are terminal for this connection, `AWAIT_AUTH`/`BACKOFF` are transient.
+
+## Migration limits
+
+nostr-gobject delegates AUTH transport/results to the core session. Its
+`authenticated` query reads current core state, not a cached queued result.
+When NIP-11 says authentication is required, publish returns `AUTH_REQUIRED`
+until AUTH is accepted (including while signing or awaiting OK); retry from
+`auth-result`. It does not silently queue or resend the EVENT.
+
+Groundhog's GNostrRelay-backed scope and publish transports call
+`nostr_relay_send_auth()`. Its higher-level GhRelayScope/GhRelayPublish signer
+and recovery state machines remain app-owned, because its soup/Tor transport
+cannot yet use the core relay session; full migration is `nostrc-090as`.
+The legacy synchronous callbacks remain deprecated compatibility adapters.
