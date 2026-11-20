@@ -7,7 +7,7 @@ import sys
 from unittest.mock import patch
 from types import SimpleNamespace
 import unittest
-from perf_loopback import Failure, run_driver, sustainable_search
+from perf_loopback import ControlError, Failure, counter_delta, metric_counters, run_driver, sustainable_search
 
 
 class SearchTest(unittest.TestCase):
@@ -69,6 +69,23 @@ print('{}')
                 run_driver([sys.executable, '-c', script], [11], 5)
         with self.assertRaises(subprocess.TimeoutExpired):
             run_driver([sys.executable, '-c', 'import sys; sys.stdin.read()'], [], .1)
+
+
+class NativeCountersTest(unittest.TestCase):
+    def test_flattened_native_deltas(self):
+        node = SimpleNamespace(query=lambda command: {'native': {'drop_flow_queue_full': 7, 'flows_opened': 1},
+                                                      'forwarding': {'sent': 3}, 'enabled': True})
+        before = metric_counters(node)
+        self.assertEqual(before, {'native.drop_flow_queue_full': 7, 'native.flows_opened': 1, 'forwarding.sent': 3})
+        after = dict(before, **{'native.drop_flow_queue_full': 9, 'native.received_datagrams': 4, 'forwarding.sent': 8})
+        self.assertEqual(counter_delta(before, after),
+                         {'native.drop_flow_queue_full': 2, 'native.received_datagrams': 4})
+
+    def test_unanswered_metrics_give_none(self):
+        def refuse(command):
+            raise ControlError('unknown command')
+        self.assertIsNone(metric_counters(SimpleNamespace(query=refuse)))
+        self.assertIsNone(counter_delta(None, {'native.flows_opened': 1}))
 
 
 if __name__ == '__main__':

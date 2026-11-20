@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/uio.h>
 
 #if defined(__APPLE__) || defined(__FreeBSD__)
 #define FIPSD_NATIVE_SOCK_TYPE SOCK_DGRAM
@@ -107,11 +108,14 @@ fipsd_native_received fipsd_native_recv_fiber(int fd, void *buf, size_t cap, siz
 /* timeout_ms < 0 parks until writable, 0 tries once, > 0 bounds the wait. */
 int fipsd_native_send_fiber(int fd, const void *buf, size_t len, int timeout_ms);
 
-/* Stream flows (native/frame.h). One frame, parked on writability for as long
- * as the client takes to drain (or until owner-directed cancellation): a
- * short write is finished, never abandoned, so only one fiber may write a
- * stream flow. Returns 0 or -1 with errno. */
-int fipsd_native_frame_send_fiber(int fd, const void *buf, size_t len);
+/* Consume `sent` bytes from the front of iov[0..count): entries wholly sent
+ * become empty, a partly sent one is trimmed. Returns the index of the first
+ * entry with bytes left (count when none). */
+size_t fipsd_native_iov_advance(struct iovec *iov, size_t count, size_t sent);
+/* Stream flows (native/frame.h). Frames onto a flow are written by api.c
+ * (one non-waiting write per delivery batch, then the flow's feeder, parked
+ * on writability while the client drains); a frame taken in part is
+ * finished, never abandoned. */
 /* One frame without waiting, onto a pair nobody reads yet: 0 when it was
  * taken whole, else -1 with errno (ENOBUFS when only part fitted, after which
  * the stream is unusable and the caller closes it). */

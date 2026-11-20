@@ -153,6 +153,33 @@ def sustainable_search(probe, args):
     return result
 
 
+def metric_counters(node):
+    """Flattened numeric show_metrics leaves ('native.drop_flow_queue_full': n),
+    or None when the daemon does not answer show_metrics."""
+    try:
+        data = node.query('show_metrics')
+    except (ControlError, OSError, ValueError):
+        return None
+    flat = {}
+
+    def walk(prefix, value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                walk(f'{prefix}.{key}' if prefix else key, child)
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            flat[prefix] = value
+    walk('', data)
+    return flat
+
+
+def counter_delta(before, after):
+    """Non-zero changes of the native.* counters across one probe."""
+    if before is None or after is None:
+        return None
+    return {key: after[key] - before.get(key, 0) for key in sorted(after)
+            if key.startswith('native.') and after[key] != before.get(key, 0)}
+
+
 def run_pair(args, roles, root):
     env = dict(os.environ, FIPSD_WORKERS='2', TOKIO_WORKER_THREADS='2', NO_COLOR='1')
     nodes, apis, ports = [], [], []
@@ -232,6 +259,7 @@ transports:
         def probe(rate=None):
             nonlocal probe_index
             probe_index += 1
+            counters_before = [metric_counters(node) for node in nodes]
             before = [cpu_seconds(node.daemon.proc.pid) for node in nodes]
             start = time.monotonic()
             seconds = args.paced_seconds if rate is not None else args.seconds
@@ -247,6 +275,10 @@ transports:
             after = [cpu_seconds(node.daemon.proc.pid) for node in nodes]
             row = json.loads(stdout)
             row['traffic_wall_s'] = elapsed
+            # The probe's native counter changes per daemon (sender first):
+            # where its losses were counted, e.g. native.drop_flow_queue_full.
+            row['native_counters'] = [counter_delta(b, metric_counters(node))
+                                      for b, node in zip(counters_before, nodes)]
             row['cpu'] = [{'role': role, 'traffic_s': max(0, end - begin),
                            'traffic_percent_one_core': 100 * max(0, end - begin) / elapsed,
                            'traffic_cpu_s': max(0, traffic_end - traffic_begin),
@@ -320,7 +352,13 @@ def main():
     p.add_argument('--runs', type=int, default=3)
     p.add_argument('--work-dir', type=Path, default=Path(__file__).resolve().parents[2] / 'build-perf-tmp')
     p.add_argument('--output', type=Path)
+    p.add_argument('--pairs', default='c-c,rust-rust,c-rust',
+                   help='comma-separated sender-receiver pairings, in rotation order (default: all three)')
     args = p.parse_args()
+    known = ('c-c', 'rust-rust', 'c-rust')
+    selected = [pair.strip() for pair in args.pairs.split(',') if pair.strip()]
+    if not selected or any(pair not in known for pair in selected) or len(set(selected)) != len(selected):
+        p.error(f'--pairs takes distinct pairings out of {",".join(known)}')
     if not args.rust or not Path(args.rust).is_file():
         print('SKIP: supply the pinned Rust fips binary via --rust', file=sys.stderr)
         return 77
@@ -346,8 +384,8 @@ def main():
     for run in range(args.runs):
         rows = []
         # Rotate pair ordering across runs, without parallel measurements.
-        pairs = [('c', 'c'), ('rust', 'rust'), ('c', 'rust')]
-        for roles in pairs[run % 3:] + pairs[:run % 3]:
+        pairs = [tuple(pair.split('-')) for pair in selected]
+        for roles in pairs[run % len(pairs):] + pairs[:run % len(pairs)]:
             print(f'run {run + 1}: {roles}', file=sys.stderr, flush=True)
             with tempfile.TemporaryDirectory(prefix='p', dir=args.work_dir) as tmp:
                 rows.append(run_pair(args, roles, Path(tmp)))
