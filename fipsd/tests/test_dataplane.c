@@ -315,7 +315,10 @@ static void worker_send_gate(void)
         size_t before = gate_sends;
         fipsd_dp_worker_send(&p->job);
         assert(p->worker_sent == !moved && gate_sends == before + !moved);
+        /* A bounced frame holds the slot until its completion is done. */
+        assert(p->gate_held == (moved != 0) && d.gates[1].held == (size_t)moved);
         fipsd_crypto_job_destroy(&p->job);
+        assert(d.gates[1].held == 0);
     }
     fipsd_dp_link_moved(&h, &recs[0]); /* other slots are independent */
     assert(atomic_load(&d.gates[0].generation) == 1 && atomic_load(&d.gates[1].generation) == 1);
@@ -325,6 +328,73 @@ static void worker_send_gate(void)
     fipsd_crypto_job_destroy(&p->job);
     for (size_t i = 0; i < 2; ++i) pthread_mutex_destroy(&d.gates[i].mu);
     go_refptr_release(&d.current); free(d.packets); free(d.gates);
+}
+/* Wire order across a gate bump (nostrc-u19cz.3 review): frames queued under
+ * the old generation come back to the dispatcher, and frames submitted after
+ * the bump must not overtake them from the worker. The worker blocks
+ * delivering frame 0 (results full of sentinels) while frames 1-5 queue, the
+ * link moves, and frames 6-11 queue. Every frame has executed before any
+ * completion is handled; the completion-time sends (in completion order, as
+ * fipsd_dp_result's fallback makes them) and the worker's sends must still
+ * reach the wire as 0..11, and once drained the worker sends again. */
+static pthread_mutex_t wire_mu = PTHREAD_MUTEX_INITIALIZER;
+static uint8_t wire_order[32];
+static size_t wire_count;
+static void wire_record(uint8_t seq)
+{ pthread_mutex_lock(&wire_mu); assert(wire_count < sizeof wire_order); wire_order[wire_count++] = seq; pthread_mutex_unlock(&wire_mu); }
+static int wire_send(fipsd_transport *t, const fips_transport_addr *to, const uint8_t *b, size_t n)
+{ (void)t; (void)to; assert(n > 1); wire_record(b[0]); return 0; }
+static fipsd_dp_packet *wire_frame(fipsd_dataplane *d, fipsd_transport *t, const fips_aead_key *key, uint8_t seq)
+{
+    fipsd_dp_packet *p = fipsd_dp_packet_take(d); assert(p);
+    p->via = t; p->gate = &d->gates[0]; p->gate_generation = atomic_load(&d->gates[0].generation);
+    p->body = 1; p->output[0] = seq; memset(p->input, seq, 8);
+    p->job.operation = FIPSD_CRYPTO_SEAL; fips_cipher_state_init(&p->job.key, key); p->job.counter = seq;
+    p->job.input = p->input; p->job.input_size = 8; p->job.output = p->output + 1; p->job.capacity = FIPSD_DP_WIRE - 1;
+    p->job.shard = FIPSD_JOB_SHARD(0); p->job.after = fipsd_dp_worker_send;
+    return p;
+}
+static void gate_wire_order(void)
+{
+    static const fipsd_transport_ops ops = {.send = wire_send};
+    fipsd_transport t = {.ops = &ops};
+    handlers h = {0}; peer_rec recs[1] = {{0}};
+    fipsd_dataplane d = {.packet_count = 16, .gate_count = 1}; h.dataplane = &d; h.recs = recs;
+    d.packets = calloc(d.packet_count, sizeof *d.packets); d.gates = calloc(1, sizeof *d.gates); assert(d.packets && d.gates);
+    assert(!pthread_mutex_init(&d.gates[0].mu, NULL));
+    d.current = make_go_refptr(calloc(1, sizeof(fipsd_dp_snapshot)), free); assert(d.current.ptr);
+    fipsd_worker_set *s = fipsd_worker_set_create(1, 16); assert(s && fipsd_worker_set_start(s, NULL) == 1);
+    GoChannel *results = fipsd_worker_set_results(s);
+    static int sentinel; size_t sentinels = 0;
+    while (go_channel_try_send(results, &sentinel) == 0) ++sentinels;
+    uint8_t raw[32] = {4}; fips_aead_key key; assert(fips_aead_key_init(&key, raw) == FIPS_AEAD_OK);
+    for (uint8_t seq = 0; seq < 12; ++seq) {
+        if (seq == 6) fipsd_dp_link_moved(&h, &recs[0]);
+        assert(fipsd_worker_set_dispatch(s, &wire_frame(&d, &t, &key, seq)->job) == 0);
+    }
+    void *v; fipsd_crypto_job *done[12];
+    for (size_t i = 0; i < sentinels; ++i) assert(go_channel_receive(results, &v) == 0 && v == &sentinel);
+    for (size_t i = 0; i < 12; ++i) { assert(go_channel_receive(results, &v) == 0); done[i] = v; }
+    for (size_t i = 0; i < 12; ++i) {
+        fipsd_dp_packet *p = done[i]->owner;
+        assert(p->output[0] == i && done[i]->result == FIPS_NOISE_OK && (i < 6 || !p->worker_sent));
+        if (!p->worker_sent) wire_record(p->output[0]); /* the completion's own send */
+        fipsd_crypto_job_destroy(done[i]);
+    }
+    pthread_mutex_lock(&d.gates[0].mu); assert(d.gates[0].held == 0); pthread_mutex_unlock(&d.gates[0].mu);
+    pthread_mutex_lock(&wire_mu);
+    assert(wire_count == 12);
+    for (size_t i = 0; i < 12; ++i) assert(wire_order[i] == i);
+    pthread_mutex_unlock(&wire_mu);
+    fipsd_dp_packet *p = wire_frame(&d, &t, &key, 12);
+    assert(fipsd_worker_set_dispatch(s, &p->job) == 0);
+    assert(go_channel_receive(results, &v) == 0 && v == &p->job && p->worker_sent);
+    fipsd_crypto_job_destroy(&p->job);
+    pthread_mutex_lock(&wire_mu); assert(wire_count == 13 && wire_order[12] == 12); pthread_mutex_unlock(&wire_mu);
+    fipsd_worker_set_stop(s);
+    assert(go_channel_receive(results, &v) != 0); /* EOF */
+    fipsd_worker_set_destroy(s); fips_aead_key_destroy(&key);
+    pthread_mutex_destroy(&d.gates[0].mu); go_refptr_release(&d.current); free(d.packets); free(d.gates);
 }
 /* nostrc-u19cz.3 inbound fusion: a link open's after-step opens the session
  * frame it carries only when it is addressed to this node, with the packet
@@ -438,7 +508,7 @@ static void coalesced_snapshots(void)
 }
 int main(void)
 {
-    concurrent_recycle(); cancelled_mailbox(); exact_wipe(); worker_send_gate(); preopen();
+    concurrent_recycle(); cancelled_mailbox(); exact_wipe(); worker_send_gate(); gate_wire_order(); preopen();
     forwarding(); errors(); clamps(); backpressure_and_counters(); authenticate_then_mark(); saturated_trial_retry(); delayed_transport_consumer(); coalesced_snapshots();
     puts("dataplane: forwarding/local/TTL/CE, reject limiter, clamp release, 4-worker unique reserved counters, bounded refusal: ok");
     return 0;

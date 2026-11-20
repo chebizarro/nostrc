@@ -162,11 +162,25 @@ messages.
 - 9keoz.12 guard. Each peer slot has a gate (mutex + generation). The worker
   sends only while holding it at the generation captured at submit. The
   dispatcher bumps it, under the mutex, before a path switch closes the old
-  pair, on rebind, when the link's epoch set changes
-  (installed/retired/reverted/restarted/teardown), when removal starts, and on
-  slot release. A bump waits for an in-progress send. After it, a held frame
-  comes back unsent, and the completion resolves it as before: re-resolve,
-  MTU, stale check, dispatcher send.
+  pair, on rebind, when an epoch can leave the link's set
+  (retired/reverted/restarted/teardown; every removal is a `Retired` output),
+  when removal starts, and on slot release. A plain install does not bump: the
+  old current epoch drains, still accepted, to the same destination. A bump
+  waits for an in-progress send. After it, a frame comes back unsent and the
+  completion resolves it as before: re-resolve, MTU, stale check, dispatcher
+  send.
+- Wire order (review fix). Without a barrier, a frame submitted after a bump
+  could leave from the worker before the earlier frames the bump sent back to
+  the dispatcher; across a rekey, a new-epoch frame would then overtake
+  old-epoch data (nostrc-3vl7v). The gate also counts `held`: the slot's
+  data-lane frames the dispatcher still has to send or drop. Frames left to the
+  completion count from submit, bounced ones from their bounce, and recycle
+  releases them after the completion. The worker sends only at `held == 0`;
+  otherwise it bounces the frame and holds it too. A peer's jobs are FIFO on
+  one worker, inline runs happen only while that worker is idle, and
+  completions are handled in order, so the wire sees frames in submit order.
+  `FipsdDataplaneTest` (`gate_wire_order`) bumps with frames queued on a
+  blocked real worker and checks the order; it fails without the barrier.
 
 | Stage 2, back to back | Baseline `5b3c987c8` | Stage 2 |
 |---|---:|---:|

@@ -167,10 +167,14 @@ static void effect(void *c, const fips_rekey_output *o, const uint8_t *plaintext
         o->kind == FIPS_REKEY_OUT_Reverted || o->kind == FIPS_REKEY_OUT_PeerRestarted ||
         o->kind == FIPS_REKEY_OUT_Teardown)
         h->dataplane->needs_publish = true;
-    /* The link's epoch set moves: no worker may send under the old view. */
-    if (x->rec && (o->kind == FIPS_REKEY_OUT_Installed || o->kind == FIPS_REKEY_OUT_Retired ||
-            o->kind == FIPS_REKEY_OUT_Reverted || o->kind == FIPS_REKEY_OUT_PeerRestarted ||
-            o->kind == FIPS_REKEY_OUT_Teardown))
+    /* An epoch may leave the link's set (every removal is a Retired output,
+     * rk_retire): a queued frame sealed under it must meet the completion's
+     * stale check instead of the wire. An install alone moves the old current
+     * epoch to drain, where generation_matches still accepts it and the
+     * destination is unchanged: no bump, so a routine rekey does not divert
+     * the queue to the dispatcher. */
+    if (x->rec && (o->kind == FIPS_REKEY_OUT_Retired || o->kind == FIPS_REKEY_OUT_Reverted ||
+            o->kind == FIPS_REKEY_OUT_PeerRestarted || o->kind == FIPS_REKEY_OUT_Teardown))
         fipsd_dp_link_moved(h, x->rec);
     switch (o->kind) {
     case FIPS_REKEY_OUT_Deliver:
