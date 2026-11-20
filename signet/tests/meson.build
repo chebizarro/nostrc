@@ -328,6 +328,12 @@ test('no_bare_assert', find_program('sh'),
 
 # fp-52iq guard: fail the suite if the CMake and meson test lists drift apart
 # again. Enforces the parity rule at the top of this file.
+if host_machine.system() == 'linux'
+  test('linux_hardening', find_program('python3'),
+    args: [meson.current_source_dir() / 'check_linux_hardening.py', signetd_exe.full_path()],
+    depends: signetd_exe)
+endif
+
 test('test_list_parity', find_program('sh'),
   args: [meson.current_source_dir() / 'check_test_parity.sh',
          meson.current_source_dir()])

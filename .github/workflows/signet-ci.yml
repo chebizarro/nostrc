@@ -2,7 +2,7 @@ name: signet CI
 
 # Dedicated CI for the Signet NIP-46 bunker. The main nostrc CI builds with
 # -DSIGNET_ENABLE=OFF, so without this workflow signet has no coverage. This
-# builds signet as part of the monorepo (CMake) and runs its ctest suite, with a
+# builds signet with both the monorepo CMake and standalone Meson routes, with a
 # matrix entry that turns on the experimental FIDO2/passkeys modules so those
 # code paths and their tests are exercised in CI too.
 
@@ -84,7 +84,7 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config clang \
+            build-essential cmake meson ninja-build pkg-config clang \
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libglib2.0-dev libsoup-3.0-dev \
             libjson-glib-dev libgit2-dev libnsync-dev \
@@ -120,3 +120,22 @@ jobs:
       # therefore absent from every shipped build.
       - name: Test (signet ctest suite)
         run: ctest --test-dir build/signet/tests --output-on-failure
+
+      - name: Configure Meson (same security profile)
+        shell: bash
+        run: |
+          build_type='${{ matrix.build_type }}'
+          passkeys=false; sqlcipher=false; hooks=false
+          if [[ '${{ matrix.passkeys }}' == ON ]]; then passkeys=true; fi
+          if [[ '${{ matrix.sqlcipher }}' == ON ]]; then sqlcipher=true; fi
+          if [[ '${{ matrix.test_hooks || 'OFF' }}' == ON ]]; then hooks=true; fi
+          meson setup build-signet-meson signet --buildtype="${build_type,,}" \
+            -Dnostrc_build_dir="$PWD/build" -Dsignet_require_in_tree_libs=true \
+            -Dsignet_enable_tests=true -Dsignet_enable_passkeys="$passkeys" \
+            -Dsignet_use_sqlcipher="$sqlcipher" -Dsignet_enable_test_hooks="$hooks" \
+            -Dwerror=true
+
+      - name: Build and test Meson suite
+        run: |
+          meson compile -C build-signet-meson
+          meson test -C build-signet-meson --print-errorlogs

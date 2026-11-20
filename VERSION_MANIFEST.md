@@ -233,7 +233,7 @@ other components and all version/release/tag values are unchanged.
 | nip-communikeys | `nips/nip-communikeys/` | 3.0.0 | Unreleased | — | `nips/nip-communikeys/CMakeLists.txt` (`NIP_COMMUNIKEYS_VERSION`) |
 | nip55l (Linux signer) | `nips/nip55l/` | 0.8.0 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
 | nostr-seal | `gnome/nostr-seal/` | 0.1.3 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
-| signet | `signet/` | 0.9.0 | 0.8.0-rc.1 | `signet-v0.8.0-rc.1` | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`), `signet/CMakeLists.txt` (`project VERSION`); nostrc-xnptz: PATCH-class provisioning identity-preservation fix folded into unreleased 0.9.0, with no additional bump or release/tag change |
+| signet | `signet/` | 0.9.0 | 0.8.0-rc.1 | `signet-v0.8.0-rc.1` | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`), `signet/CMakeLists.txt` (`project VERSION`); nostrc-xnptz: PATCH-class provisioning identity-preservation fix folded into unreleased 0.9.0, with no additional bump or release/tag change; nostrc-h70zw: PATCH-class legacy-envelope backup restore and Linux Meson security-gate parity (ported from Stew) fold into unreleased 0.9.0 |
 
 
 ### FIPS component skeletons (nostrc-s50dj.1)
@@ -308,6 +308,24 @@ other components and all version/release/tag values are unchanged.
 - **signet 0.9.0 / libnostr 2.3.0 retained.** Their existing unreleased MINOR
   assessments remain the highest applicable change in this integration wave;
   Signet's real-wire test now independently checks the C reply's canonical id.
+
+### Signet Meson security parity (nostrc-h70zw)
+
+- **signet 0.9.1 → 0.9.2: PATCH.** Match CMake stack protection,
+  aliasing, fortification and Linux ELF linker hardening in Meson; keep PIC/PIE
+  enabled by default. CI runs both build systems with the same passkey,
+  SQLCipher, test-hook and build-type profiles and verifies daemon ELF properties.
+  No new public functionality. The CI/test/pin changes alone need no bump;
+  other components and published release columns are unchanged.
+
+### Signet legacy-envelope backup restore (nostrc-h70zw)
+
+- **signet 0.9.0 → 0.9.1: PATCH.** Authenticate a later current custody or
+  credential envelope when older rows cannot authenticate under the supplied
+  master. Existing envelope bytes and formats are preserved, not migrated;
+  wrong masters and nonempty stores with no authenticatable envelope still fail.
+  No new API or configuration. All four authoritative version sources agree;
+  published release columns are unchanged. Other components: no bump.
 
 ### libnostr subscription ordered-state initialization (nostrc-0rn31)
 

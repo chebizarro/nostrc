@@ -14,10 +14,12 @@
 #   set -Dnostrc_build_dir=../build (default) and ensure those libs are present.
 
 project('signet', 'c',
-  version: '0.9.0',
+  version: '0.9.2',
   default_options: [
     'c_std=c11',
     'warning_level=2',
+    'b_staticpic=true',
+    'b_pie=true',
   ],
   meson_version: '>= 0.59.0',
 )
@@ -27,6 +29,19 @@ fs = import('fs')
 
 # Expose GNU/POSIX APIs consistently when building with strict C11 on glibc.
 add_project_arguments('-D_GNU_SOURCE', '-D_DEFAULT_SOURCE', language: 'c')
+
+# Match the monorepo CMake hardening for the standalone build too.
+if cc.get_id() in ['gcc', 'clang', 'apple-clang']
+  add_project_arguments('-fstack-protector-strong', '-fno-strict-aliasing', language: 'c')
+  # Compiler probes undefine _FORTIFY_SOURCE, so inspect the actual user args
+  # (including CFLAGS/CPPFLAGS) to preserve distro/user fortification.
+  if get_option('b_sanitize') == 'none' and not ' '.join(get_option('c_args')).contains('_FORTIFY_SOURCE')
+    add_project_arguments('-D_FORTIFY_SOURCE=2', language: 'c')
+  endif
+  if host_machine.system() == 'linux'
+    add_project_link_arguments('-Wl,-z,relro', '-Wl,-z,now', '-Wl,-z,noexecstack', language: 'c')
+  endif
+endif
 
 # Resolve monorepo CMake build directory for in-tree libraries
 nostrc_build_dir_opt = get_option('nostrc_build_dir')

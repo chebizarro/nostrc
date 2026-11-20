@@ -101,11 +101,12 @@ static int signetd_subscribe_mgmt_kinds(SignetRelayPool *relays,
 #include <glib-unix.h>
 #include <json-glib/json-glib.h>
 
-#define SIGNET_VERSION "0.9.0"
+#define SIGNET_VERSION "0.9.2"
 #define SIGNET_NIP46_KIND_CIPHERTEXT 24133
 
 static volatile sig_atomic_t g_shutdown_requested = 0;
 
+#ifndef SIGNET_ENABLE_TEST_HOOKS
 /* Resolve a local-transport peer UID (SO_PEERCRED / getpeereid) to an agent_id
  * using the [uid_map] config section. Returns a newly-allocated agent_id
  * (caller frees) or NULL when the UID is not mapped, in which case the
@@ -119,6 +120,7 @@ static char *signetd_uid_resolver(uid_t uid, void *user_data) {
   }
   return NULL;
 }
+#endif
 static GMainLoop *g_main_loop = NULL;
 
 static void signet_on_term(int signo) {
