@@ -19,6 +19,17 @@ fips_path_medium fipsd_transport_medium(const fipsd_transport *t)
     fipsd_presence_view v = fipsd_presence_snapshot(&t->shared->presence);
     return v.phase == FIPSD_PRESENT ? v.interface.medium : FIPS_PATH_Unknown;
 }
+int fipsd_transport_emit_event(GoChannel *events, GoContext *root, GoChannel *stop, fipsd_transport_event *e)
+{
+    if (!events || !root || !e || go_context_is_canceled(root) || (stop && go_channel_is_closed(stop))) return -1;
+    FIPSD_PERF_STAMP(e);
+    /* A queue with room takes the event without building a select. */
+    if (go_channel_try_send(events, e) == 0) return 0;
+    void *v = NULL;
+    GoSelectCase cases[] = {{GO_SELECT_RECEIVE, go_context_done(root), NULL, &v},
+        {GO_SELECT_RECEIVE, stop, NULL, &v}, {GO_SELECT_SEND, events, e, NULL}};
+    return go_select(cases, 3) == 2 ? 0 : -1;
+}
 int fipsd_transport_emit(GoChannel *events, GoContext *root, GoChannel *stop,
     fipsd_transport_event_kind kind, fips_transport_id id, const fips_transport_addr *addr,
     const uint8_t *bytes, size_t n)
@@ -28,14 +39,9 @@ int fipsd_transport_emit(GoChannel *events, GoContext *root, GoChannel *stop,
     fipsd_transport_event *e = calloc(1, sizeof *e + n);
     if (!e) return -1;
     e->kind = kind; e->id = id; e->size = n;
-    FIPSD_PERF_STAMP(e);
     if (addr) e->address = *addr;
     if (n) memcpy(e->bytes, bytes, n);
-    void *v = NULL;
-    GoSelectCase cases[] = {{GO_SELECT_RECEIVE, go_context_done(root), NULL, &v},
-        {GO_SELECT_RECEIVE, stop, NULL, &v}, {GO_SELECT_SEND, events, e, NULL}};
-    int selected = go_select(cases, 3);
-    if (selected != 2) { free(e); return -1; }
+    if (fipsd_transport_emit_event(events, root, stop, e)) { free(e); return -1; }
     return 0;
 }
 static fipsd_transport_link *find(fipsd_transport_shared *s, const fips_transport_addr *a)

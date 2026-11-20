@@ -18,6 +18,9 @@ typedef struct udp_socket {
     size_t users; /* owner.mu; send leases, never descriptor ownership */
     bool detached; /* owner.mu */
     fipsd_buffer_granted recv_grant, send_grant;
+    /* Linux: batched sends may use UDP GSO (probed at open; cleared for good
+     * by the first refusal). Read and cleared by any sending thread. */
+    _Atomic bool gso;
 } udp_socket;
 typedef struct udp_route {
     fips_transport_addr peer;
@@ -45,6 +48,49 @@ struct udp_instance {
     size_t next_route;
     bool started;
 };
+/* The largest datagram a drain takes: larger is truncated, hence malformed. */
+#define FIPSD_UDP_RECV_MAX 65536u
+#if defined(__linux__)
+/* Linux drain (nostrc-u19cz.4): recvmmsg takes up to FIPSD_UDP_RECV_BATCH
+ * datagrams per syscall, each with its own source, pktinfo and ECN control.
+ * Each slot receives straight into a transport event the node will own, so
+ * a frame reaches the dispatcher without a copy; the slot is refilled with a
+ * fresh event. Datagrams longer than the slot (cap: the configured MTU) spill
+ * into a per-slot tail, touched only by them, so every datagram the drain
+ * took before is still taken, by a copy into an event of its size.
+ * Includers define _GNU_SOURCE (struct mmsghdr). */
+#define FIPSD_UDP_RECV_BATCH 32u
+typedef struct udp_rx {
+    struct mmsghdr m[FIPSD_UDP_RECV_BATCH];
+    struct iovec iov[FIPSD_UDP_RECV_BATCH][2];
+    fipsd_udp_endpoint source[FIPSD_UDP_RECV_BATCH];
+    struct { _Alignas(struct cmsghdr) uint8_t data[512]; } control[FIPSD_UDP_RECV_BATCH];
+    fipsd_transport_event *slot[FIPSD_UDP_RECV_BATCH]; /* cap payload bytes each */
+    uint8_t *spill; /* FIPSD_UDP_RECV_BATCH tails of FIPSD_UDP_RECV_MAX - cap bytes */
+    size_t cap, filled; /* filled: the slots the last call wrote */
+} udp_rx;
+udp_rx *fipsd_udp_rx_create(size_t cap); /* 0 < cap < FIPSD_UDP_RECV_MAX */
+void fipsd_udp_rx_free(udp_rx *);
+/* One gof_recvmmsg over every slot (parks until a datagram is queued): the
+ * count, or -1 with errno. Datagram i has m[i].msg_len bytes, its first
+ * min(len, cap) in slot[i]->bytes and the rest in iov[i][1]. */
+int fipsd_udp_recv_batch(udp_rx *, gof_socket_t);
+/* Batched sends (udp.c send_batch): frames per sendmmsg run, and the limits
+ * of one GSO message (the segment count older kernels accept; total bytes
+ * under the 64 KiB IP datagram with headers). */
+#define FIPSD_UDP_SEND_BATCH 32u
+#define FIPSD_UDP_GSO_SEGMENTS 64u
+#define FIPSD_UDP_GSO_BYTES 65000u
+#ifndef SOL_UDP
+#define SOL_UDP 17
+#endif
+#ifndef UDP_SEGMENT
+#define UDP_SEGMENT 103 /* linux/udp.h; glibc's netinet/udp.h since 2.29 */
+#endif
+/* Test seam: the batch send syscall, gof_sendmmsg with a zero timeout by
+ * default. Replace it only while no transport sends. */
+extern int (*fipsd_udp_sendmmsg)(gof_socket_t, struct mmsghdr *, unsigned, int flags);
+#endif
 /* Lifecycle calls hold the channel gate, never a scheduler-blocking mutex. */
 udp_socket *fipsd_udp_socket_open(udp_instance *, const fipsd_udp_endpoint *,
     const fipsd_udp_endpoint *remote, uint64_t, fips_link_direction);

@@ -1,6 +1,10 @@
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE /* struct mmsghdr, sendmmsg */
+#endif
 #define _POSIX_C_SOURCE 200809L
 #include "transport/udp/internal.h"
 #include "libgo/fiber.h"
+#include "log.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -49,26 +53,37 @@ static void network_changed(fipsd_transport *t, const struct fipsd_netmon_event 
 static uint16_t mtu(const fipsd_transport *t, const fips_transport_addr *to)
 { (void)to; return ((const udp_instance *)t->user)->config.mtu; }
 static int discover(fipsd_transport *t) { (void)t; return 0; } /* configured peers, not multicast */
-static int send_frame(fipsd_transport *t, const fips_transport_addr *to, const uint8_t *bytes, size_t len)
+/* The socket that sends to `to` (its connected peer socket, else the
+ * listener), leased, with the numeric target and the listener's source hint.
+ * NULL when nothing can send there; *unresolved when `to` did not resolve,
+ * which a send counts as a send error. */
+static udp_socket *lease(udp_instance *u, const fips_transport_addr *to, fipsd_udp_endpoint *target,
+    fipsd_udp_packet_info *source, bool *unresolved)
 {
-    udp_instance *u = t->user;
-    if (!u->started || !bytes || !len || go_context_is_canceled(u->root)) return -1;
-    if (len > u->config.mtu) { atomic_fetch_add(&u->shared.stats.mtu_exceeded, 1); return -1; }
-    fipsd_udp_endpoint target;
-    if (!fipsd_udp_resolve(&u->dns, to, u->bind_to.address.ss_family, &target)) { fipsd_transport_stats_error(&u->shared.stats, true); return -1; }
+    *unresolved = !fipsd_udp_resolve(&u->dns, to, u->bind_to.address.ss_family, target);
+    if (*unresolved) return NULL;
     fips_transport_addr numeric;
-    if (!fipsd_udp_endpoint_addr(&target, &numeric)) return -1;
-    fipsd_udp_packet_info source = {0};
+    if (!fipsd_udp_endpoint_addr(target, &numeric)) return NULL;
+    *source = (fipsd_udp_packet_info){0};
     udp_mu_lock(&u->mu);
     udp_socket *s = u->listener;
     for (size_t i = 0; i < u->config.peer_capacity; ++i)
         if (u->peers[i] && !go_channel_is_closed(u->peers[i]->done) &&
             fips_transport_addr_equal(&u->peers[i]->peer, &numeric)) { s = u->peers[i]; break; }
     for (size_t i = 0; i < FIPSD_UDP_MAX_PEERS; ++i)
-        if (u->routes[i].used && fips_transport_addr_equal(&u->routes[i].peer, &numeric)) { source = u->routes[i].info; break; }
+        if (u->routes[i].used && fips_transport_addr_equal(&u->routes[i].peer, &numeric)) { *source = u->routes[i].info; break; }
     if (s) ++s->users;
     udp_mu_unlock(&u->mu);
-    if (!s) return -1;
+    return s;
+}
+static int send_frame(fipsd_transport *t, const fips_transport_addr *to, const uint8_t *bytes, size_t len)
+{
+    udp_instance *u = t->user;
+    if (!u->started || !bytes || !len || go_context_is_canceled(u->root)) return -1;
+    if (len > u->config.mtu) { atomic_fetch_add(&u->shared.stats.mtu_exceeded, 1); return -1; }
+    fipsd_udp_endpoint target; fipsd_udp_packet_info source; bool unresolved;
+    udp_socket *s = lease(u, to, &target, &source, &unresolved);
+    if (!s) { if (unresolved) fipsd_transport_stats_error(&u->shared.stats, true); return -1; }
     struct iovec iov = {.iov_base = (void *)bytes, .iov_len = len};
     union { struct cmsghdr align; uint8_t data[128]; } control;
     struct msghdr m = {.msg_iov = &iov, .msg_iovlen = 1};
@@ -88,6 +103,133 @@ static int send_frame(fipsd_transport *t, const fips_transport_addr *to, const u
     if (n != (ssize_t)len) { fipsd_transport_stats_error(&u->shared.stats, true); return -1; }
     fipsd_transport_stats_sent(&u->shared.stats, len); return 0;
 }
+#if defined(__linux__)
+/* Batched sends (nostrc-u19cz.4, upstream encrypt_worker.rs flush_batch_sync):
+ * one sendmmsg per run of frames to one destination. A run of equal-size
+ * datagrams, of which only the last may be shorter, rides one message with
+ * UDP_SEGMENT, which the kernel splits back into those datagrams (GSO) in a
+ * single stack walk. A message the kernel did not take is resubmitted alone
+ * to learn its error; a plain one fails only its own frame, and the rest are
+ * sent after it, in order. A GSO message that fails is resent, with the rest
+ * of the run, as plain messages, so its frames meet what single sends would
+ * (backpressure takes what fits, a pending socket error fails one send). If
+ * the kernel refused GSO itself (EIO: the route has no checksum offload;
+ * EINVAL, EOPNOTSUPP, ENOPROTOOPT, EMSGSIZE), the socket stops using it. */
+static int sendmmsg_now(gof_socket_t fd, struct mmsghdr *m, unsigned n, int flags)
+{ return gof_sendmmsg(fd, m, n, flags, 0); /* never parks: backpressure is a send failure */ }
+int (*fipsd_udp_sendmmsg)(gof_socket_t, struct mmsghdr *, unsigned, int) = sendmmsg_now;
+static bool gso_refused(int error)
+{ return error == EIO || error == EINVAL || error == EOPNOTSUPP || error == ENOPROTOOPT || error == EMSGSIZE; }
+typedef struct tx_run {
+    struct mmsghdr m[FIPSD_UDP_SEND_BATCH];
+    struct iovec iov[FIPSD_UDP_SEND_BATCH];
+    struct { _Alignas(struct cmsghdr) uint8_t data[128]; } control[FIPSD_UDP_SEND_BATCH];
+    size_t frame[FIPSD_UDP_SEND_BATCH]; /* iov[k] carries frame frame[k] of the run */
+    size_t first[FIPSD_UDP_SEND_BATCH], count[FIPSD_UDP_SEND_BATCH]; /* message -> iov range */
+    size_t frames, messages;
+} tx_run;
+/* Messages for iov entries from `at` on, replacing those from message `msg`. */
+static void tx_build(tx_run *r, const udp_socket *s, const fipsd_udp_endpoint *target,
+    const fipsd_udp_packet_info *source, size_t msg, size_t at, bool gso)
+{
+    r->messages = msg;
+    for (size_t p = at; p < r->frames;) {
+        size_t size = r->iov[p].iov_len, q = p + 1;
+        if (gso) while (q < r->frames && q - p < FIPSD_UDP_GSO_SEGMENTS && (q - p + 1) * size <= FIPSD_UDP_GSO_BYTES) {
+            size_t next = r->iov[q].iov_len;
+            if (next > size) break;
+            ++q;
+            if (next < size) break; /* only the last segment may be shorter */
+        }
+        size_t k = r->messages++;
+        r->first[k] = p; r->count[k] = q - p;
+        struct msghdr *h = &r->m[k].msg_hdr;
+        *h = (struct msghdr){.msg_iov = &r->iov[p], .msg_iovlen = q - p};
+        r->m[k].msg_len = 0;
+        size_t control = 0;
+        if (!s->connected) {
+            h->msg_name = (void *)&target->address; h->msg_namelen = target->len;
+            control = fipsd_udp_source_control(r->control[k].data, sizeof r->control[k].data, source);
+        }
+        if (q - p > 1) {
+            struct cmsghdr *c = (struct cmsghdr *)(r->control[k].data + control);
+            uint16_t segment = (uint16_t)size;
+            memset(c, 0, CMSG_SPACE(sizeof segment));
+            c->cmsg_level = SOL_UDP; c->cmsg_type = UDP_SEGMENT; c->cmsg_len = CMSG_LEN(sizeof segment);
+            memcpy(CMSG_DATA(c), &segment, sizeof segment);
+            control += CMSG_SPACE(sizeof segment);
+        }
+        if (control) { h->msg_control = r->control[k].data; h->msg_controllen = control; }
+        p = q;
+    }
+}
+/* Frames f[0..n) to one destination through s, n <= FIPSD_UDP_SEND_BATCH. */
+static size_t send_run(udp_instance *u, udp_socket *s, const fipsd_udp_endpoint *target,
+    const fipsd_udp_packet_info *source, const fipsd_transport_frame *f, size_t n, int *rc)
+{
+    tx_run r; r.frames = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (rc[i]) continue; /* failed its own checks */
+        r.iov[r.frames] = (struct iovec){.iov_base = (void *)f[i].bytes, .iov_len = f[i].len};
+        r.frame[r.frames++] = i;
+    }
+    tx_build(&r, s, target, source, 0, 0, atomic_load_explicit(&s->gso, memory_order_relaxed));
+    size_t sent = 0;
+    FIPSD_PERF_BEGIN(send_start);
+    for (size_t at = 0; at < r.messages;) {
+        int k = fipsd_udp_sendmmsg(s->fd, &r.m[at], (unsigned)(r.messages - at), 0);
+        if (k > 0) {
+            size_t frames = 0;
+            for (size_t j = at; j < at + (size_t)k; ++j)
+                for (size_t e = r.first[j]; e < r.first[j] + r.count[j]; ++e, ++frames)
+                    fipsd_transport_stats_sent(&u->shared.stats, f[r.frame[e]].len);
+            sent += frames;
+            FIPSD_PERF_EVENT(UDP_SEND_CONNECTED, s->connected ? frames : 0);
+            FIPSD_PERF_EVENT(UDP_SEND_WILDCARD, s->connected ? 0 : frames);
+            at += (size_t)k; continue;
+        }
+        int error = k < 0 ? fipsd_io_errno() : 0;
+        if (r.count[at] > 1) {
+            if (gso_refused(error) && atomic_exchange_explicit(&s->gso, false, memory_order_relaxed))
+                FIPSD_WARN("udp", "%s: UDP GSO refused (errno %d); this socket sends without it", u->name, error);
+            tx_build(&r, s, target, source, at, r.first[at], false); continue;
+        }
+        for (size_t e = r.first[at]; e < r.first[at] + r.count[at]; ++e) {
+            rc[r.frame[e]] = -1; fipsd_transport_stats_error(&u->shared.stats, true);
+        }
+        ++at;
+    }
+    FIPSD_PERF_END(send_start, UDP_SEND);
+    return sent;
+}
+static size_t send_batch(fipsd_transport *t, const fipsd_transport_frame *f, size_t n, int *rc)
+{
+    udp_instance *u = t->user;
+    bool live = u->started && !go_context_is_canceled(u->root);
+    size_t sent = 0;
+    for (size_t i = 0; i < n;) {
+        size_t k = i + 1;
+        while (k < n && k - i < FIPSD_UDP_SEND_BATCH && (f[k].to == f[i].to || fips_transport_addr_equal(f[k].to, f[i].to))) ++k;
+        size_t ready = 0;
+        for (size_t j = i; j < k; ++j) {
+            rc[j] = live && f[j].bytes && f[j].len ? 0 : -1;
+            if (!rc[j] && f[j].len > u->config.mtu) { atomic_fetch_add(&u->shared.stats.mtu_exceeded, 1); rc[j] = -1; }
+            ready += !rc[j];
+        }
+        if (ready) {
+            fipsd_udp_endpoint target; fipsd_udp_packet_info source; bool unresolved;
+            udp_socket *s = lease(u, f[i].to, &target, &source, &unresolved);
+            if (s) { sent += send_run(u, s, &target, &source, f + i, k - i, rc + i); fipsd_udp_socket_release(s); }
+            else for (size_t j = i; j < k; ++j) if (!rc[j]) {
+                if (unresolved) fipsd_transport_stats_error(&u->shared.stats, true);
+                rc[j] = -1;
+            }
+        }
+        i = k;
+    }
+    return sent;
+}
+#endif
 static void authenticated(fipsd_transport *t, const fips_transport_addr *address, fips_link_direction direction)
 {
     udp_instance *u = t->user;
@@ -179,7 +321,11 @@ static bool send_concurrent(const fipsd_transport *t, const fips_transport_addr 
 static const fipsd_transport_ops ops = {.local_addr = local_addr, .start_async = start_async, .stop = stop,
     .state = fipsd_transport_shared_state, .mtu = mtu, .send = send_frame, .discover = discover,
     .close_connection = close_connection, .network_changed = network_changed, .authenticated = authenticated,
-    .send_concurrent = send_concurrent};
+    .send_concurrent = send_concurrent,
+#if defined(__linux__)
+    .send_batch = send_batch,
+#endif
+};
 void fipsd_udp_config_default(fipsd_udp_config *c)
 {
     *c = (fipsd_udp_config){.bind_addr = "0.0.0.0:2121", .mtu = 1357, .recv_buf_size = 2097152,

@@ -167,6 +167,23 @@ GO_FIBER_API ssize_t     gof_sendto(gof_socket_t fd, const void *buf, size_t n, 
                                   const struct sockaddr *sa, socklen_t slen, int timeout_ms);
 GO_FIBER_API ssize_t     gof_recvmsg(gof_socket_t fd, struct msghdr *msg, int flags, int timeout_ms);
 GO_FIBER_API ssize_t     gof_sendmsg(gof_socket_t fd, const struct msghdr *msg, int flags, int timeout_ms);
+#if defined(__linux__)
+/** Linux batch datagram I/O (recvmmsg(2)/sendmmsg(2); not declared elsewhere).
+ * The gof_recvmsg/gof_sendmsg contract above, per call: the fiber parks, until
+ * readiness, the deadline or cancellation, only while the syscall would move
+ * no message at all. Returns the number of messages moved (each message's
+ * msg_len and, on receive, its name/control lengths and flags as the kernel
+ * left them), or -1 with errno. A count below vlen is not an error: on
+ * receive, fewer were queued; on send, message `count` failed and its error
+ * is not reported, so resubmit from it to learn it. recvmmsg gets no kernel
+ * timeout. timeout_ms == 0 never parks, so a plain OS thread may call either
+ * with it, as it may gof_sendmsg. */
+struct mmsghdr;
+GO_FIBER_API int         gof_recvmmsg(gof_socket_t fd, struct mmsghdr *msgs, unsigned int vlen,
+                                      int flags, int timeout_ms);
+GO_FIBER_API int         gof_sendmmsg(gof_socket_t fd, struct mmsghdr *msgs, unsigned int vlen,
+                                      int flags, int timeout_ms);
+#endif
 
 /** Owner-directed readiness-wait cancellation, independent of scheduler stop.
  * reset_fd prepares a newly owned descriptor (may fail with ENOMEM).

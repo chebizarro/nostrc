@@ -254,6 +254,151 @@ static void expect_packet(fixture *f, uint32_t id, size_t n)
     fipsd_transport_event *e = receive(f->events);
     assert(e && e->kind == FIPSD_TRANSPORT_PACKET && e->id.value == id && e->size == n); free(e);
 }
+#if defined(__linux__)
+/* nostrc-u19cz.4: one recvmmsg takes every queued datagram, each with its own
+ * source, pktinfo destination and ECN; one longer than the slot spills into
+ * its tail. Called on a fiber; everything is queued first (loopback), so the
+ * call returns without parking. */
+static void recv_batch(void)
+{
+    fipsd_udp_endpoint bind_to, local; fipsd_buffer_granted rg, sg;
+    assert(fipsd_udp_endpoint_numeric("0.0.0.0:0", &bind_to));
+    gof_socket_t fd = fipsd_udp_open(&bind_to, NULL, false, 1 << 20, 1 << 20, &rg, &sg, &local);
+    assert(fd >= 0);
+    struct sockaddr_in to = {.sin_family = AF_INET, .sin_port = ((struct sockaddr_in *)&local.address)->sin_port};
+    assert(inet_pton(AF_INET, "127.0.0.1", &to.sin_addr) == 1);
+    int senders[2]; struct sockaddr_in from[2];
+    for (int i = 0; i < 2; ++i) {
+        senders[i] = socket(AF_INET, SOCK_DGRAM, 0); assert(senders[i] >= 0);
+        from[i] = (struct sockaddr_in){.sin_family = AF_INET}; from[i].sin_addr = to.sin_addr;
+        assert(bind(senders[i], (struct sockaddr *)&from[i], sizeof from[i]) == 0);
+        socklen_t len = sizeof from[i]; assert(getsockname(senders[i], (struct sockaddr *)&from[i], &len) == 0);
+    }
+    int ce = 3; assert(setsockopt(senders[1], IPPROTO_IP, IP_TOS, &ce, sizeof ce) == 0);
+    static uint8_t data[3000];
+    for (size_t i = 0; i < sizeof data; ++i) data[i] = (uint8_t)(i * 7);
+    enum { SMALL = 7 };
+    for (int i = 0; i < SMALL; ++i)
+        assert(sendto(senders[i & 1], data + i, 10 + (size_t)i, 0, (struct sockaddr *)&to, sizeof to) == 10 + i);
+    assert(sendto(senders[0], data, sizeof data, 0, (struct sockaddr *)&to, sizeof to) == (ssize_t)sizeof data);
+    udp_rx *rx = fipsd_udp_rx_create(1357); assert(rx);
+    assert(fipsd_udp_recv_batch(rx, fd) == SMALL + 1);
+    for (int i = 0; i <= SMALL; ++i) {
+        const struct sockaddr_in *source = (const struct sockaddr_in *)&rx->source[i].address;
+        int who = i == SMALL ? 0 : i & 1;
+        assert(rx->m[i].msg_hdr.msg_namelen == sizeof *source && source->sin_port == from[who].sin_port);
+        fipsd_udp_packet_info info;
+        assert(fipsd_udp_decode_control(&rx->m[i].msg_hdr, &info) && info.has_destination && info.has_ecn);
+        assert(info.family == AF_INET && info.destination.v4.s_addr == to.sin_addr.s_addr);
+        assert(info.ecn == (who ? 3 : 0));
+        if (i < SMALL) assert(rx->m[i].msg_len == 10u + (unsigned)i && !memcmp(rx->slot[i]->bytes, data + i, 10 + (size_t)i));
+    }
+    assert(rx->m[SMALL].msg_len == sizeof data && !(rx->m[SMALL].msg_hdr.msg_flags & MSG_TRUNC));
+    assert(!memcmp(rx->slot[SMALL]->bytes, data, 1357) && !memcmp(rx->iov[SMALL][1].iov_base, data + 1357, sizeof data - 1357));
+    /* The next call re-arms what this one filled; nothing is queued now. */
+    assert(gof_recvmmsg(fd, rx->m, FIPSD_UDP_RECV_BATCH, 0, 0) == -1 && fipsd_io_errno() == ETIMEDOUT);
+    fipsd_udp_rx_free(rx);
+    close(senders[0]); close(senders[1]); close(fd);
+    puts("recvmmsg: one call per queued burst, per-datagram source/pktinfo/ECN, oversize spill: ok");
+}
+/* Batched sends (udp.c send_batch) through the syscall seam. */
+enum { HOOK_PASS, HOOK_PARTIAL, HOOK_FAIL_FIRST, HOOK_EAGAIN_GSO, HOOK_REFUSE_GSO };
+static int hook_mode; static unsigned hook_calls, hook_gso, hook_once;
+static int hooked_sendmmsg(gof_socket_t fd, struct mmsghdr *m, unsigned n, int flags)
+{
+    ++hook_calls;
+    for (unsigned i = 0; i < n; ++i) hook_gso += m[i].msg_hdr.msg_iovlen > 1;
+    bool gso = m[0].msg_hdr.msg_iovlen > 1;
+    if (hook_once && hook_mode == HOOK_PARTIAL && n > 1) { --hook_once; return gof_sendmmsg(fd, m, 1, flags, 0); }
+    if (hook_once && hook_mode == HOOK_FAIL_FIRST) { --hook_once; errno = ENOBUFS; return -1; }
+    if (hook_once && hook_mode == HOOK_EAGAIN_GSO && gso) { --hook_once; errno = EAGAIN; return -1; }
+    if (hook_mode == HOOK_REFUSE_GSO && gso) { errno = EIO; return -1; }
+    return gof_sendmmsg(fd, m, n, flags, 0);
+}
+/* An established-phase frame of n bytes, marked in its counter field. */
+static void established(uint8_t *p, size_t n, uint8_t mark)
+{
+    memset(p, 0, n); p[2] = (uint8_t)(n - FIPS_FRAMING_FMP_ENCRYPTED_MIN_SIZE);
+    p[3] = (uint8_t)((n - FIPS_FRAMING_FMP_ENCRYPTED_MIN_SIZE) >> 8); p[8] = mark;
+}
+static unsigned send_marked(fipsd_transport *t, const fips_transport_addr *const *to, const size_t *sizes,
+    size_t n, int mode, unsigned once, int *rc)
+{
+    static uint8_t bytes[16][1400]; fipsd_transport_frame frames[16];
+    assert(n <= 16);
+    for (size_t i = 0; i < n; ++i) {
+        established(bytes[i], sizes[i], (uint8_t)i);
+        frames[i] = (fipsd_transport_frame){.to = to[i], .bytes = bytes[i], .len = sizes[i]};
+    }
+    hook_mode = mode; hook_once = once; hook_calls = hook_gso = 0;
+    size_t sent = t->ops->send_batch(t, frames, n, rc);
+    hook_mode = HOOK_PASS;
+    size_t ok = 0; for (size_t i = 0; i < n; ++i) ok += rc[i] == 0;
+    assert(sent == ok);
+    return hook_calls;
+}
+static void expect_marked(fixture *f, uint32_t id, size_t n, uint8_t mark)
+{
+    fipsd_transport_event *e = receive(f->events);
+    assert(e && e->kind == FIPSD_TRANSPORT_PACKET && e->id.value == id && e->size == n && e->bytes[8] == mark); free(e);
+}
+static udp_socket *sender_socket(fipsd_transport *t, const fips_transport_addr *to)
+{
+    udp_instance *u = t->user; fips_transport_addr numeric; fipsd_udp_endpoint e;
+    assert(fipsd_udp_resolve(&u->dns, to, AF_INET, &e) && fipsd_udp_endpoint_addr(&e, &numeric));
+    nsync_mu_lock(&u->mu);
+    udp_socket *s = u->listener;
+    for (size_t i = 0; i < u->config.peer_capacity; ++i)
+        if (u->peers[i] && fips_transport_addr_equal(&u->peers[i]->peer, &numeric)) s = u->peers[i];
+    nsync_mu_unlock(&u->mu);
+    return s;
+}
+/* From t to its peer at `to` (whose events carry id). */
+static void batched(fixture *f, fipsd_transport *t, const fips_transport_addr *to, uint32_t id)
+{
+    udp_socket *s = sender_socket(t, to);
+    bool gso = atomic_load(&s->gso);
+    const fips_transport_addr *dest[16]; for (size_t i = 0; i < 16; ++i) dest[i] = to;
+    int rc[16];
+    fipsd_transport_stats_view before = fipsd_transport_stats_read(&t->shared->stats);
+    /* An equal-size run with a shorter tail: one message, one call. */
+    size_t run[11]; for (size_t i = 0; i < 11; ++i) run[i] = i < 10 ? 200 : 120;
+    assert(send_marked(t, dest, run, 11, HOOK_PASS, 0, rc) == 1 && hook_gso == (gso ? 1u : 0u));
+    for (uint8_t i = 0; i < 11; ++i) { assert(!rc[i]); expect_marked(f, id, run[i], i); }
+    /* Runs end at a longer frame and after a shorter one. */
+    size_t mixed[7] = {200, 200, 120, 200, 200, 64, 64};
+    assert(send_marked(t, dest, mixed, 7, HOOK_PASS, 0, rc) == 1 && hook_gso == (gso ? 2u : 0u));
+    for (uint8_t i = 0; i < 7; ++i) expect_marked(f, id, mixed[i], i);
+    /* The kernel takes only the first message: the rest follow, in order. */
+    size_t rising[4] = {100, 150, 200, 250};
+    assert(send_marked(t, dest, rising, 4, HOOK_PARTIAL, 1, rc) == 2);
+    for (uint8_t i = 0; i < 4; ++i) { assert(!rc[i]); expect_marked(f, id, rising[i], i); }
+    /* The first message fails: only its frame does, and counts once. */
+    assert(send_marked(t, dest, rising, 3, HOOK_FAIL_FIRST, 1, rc) == 2 && rc[0] == -1 && !rc[1] && !rc[2]);
+    for (uint8_t i = 1; i < 3; ++i) expect_marked(f, id, rising[i], i);
+    /* An oversize frame fails its own MTU check; the frames around it go. */
+    size_t over[3] = {100, 1358, 100};
+    assert(send_marked(t, dest, over, 3, HOOK_PASS, 0, rc) == 1 && !rc[0] && rc[1] == -1 && !rc[2]);
+    expect_marked(f, id, 100, 0); expect_marked(f, id, 100, 2);
+    fipsd_transport_stats_view after = fipsd_transport_stats_read(&t->shared->stats);
+    assert(after.packets_sent - before.packets_sent == 11 + 7 + 4 + 2 + 2);
+    assert(after.send_errors - before.send_errors == 1 && after.mtu_exceeded - before.mtu_exceeded == 1);
+    size_t equal[4] = {200, 200, 200, 200};
+    if (gso) {
+        /* Backpressure on a GSO message: resent as plain messages; GSO stays. */
+        assert(send_marked(t, dest, equal, 4, HOOK_EAGAIN_GSO, 1, rc) == 2 && atomic_load(&s->gso));
+        for (uint8_t i = 0; i < 4; ++i) { assert(!rc[i]); expect_marked(f, id, 200, i); }
+        /* Refused: resent plain, and the socket stops using GSO. */
+        assert(send_marked(t, dest, equal, 4, HOOK_REFUSE_GSO, 0, rc) == 2 && !atomic_load(&s->gso));
+        for (uint8_t i = 0; i < 4; ++i) { assert(!rc[i]); expect_marked(f, id, 200, i); }
+    }
+    assert(send_marked(t, dest, equal, 4, HOOK_PASS, 0, rc) == 1 && hook_gso == 0);
+    for (uint8_t i = 0; i < 4; ++i) expect_marked(f, id, 200, i);
+    atomic_store(&s->gso, gso);
+    printf("batched send (%s, GSO %s): runs, partial sendmmsg, failed message, MTU, GSO backpressure/refusal fallback: ok\n",
+        s->connected ? "connected" : "listener", gso ? "probed" : "unavailable");
+}
+#endif
 static void scenario(void *arg)
 {
     fixture *f = arg;
@@ -317,6 +462,24 @@ static void scenario(void *arg)
     f->b->ops->authenticated(f->b, &f->aa, FIPS_LINK_INBOUND);
     assert(f->a->ops->send(f->a, &f->ba, frame, sizeof frame) == 0); expect_packet(f, 2, sizeof frame);
     assert(!fipsd_udp_register_classifier(f->a, "late", consume, &f->calls));
+#if defined(__linux__)
+    recv_batch();
+    int (*plain_sendmmsg)(gof_socket_t, struct mmsghdr *, unsigned, int) = fipsd_udp_sendmmsg;
+    fipsd_udp_sendmmsg = hooked_sendmmsg;
+    batched(f, f->a, &f->ba, 2); /* a's connected socket */
+    /* Two destinations in one batch: a run each, each in order. */
+    const fips_transport_addr *two[4] = {&f->ba, &f->ba, &f->aa, &f->ba};
+    size_t sizes[4] = {100, 100, 100, 100}; int rc[4];
+    assert(send_marked(f->a, two, sizes, 4, HOOK_PASS, 0, rc) == 3);
+    uint8_t next_b = 0; bool got_a = false;
+    for (int i = 0; i < 4; ++i) {
+        fipsd_transport_event *e = receive(f->events); assert(e && e->kind == FIPSD_TRANSPORT_PACKET);
+        if (e->id.value == 1) { assert(!got_a && e->bytes[8] == 2); got_a = true; }
+        else { assert(e->id.value == 2 && e->bytes[8] == next_b); next_b = next_b == 1 ? 3 : next_b + 1; }
+        free(e);
+    }
+    assert(got_a && next_b == 4);
+#endif
     if (f->can_bind) {
         for (unsigned generation = 1; generation <= 2; ++generation) {
             atomic_store(&f->source.exists, true); atomic_store(&f->source.now, generation * 20000);
@@ -336,6 +499,12 @@ static void scenario(void *arg)
         assert(v.binds == 2);
         puts("interface watcher: absent start -> appears/binds/receives -> disappears/joins -> reappears/rebinds/receives: ok");
     }
+#if defined(__linux__)
+    /* b's wildcard listener: pktinfo source control beside UDP_SEGMENT. */
+    f->b->ops->close_connection(f->b, &f->aa);
+    batched(f, f->b, &f->aa, 1);
+    fipsd_udp_sendmmsg = plain_sendmmsg;
+#endif
     nsync_mu_lock(&a->mu);
     assert(a->listener); int receive_fd = a->listener->fd;
     GoChannel *receive_done = go_channel_ref(a->listener->done);

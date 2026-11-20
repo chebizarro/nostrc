@@ -1,3 +1,6 @@
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE /* struct mmsghdr */
+#endif
 #if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
 #define _DARWIN_C_SOURCE
 #endif
@@ -509,6 +512,149 @@ static void test_nonblock_cache(void) {
 }
 #endif
 
+#if defined(__linux__)
+/* nostrc-u19cz.4: gof_recvmmsg/gof_sendmmsg. */
+static void mmsg_setup(struct mmsghdr *m, struct iovec *iov, char (*buf)[24],
+                       struct sockaddr_in *names, int n) {
+  memset(m, 0, sizeof(*m) * (size_t)n);
+  for (int i = 0; i < n; ++i) {
+    iov[i].iov_base = buf[i];
+    iov[i].iov_len = sizeof(buf[i]);
+    m[i].msg_hdr.msg_iov = &iov[i];
+    m[i].msg_hdr.msg_iovlen = 1;
+    if (names) {
+      m[i].msg_hdr.msg_name = &names[i];
+      m[i].msg_hdr.msg_namelen = sizeof(names[i]);
+    }
+  }
+}
+
+struct mmsg_reader {
+  int fd;
+  atomic_int entered, done;
+};
+
+static void mmsg_receive_parked(void *arg) {
+  struct mmsg_reader *r = arg;
+  char buf[2][24];
+  struct iovec iov[2];
+  struct mmsghdr m[2];
+  mmsg_setup(m, iov, buf, NULL, 2);
+  atomic_store(&r->entered, 1);
+  assert(gof_recvmmsg(r->fd, m, 2, 0, IO_TIMEOUT_MS) == 1);
+  assert(m[0].msg_len == 4 && memcmp(buf[0], "wake", 4) == 0);
+  atomic_store(&r->done, 1);
+}
+
+struct mmsg_drain {
+  int fd, count;
+  atomic_int done;
+};
+
+static void mmsg_drain_all(void *arg) {
+  struct mmsg_drain *d = arg;
+  char buf[2048];
+  for (int i = 0; i < d->count; ++i)
+    assert(gof_recvfrom(d->fd, buf, sizeof(buf), 0, NULL, NULL, IO_TIMEOUT_MS) > 0);
+  atomic_store(&d->done, 1);
+}
+
+static void test_mmsg(void) {
+  struct sockaddr_in a_addr, b_addr, server_addr;
+  gof_socket_t a = udp_socket(&a_addr), b = udp_socket(&b_addr), server = udp_socket(&server_addr);
+  /* Two senders, two messages each; loopback queues them before the call returns. */
+  static const char *const text[4] = {"a1", "a22", "b333", "b4444"};
+  for (int s = 0; s < 2; ++s) {
+    struct iovec iov[2];
+    struct mmsghdr m[2];
+    memset(m, 0, sizeof(m));
+    for (int i = 0; i < 2; ++i) {
+      iov[i].iov_base = (void *)text[2 * s + i];
+      iov[i].iov_len = strlen(text[2 * s + i]);
+      m[i].msg_hdr.msg_name = &server_addr;
+      m[i].msg_hdr.msg_namelen = sizeof(server_addr);
+      m[i].msg_hdr.msg_iov = &iov[i];
+      m[i].msg_hdr.msg_iovlen = 1;
+    }
+    assert(gof_sendmmsg(s ? b : a, m, 2, 0, IO_TIMEOUT_MS) == 2);
+    assert(m[0].msg_len == iov[0].iov_len && m[1].msg_len == iov[1].iov_len);
+  }
+  /* A long one, for per-message truncation. */
+  assert(gof_sendto(a, "0123456789abcdefghijklmnopqrstuvwxyz", 36, 0,
+                    (struct sockaddr *)&server_addr, sizeof(server_addr), IO_TIMEOUT_MS) == 36);
+  char buf[8][24];
+  struct iovec iov[8];
+  struct sockaddr_in source[8];
+  struct mmsghdr m[8];
+  mmsg_setup(m, iov, buf, source, 8);
+  /* Every queued message in one call, each with its own source and flags. */
+  assert(gof_recvmmsg(server, m, 8, 0, IO_TIMEOUT_MS) == 5);
+  for (int i = 0; i < 5; ++i) {
+    const struct sockaddr_in *want = i == 2 || i == 3 ? &b_addr : &a_addr;
+    assert(m[i].msg_hdr.msg_namelen == sizeof(source[i]));
+    assert(source[i].sin_port == want->sin_port && source[i].sin_addr.s_addr == want->sin_addr.s_addr);
+    if (i < 4) {
+      assert(m[i].msg_len == strlen(text[i]) && memcmp(buf[i], text[i], m[i].msg_len) == 0);
+      assert(!(m[i].msg_hdr.msg_flags & MSG_TRUNC));
+    } else {
+      assert(m[i].msg_len == sizeof(buf[i]) && (m[i].msg_hdr.msg_flags & MSG_TRUNC));
+    }
+  }
+  /* Nothing queued: the deadline, and a zero timeout never parks. */
+  mmsg_setup(m, iov, buf, NULL, 8);
+  uint64_t start = monotonic_ms();
+  assert(gof_recvmmsg(server, m, 8, 0, 50) == -1 && test_errno() == ETIMEDOUT);
+  assert(monotonic_ms() - start >= 50);
+  assert(gof_recvmmsg(server, m, 8, 0, 0) == -1 && test_errno() == ETIMEDOUT);
+  /* A parked receive lets other fibers run (one-worker variant) and wakes
+   * on arrival. */
+  struct mmsg_reader r = {.fd = server};
+  atomic_init(&r.entered, 0);
+  atomic_init(&r.done, 0);
+  assert(gof_spawn(mmsg_receive_parked, &r, 0));
+  while (!atomic_load(&r.entered)) gof_yield();
+  assert(gof_sendto(a, "wake", 4, 0, (struct sockaddr *)&server_addr, sizeof(server_addr),
+                    IO_TIMEOUT_MS) == 4);
+  while (!atomic_load(&r.done)) gof_yield();
+  assert(gof_recvmmsg(GOF_INVALID_SOCKET, m, 1, 0, 0) == -1 && test_errno() == EBADF);
+  assert(gof_sendmmsg(GOF_INVALID_SOCKET, m, 1, 0, 0) == -1 && test_errno() == EBADF);
+  test_close(a);
+  test_close(b);
+  test_close(server);
+
+  /* A full send queue: nothing moved times out; a parked send completes
+   * once the peer drains. */
+  int sp[2];
+  assert(socketpair(AF_UNIX, SOCK_DGRAM, 0, sp) == 0);
+  int size = 8192;
+  assert(setsockopt(sp[0], SOL_SOCKET, SO_SNDBUF, &size, sizeof(size)) == 0);
+  assert(fcntl(sp[0], F_SETFL, fcntl(sp[0], F_GETFL) | O_NONBLOCK) == 0);
+  static char filler[1000];
+  int queued = 0;
+  while (send(sp[0], filler, sizeof(filler), 0) == (ssize_t)sizeof(filler)) ++queued;
+  assert(queued > 0 && (test_errno() == EAGAIN || test_errno() == ENOBUFS));
+  struct iovec out = {.iov_base = filler, .iov_len = sizeof(filler)};
+  struct mmsghdr full[3];
+  memset(full, 0, sizeof(full));
+  for (int i = 0; i < 3; ++i) {
+    full[i].msg_hdr.msg_iov = &out;
+    full[i].msg_hdr.msg_iovlen = 1;
+  }
+  assert(gof_sendmmsg(sp[0], full, 3, 0, 20) == -1 && test_errno() == ETIMEDOUT);
+  struct mmsg_drain d = {.fd = sp[1], .count = queued + 3};
+  atomic_init(&d.done, 0);
+  assert(gof_spawn(mmsg_drain_all, &d, 0));
+  for (int sent = 0; sent < 3;) {
+    int n = gof_sendmmsg(sp[0], full + sent, (unsigned)(3 - sent), 0, -1);
+    assert(n >= 1 && n <= 3 - sent);
+    sent += n;
+  }
+  while (!atomic_load(&d.done)) gof_yield();
+  close(sp[0]);
+  close(sp[1]);
+}
+#endif
+
 static void run_tests(void *arg) {
   (void)arg;
 #if !defined(_WIN32) && defined(MSG_DONTWAIT)
@@ -522,6 +668,9 @@ static void run_tests(void *arg) {
 #if !defined(_WIN32)
   test_send_backpressure();
   test_writable_waits();
+#endif
+#if defined(__linux__)
+  test_mmsg();
 #endif
 }
 
