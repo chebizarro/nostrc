@@ -53,13 +53,22 @@ int fipsd_node_dispatch_crypto(const fipsd_node_context *c, fipsd_crypto_job *j)
 int fipsd_node_run_crypto_inline(const fipsd_node_context *c, fipsd_crypto_job *j)
 { return fipsd_worker_set_run_inline(c->workers, j); }
 _Static_assert(offsetof(struct fipsd_node, context) == 0, "context is the node's first member");
+/* A few queued events are not a backlog (nostrc-u19cz.14). A receive batch
+ * is queued at once, and the next native datagram is often already waiting
+ * when the dispatcher wakes; demanding empty queues sent ~99% of the jobs at a
+ * moderate rate to a worker, at a condvar wake plus a completion wake each,
+ * several times the AEAD. Running a job here delays those few events by one
+ * AEAD. A real backlog (saturation keeps these queues at 32 and more) still
+ * hands jobs to workers, and a shard's first handoff keeps the rest of its
+ * burst there: run_inline refuses while that worker has jobs in flight. */
 bool fipsd_node_dispatch_backlog(const fipsd_node_context *c)
 {
     const fipsd_node *n = (const fipsd_node *)c;
     GoChannel *queues[] = {fipsd_worker_set_results(c->workers), n->transport_events, c->peers.inbox,
         n->options.command ? n->options.commands : NULL};
+    size_t queued = 0;
     for (size_t i = 0; i < sizeof queues / sizeof *queues; ++i)
-        if (queues[i] && go_channel_get_depth(queues[i])) return true;
+        if (queues[i] && (queued += go_channel_get_depth(queues[i])) > FIPSD_NODE_INLINE_BACKLOG) return true;
     return false;
 }
 static void noop(void *arg) { (void)arg; }
