@@ -822,6 +822,13 @@ release columns or tags are changed. NIP-47/49 GLib implementations include
 
 ## Recorded version decisions
 
+- nostrc-n08qx: the PATCH-class correction allowing REQ to relays advertising
+  NIP-11 `auth_required` folds into unreleased nostr-gobject 3.1.0; no API/ABI
+  change or additional bump. Groundhog consumes the correction in its existing
+  unreleased 0.13.0 wave, without a version or tester-label change. The old
+  0.12.1-alpha9 AppStream entry is superseded by the current 0.13.0 entry;
+  no release-column or tag changes.
+
 - nostrc-er4fz.10 phase D1 (B2 consumer regression): nostr-seal PATCH
   0.1.2 -> 0.1.3. Phase B2 made `nips/nip49/include/nostr/nip49/nip49.h`
   include a generated `nostr/nip49/export.h`, but nostr-seal compiles its own
