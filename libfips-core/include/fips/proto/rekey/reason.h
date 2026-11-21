@@ -41,7 +41,8 @@ typedef enum fips_rekey_reason {
     FIPS_REKEY_REASON_AttemptInFlight,
     FIPS_REKEY_REASON_AlreadyEstablished,
     FIPS_REKEY_REASON_CandidateExpired,
-    FIPS_REKEY_REASON_NotRekey
+    FIPS_REKEY_REASON_NotRekey,
+    FIPS_REKEY_REASON_ReplyUnread
 } fips_rekey_reason;
 typedef enum fips_rekey_abandon {
     FIPS_REKEY_ABANDON_AdoptionNotSeen,

@@ -2,7 +2,9 @@
 
 The 24 JSON files are byte-for-byte copies of `src/control/snapshots/*.json`
 from FIPS commit `6aa80504baa0fa312b392009eea0e3e59fb6fe4c`
-(<https://github.com/jmcorgan/fips>), matching `libfips-core/UPSTREAM.md`.
+(<https://github.com/jmcorgan/fips>), the original compatibility baseline.
+The current pin is in `libfips-core/UPSTREAM.md`; these capture origins are
+retained rather than relabelled. Its wave26 triage tracks new metrics separately.
 They are test oracles, not runtime response templates. See upstream
 `src/control/queries.rs` snapshot module, `src/control/probe.rs` and
 `src/control/tests/compose.rs` for independent fixture construction.

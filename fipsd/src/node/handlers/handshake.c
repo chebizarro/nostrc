@@ -644,7 +644,15 @@ static bool msg2(handlers *h, fipsd_transport *t, const fips_transport_addr *fro
          * revoked peers before the rekey machine authenticates/transitions. */
         if (!hs_acl_authorize(h, &fipsd_active_peer_info(rec->peer)->identity, "outbound_rekey")) return false;
         link_exec_result r = {0};
-        fips_rekey_input in = {.kind = FIPS_REKEY_IN_Reply, .bytes = frame, .buf = frame, .len = len};
+        const fipsd_peer_info *info = fipsd_active_peer_info(rec->peer);
+        bool on_link = fips_transport_id_equal(info->transport, t->id) && fips_transport_addr_equal(&info->addr, from);
+        if (rec->path) {
+            fips_path_match path = fips_path_set_classify(&rec->path->set, t->id, from);
+            on_link = path.kind == FIPS_PATH_Proven ||
+                (!rec->path->capable && path.kind == FIPS_PATH_MatchNone && on_link);
+        }
+        fips_rekey_input in = {.kind = FIPS_REKEY_IN_Reply, .bytes = frame, .buf = frame, .len = len,
+            .on_link = on_link};
         /* The machine judges the reply and hs_metrics_rekey counts what it
          * refuses, as upstream's msg2_to_link does: a late or duplicate copy
          * (LateReply/UnknownAttempt/UnknownIndex) as unknown_connection, a

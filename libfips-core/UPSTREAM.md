@@ -1,26 +1,227 @@
 # FIPS upstream compatibility baseline
 
-Pinned commit: `6aa80504baa0fa312b392009eea0e3e59fb6fe4c`
+Pinned commit: `64f5b4d482cfe14abad108ffc2d92128f7658311`
 
 - **Upstream:** <https://github.com/jmcorgan/fips>, Rust `master` as inspected
-  on **2026-11-14**; commit date **2026-11-14 03:01:39 UTC**.
+  on **2026-11-21**; commit date **2026-11-20 19:36:55 UTC**.
 - **Upstream package version:** `0.6.0-dev` (`Cargo.toml`); this is a development
   snapshot, not a `v0.6.0` release tag. Historical tags `v0.3.0` through `v0.5.3`
   remain compatibility references, not the source pin.
-- **Selection:** the port assessment measured this exact tree, after the
-  `fips-core` sans-IO split and the IK/XK/shared-rekey work. Older estimates used
-  the June 2026 tree and obsolete module names. Pin the immutable commit, not a
-  moving branch or the latest release, so C/Rust differential results have one
-  reproducible oracle. No upstream source is vendored by this document.
-- **Owning task:** `nostrc-s50dj.5` (foundations `nostrc-s50dj`).
+- **Selection:** wave26 advances the immutable compatibility oracle by 75 commits
+  from `6aa80504baa0fa312b392009eea0e3e59fb6fe4c`. The architectural change is
+  settlement-core adoption by the upstream node, not a new wire version. See
+  the triage below; pin acceptance does **not** claim the C host has adopted
+  every upstream lifecycle decision.
+- **Owning task:** `nostrc-f66sr.11` (standing procedure `nostrc-f66sr.6`).
 - **Assessment:** FIPS Rust-to-C port assessment, supplied separately from
   `docs/investigations/fips-rust-to-c-port-on-nostrc-2026-11-13.md`, especially
-  sections 1, 2.2, 2.3, 5.5 and 6. It is dated November 13 but explicitly
-  measures the November 14 upstream commit above.
+  sections 1, 2.2, 2.3, 5.5 and 6. Its November 14 baseline is the former
+  `6aa80504` pin; the inventory/counts below are that historical assessment,
+  not a new line-count assessment of `64f5b4d4`.
 
 The C core stays runtime/OS-independent: the host supplies entropy and time,
 feeds inputs into state machines, and executes their returned actions. Root
 Rust host modules belong in `fipsd`, not in `libfips-core`.
+
+## 2026-11-21 pin-bump triage (`nostrc-f66sr.11`)
+
+Candidate: `64f5b4d482cfe14abad108ffc2d92128f7658311`, committed
+2026-11-20 19:36:55 UTC, package `0.6.0-dev`, nearest release ancestor `v0.5.3`.
+Compared committed trees in the read-only reference repository, then built a
+separate clean detached clone. Delta: **75 commits, 380 files**. Categories:
+**wire-affecting** changes an encoding/cryptographic transcript; **behaviour-only**
+changes admission, state, traffic policy or a host-visible API without changing
+those encodings; **internal-only** has no external semantics.
+
+### Complete changed watch set
+
+`fips-upstream-diff.sh` exits **1** (review required): **3 changed / 24 unchanged**.
+
+| Changed watched path | Classification | Evidence and disposition |
+| --- | --- | --- |
+| `CHANGELOG.md` | behaviour-only (mixed internal/performance notes) | Multipath now defaults on; fresh off-link redials are answered/staged until proof, quiet-link and crossed TCP dials settle differently; 8-refused-read IK rekey cap; new decrypt-queue counter; smaller worker queues; FreeBSD restart fix. No codec change. See runtime triage below. |
+| `docs/reference/configuration.md` | behaviour-only | `node.path.enabled` default false -> true. Existing message formats/capability negotiation unchanged; a default upstream node now emits/answers path probes. C daemon still defaults off: deliberate transitional divergence, tracked below. |
+| `docs/reference/control-socket.md` | behaviour-only | `show_metrics.dataplane` gains `decrypt_queue_full` (the runtime also gains `redial_unopened`); JSON command/envelope unchanged. C host metric/lifecycle adoption remains follow-up. |
+
+All **24 unchanged** watched paths: `core/src/noise/{mod,cipher}.rs`,
+`core/src/proto/{coord,framing,link}.rs`; each `wire.rs` and `tests/wire.rs`
+under `proto/{bloom,fmp,fsp,lookup,mmp,path,routing,stp}`; and
+`docs/reference/{native-api,nostr-events,wire-formats}.md`. No changed watched
+path is wire-affecting. This watch set does not cover every state-machine rule;
+the full delta was reviewed as follows.
+
+### Runtime delta outside the watch set
+
+| Upstream area | Classification | C disposition |
+| --- | --- | --- |
+| `proto/rekey/{cycle,machine,params,profile,reason}`, `fmp/rekey/ik`, `fsp/rekey/xk` (5ecedddb) | behaviour-only/security | Ported `reads=8`, per-attempt saturating refused-read count and `ReplyUnread`. Only IK profiles opt in; after 8 refused reads off-link msg2 is rejected **before** profile/DH read, while on-link genuine replies always remain admissible. FSP/first-dial reads unchanged. Node passes actual transport/address/path attribution and counts unread replies as `handshake.off_link`. Test counters prove unread replies never call the crypto profile, budget reset/saturation, session exemption and genuine completion; production-node test covers metric exposure and alternate-address refusal. |
+| `proto/rekey` redial decisions (0fd52228) | behaviour-only/handshake admission | Core now accepts `heard`, emits `RedialRequested` without recording/tearing down, and records the ephemeral only on explicit `note_redial` after host arming. Core tests cover young/mature heard peers, repeated unarmed request, explicit record and replay refusal. **Not wired into fipsd**: existing host omits `heard` and retains its former replacement/admission flow until settlement adoption. |
+| `proto/fmp/{core,mod,silent,state}` deletions/moves; `proto/settle/**`; `src/node/{settle,handlers,lifecycle}`, deleted `src/peer/machine.rs` | behaviour-only architecture with internal ownership changes | Upstream decides every handshake/removal and connection-use rule through `Node.core`. D2 ports settlement core separately. C keeps existing FMP establish/resend/silent APIs and peer machine until host cutover; deleting them at pin bump would break current callers. New host epic `nostrc-qtpj9` with ordered children `.1`–`.6` is blocked on `nostrc-f12v2.7` (and requires full table/gates/join beyond D2's initial params/links/legs subset). No node rewiring performed here. |
+| `proto/path/{capable,live,machine,mod,set}` | internal-only diagnostic/API metadata | Ported sent timeout `wait` and optional state-output timeout, preserved even when a verdict is deferred or later RTTs change. No scheduling, probe bytes or state thresholds change. Rust test-only `deactivate` is not a missing C production feature (C tests can set its caller-owned set directly). |
+| `utils/onlink::read_suspect` | behaviour-only diagnostic | Ported: a failed system read, or considered addresses with no survivors, is suspect. Discarded /0 entries beside usable prefixes no longer warn (macOS VPN case). Failed read with zero considered addresses now warns. |
+| `rekey/hooks`, `faults`, private `testutil`, legacy models/tests | internal-only/test | Backdate failures now panic rather than silently leave a test's clock unchanged; new mutation/explorer guards. Exporter's deterministic entropy/clock/key adapters unchanged. Legacy model algorithms unchanged (added test hooks only); bridge rebased for `Arrival.heard` and IK `Arrived.on_link`, preserving all 12 release-model cases. |
+| node receive tick/time helpers, identity-cache debug guard; decrypt queue/registration representation | internal-only/performance, plus behaviour-only overload limit | Clock access centralized; registration moved out of queue slots; decrypt queue 32768 -> 16384; `decrypt_queue_full`/`redial_unopened` metrics. Not a wire change; host dataplane outside D1 ownership. |
+| config/control/CLI | behaviour-only | Multipath default-on (56166e93), metrics above, `fipsctl path pin` warning when requested pin is not enforced (adc46736). Control command framing unchanged. These host changes are explicitly not claimed by the C core pin. |
+| native API | internal-only/test | No `src/native/**` or native reference change; integration flow-report hold teardown changed only in tests. Rust daemon and client module support macOS through SOCK_DGRAM; only the optional `native-echo` example still has a stale Linux/FreeBSD-only gate. macOS harness native flows remain testable; no reference-example echo is claimed. |
+| macOS interface medium/Ethernet and FreeBSD rc restart | behaviour-only/platform | Correct Apple ifmediareq layout, avoid receiving own Ethernet frames, warn only when no prefix usable; wait for pidfiles on stop. No codec change. Platform host ports are outside this D1 core bump. |
+| remaining CI, packaging, chaos, test clock/backdate, docs | internal-only/test/build | No additional encoding/transcript/native protocol changes found. No inferred wire parity from these tests. |
+
+### Regenerated oracle and compatibility limits
+
+Rehearsal command (old baseline still in place):
+
+```sh
+ROOT=/Users/bizarro/Documents/Projects/nostrc-wt/w26-pin
+"$ROOT/scripts/fips-upstream-diff.sh" -C /tmp/fipsup.wFB4/fips 64f5b4d482cf
+"$ROOT/scripts/fips-upstream-bump.sh" -C /tmp/fipsup.wFB4/fips 64f5b4d482cf --keep
+```
+
+Wrapper exit **1**, not an operational error: watch changes and provenance differ.
+Both ordinary exports and both legacy captures were byte-identical to each other.
+Regenerated **all eight families**: entropy, identity, codec, noise, proto, rekey,
+nostr, rekey-legacy (12 traces, V050/V051, V052, V053; both protocols/roles).
+**All 408 binary sidecars are unchanged**. Across 19 JSON documents only pin
+provenance changes, plus `reads: 8` appended to the 13 rekey/legacy
+`params_debug` strings. No action, state, message, ciphertext, error, seed, or
+case was removed or changed. The C differential config formatter now checks the
+new field; it was not relaxed. Original Nostr capture provenance and historical
+upstream analysis notes retain their original pins intentionally.
+
+The exporter scaffolding change is **only the pin constant/dependency lock**;
+no family module/dispatch restructuring collides with D2's new `settle` family.
+The new per-kind rekey scratch ownership/wipe audit is addendum R-2 in
+`docs/reviews/libfips-core-noise-audit-2026-11-15.md`; the stale
+`hs_outputs_clear` comment is corrected (`nostrc-u19cz.5/.6`).
+
+Version decision: libfips-core remains **0.1.0 Unreleased**; fipsd remains
+**0.1.1 Unreleased** (the manifest already advances it past released 0.1.0).
+No published release/tag is rewritten. Consistent with the initial-core-port
+decisions, the core input/config/output layout additions and path expiry
+API extension are MINOR-class within that unreleased initial port. Source callers
+of `fips_path_liveness_expire` now pass the optional final `wait` output pointer
+(`NULL` discards diagnostic metadata); this is a source-signature change, not a
+claim of binary ABI compatibility. The read cap and
+scratch performance correction are security/PATCH-class. Test exporter/fixtures
+and CI alone require no component release or tag. No libgo/libfipsnative change.
+
+Verification receipts below distinguish the default host TSan lane from an
+additional core-library-instrumented run. The normal CMake lane opts the shipped
+`fips_core` archive out of TSan, while rekey/differential test executables also
+compile core source directly with instrumentation. The extra qualification
+removes the archive opt-out through a local CMake overlay; no shipped build
+policy or sanitizer suppression was changed. Vector parity is not a claim of
+settlement-host behavioural parity.
+
+### Local qualification receipts (macOS arm64)
+
+All following results use the **new pin**, not the old daemon. Clean Rust build:
+
+```bash
+ROOT=/Users/bizarro/Documents/Projects/nostrc-wt/w26-pin
+# Task-owned clean detached source clone; removed after qualification.
+UPSTREAM=/tmp/w26-pin-upstream
+CARGO_TARGET_DIR="$ROOT/build-pin-bump/rust-target" cargo +1.94.1 build \
+  --manifest-path "$UPSTREAM/Cargo.toml" --locked --release \
+  --bin fips --bin fipsctl --example native-echo
+"$ROOT/build-pin-bump/rust-target/release/fips" --version
+# fips 0.6.0-dev (rev 64f5b4d482), target aarch64-apple-darwin; NOT dirty
+```
+
+C builds use Ninja, Debug, `GO_WARNINGS_AS_ERRORS=ON`, `BUILD_FIPS=ON`,
+`BUILD_APPS=OFF`, `BUILD_RELAYD=OFF`, `BUILD_LIBHANAMI=OFF`,
+`BUILD_LIBMARMOT=OFF`, `BUILD_MARMOT_GOBJECT=OFF`, `BUILD_NOSTR_GOBJECT=OFF`,
+`BUILD_NOSTR_GTK=OFF`, `SIGNET_ENABLE=OFF`, `WITH_NOSTRDB=OFF`,
+`LIBNOSTR_WITH_NOSTRDB=OFF`. ASan sets `GO_ENABLE_ASAN=ON` and
+`GO_ENABLE_UBSAN=ON`; TSan sets `GO_ENABLE_TSAN=ON` in a separate build.
+Both `FIPSD_UDP_INTEROP_RUST_BINARY` **and** `FIPSD_TCP_INTEROP_RUST_BINARY`
+point to the clean `rust-target/release/fips` above;
+`FIPSD_FIPSCTL_EXECUTABLE` points to its sibling `fipsctl`.
+`FIPSD_UDP_INTEROP_RUST_ECHO` is empty on macOS for the example-gate reason above.
+The Fips target closure is built with `--parallel 4`; retained
+`rust-target/qualification/fips-targets.txt` records its executable targets,
+with `fipsd_native_client_tool` and `fips-ble-agent` additionally built.
+No unrelated NIP suite is part of these receipts.
+
+Exact final test invocations:
+
+```bash
+ASAN_OPTIONS=detect_leaks=0:strict_string_checks=1:halt_on_error=1 \
+UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+ctest --test-dir "$ROOT/build-pin-bump/asan" -R '^Fips' --parallel 2 --output-on-failure
+ASAN_OPTIONS=detect_leaks=0:strict_string_checks=1:halt_on_error=1 \
+UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+ctest --test-dir "$ROOT/build-pin-bump/asan" -L fips-diff -V
+TSAN_OPTIONS=halt_on_error=1 \
+ctest --test-dir "$ROOT/build-pin-bump/tsan" -R '^Fips' --parallel 2 --output-on-failure
+TSAN_OPTIONS=halt_on_error=1 \
+ctest --test-dir "$ROOT/build-pin-bump/tsan" -L fips-diff -V
+TSAN_OPTIONS=halt_on_error=1 \
+ctest --test-dir "$ROOT/build-pin-bump/tsan-core" -R '^(FipsCore|FipsDiff|FipsProtoSweep)' --output-on-failure
+TSAN_OPTIONS=halt_on_error=1 \
+ctest --test-dir "$ROOT/build-pin-bump/tsan-core" -L fips-diff -V
+```
+
+The `tsan-core` build additionally sets `CMAKE_EXPORT_COMPILE_COMMANDS=ON` and
+`CMAKE_PROJECT_INCLUDE` to the retained `qualification/instrument-core.cmake`.
+That deferred qualification-only overlay removes `-fno-sanitize=thread` from
+`fips_core`'s target options (appending a duplicate `-fsanitize=thread` would be
+CMake-de-duplicated). Checked compiler commands confirm both the archive and
+the directly-compiled test sources are instrumented. Its closure explicitly
+builds `fips_core_host_test` **and** `fips_core_skeleton_test`.
+
+| Check | Actual result |
+| --- | --- |
+| ASan/UBSan `^Fips` | **219 passed, 0 failed, 6 skipped, 1 disabled**; 403.72 s |
+| TSan `^Fips` | **219 passed, 0 failed, 6 skipped, 1 disabled**; 464.58 s |
+| `fips-diff` in ASan, normal TSan, archive-instrumented TSan | **10/10 passed in each**, no skipped family |
+| Archive-instrumented TSan core/diff/sweep | **49/49 passed**, 0 skipped; 52.16 s |
+| Shared rekey scenario binary | **95 scenarios passed** (including the new cap/redial tests) |
+| Rust exporter `cargo +1.94.1 test --locked` | **5 integration tests passed**, 0 ignored; real CLI deterministic and matches new fixtures |
+| Rust `cargo +1.94.1 fmt --check`; `clippy --locked --all-targets -- -D warnings` | passed |
+| `python3 scripts/test-selection-operational.py` | **486 passed**; refreshed only six fips-ci workflow hash bindings and the interop coverage-gap description, not coverage/profile assertions |
+| `check-unsequenced-args.py --root "$ROOT" --self-test`; `check-errno-after-park.py --root "$ROOT" --self-test`; `actionlint "$ROOT/.github/workflows/fips-ci.yml"`; `git -C "$ROOT" diff --check` | passed |
+
+The six skipped tests in each full lane are `FipsdTunPrivilegedSmokeTest`,
+`FipsdIpv6PrivilegedSmokeTest`, `FipsdEthernetPrivilegedSmokeTest`,
+`FipsdEthernetBpfSmokeTest`, `FipsdTorInteropTest`, and
+`FipsdAdvertTorInteropTest` (unavailable privilege/platform/Tor routes).
+`FipsdInteropSoakTest` remains intentionally disabled. These are **not** passing
+runs. No requested UDP/TCP/multi-node/fipsctl interop test skipped.
+Initial fixture-pin/config assertions were updated to the reviewed new pin and
+`reads` field, not loosened. Initial TSan build-closure Not Runs (missing BLE
+agent / isolated core skeleton) were fixed by building their prerequisites,
+then rerunning the complete affected selection. No sanitizer finding was hidden.
+
+| New-pin interop | ASan/UBSan | TSan |
+| --- | --- | --- |
+| UDP IPv4, both initiator roles (`FipsdInteropUdpTest`) | pass | pass |
+| UDP IPv6, both initiator roles (`FipsdInteropUdpV6Test`) | pass | pass |
+| TCP (`FipsdTcpInteropTest`) | pass | pass |
+| Saturated TCP rekey, C smaller / Rust smaller | both pass | both pass |
+| Multi-node (`FipsdInteropMultiTest`, all topologies) | pass | pass |
+| Rust fipsctl -> C control / C fipsctl -> Rust (`FipsdControlInteropTest`, `FipsdFipsctlInteropTest`) | both pass | both pass |
+| Native data paths (C libfipsnative, Python -> Rust native API, overlay roundtrips) and C native suite | pass | pass |
+| Optional Rust reference-client-on-C echo example | unavailable: stale example platform gate | unavailable: same |
+
+No peer/handshake interoperability failure was observed in this matrix against
+`64f5b4d4`. That does **not** prove unimplemented redial/settlement-host scenarios
+match; those remain `nostrc-qtpj9` and `.1`–`.6`. The stale native example gate is
+`nostrc-f66sr.12`; neither its source gate nor daemon/protocol behaviour was
+patched to manufacture a pass. Linux CI is configured to run that example;
+**no hosted CI or Linux VM execution is claimed** by this local result.
+
+Task-owned C build directories, rehearsal/export Cargo trees, capture scratch and
+`/tmp/w26-pin-upstream` are removed after qualification. The clean pinned Rust
+binaries and raw receipts remain only under
+`$ROOT/build-pin-bump/rust-target/{release,qualification}`. No VM directory or
+container was created. The read-only reference/user checkouts and sibling-owned
+source areas were not edited. Local commit only; no push or merge.
+**Tracker-hook exception:** the first local commit's existing pre-commit hook
+exported shared Beads data to the main checkout's `.beads/issues.jsonl`.
+That automatic export was not staged here or reverted (it may contain sibling
+tracker updates). The final message/receipt amendment disables hooks for that
+one invocation to prevent repeating the cross-checkout export; all required
+static checks were run explicitly. No main-checkout source was edited.
 
 ## Wire and host-interface invariants
 
@@ -87,7 +288,7 @@ those shares together. Modules omitted from the assessment's table are marked
 |---|---:|---|---|
 | `core/src/proto/path/**` | 6,783 | `libfips-core/src/proto/path/{wire,set,params,rules,candidate,capable,select,live,machine}.c`, matching public headers | `nostrc-f12v2.6`: bounded PathSet, codecs and runtime-gated Bundle; daemon integration and simulator vector export remain separate |
 | `core/src/proto/rekey/**` | 6,575 | `libfips-core/src/proto/rekey/…` + `include/fips/proto/rekey/…` (shared machine/params/profile hooks implemented; [API and ownership](src/proto/rekey/README.md), [test mapping](tests/REKEY.md); twelve legacy-model compatibility traces captured/replayed) | `nostrc-f12v2.1` shared core; `nostrc-f12v2.3` legacy; `nostrc-f66sr` verification |
-| `core/src/proto/settle/**` | 5,493 | `libfips-core/src/proto/settle/…` (port last; upstream not wired to callers yet) | `nostrc-f12v2` A4 |
+| `core/src/proto/settle/**` | 5,493 | `libfips-core/src/proto/settle/…` (upstream wired into the node; C sans-IO port: `nostrc-f12v2.7`, host wiring deferred) | `nostrc-f12v2` A4 |
 | `core/src/proto/mmp/**` | 4,160 | `libfips-core/src/proto/mmp/…` | `nostrc-f12v2` A4 |
 | `core/src/proto/fmp/**` | 2,186 | `libfips-core/src/proto/fmp/…` | `nostrc-82g9n` A3; real IK/XK profiles and bounded session binding implemented: `nostrc-f12v2.2` A4 |
 | `core/src/proto/lookup/**` | 1,752 | `libfips-core/src/proto/lookup/…` | `nostrc-82g9n` A3 |

@@ -1,0 +1,662 @@
+diff --git a/core/src/proto/rekey/tests/legacy/capture.rs b/core/src/proto/rekey/tests/legacy/capture.rs
+new file mode 100644
+index 00000000..219d1430
+--- /dev/null
++++ b/core/src/proto/rekey/tests/legacy/capture.rs
+@@ -0,0 +1,643 @@
++//! Test-only nostrc oracle bridge. Runs the actual sibling legacy models.
++use super::{E, End, Got, Out, Pkt, Rel, fmp::FmpPeer, fsp::FspPeer, new};
++use crate::{
++    identity::sha256,
++    noise::{HandshakeState, NoiseSession},
++    proto::{
++        coord::TreeCoordinate,
++        fmp::{
++            rekey::ik::{FmpIk, LinkKeys, read_msg1},
++            wire::EncryptedHeader,
++        },
++        fsp::{
++            rekey::xk::{FspXk, SessionKeys as XkKeys},
++            wire::FspEncryptedHeader,
++        },
++        rekey::*,
++    },
++    testutil::{TestClock, TestInstant, seed_entropy, seeded_keypair},
++    transport::TransportId,
++    utils::index::{IndexAllocator, SessionIndex},
++};
++use alloc::{boxed::Box, collections::VecDeque, format, string::String, vec, vec::Vec};
++use serde_json::{Value, json};
++use std::{fs, path::PathBuf};
++const PIN: &str = "64f5b4d482cfe14abad108ffc2d92128f7658311";
++const VERSION: &str = "0.1.0";
++const EPOCH: [u8; 8] = [1, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef];
++struct Zero;
++impl JitterSource for Zero {
++    fn draw(&mut self, _: u16) -> u16 {
++        0
++    }
++}
++
++trait Capture: Profile<LocalKeys = NodeKeys> {
++    fn input<'a>(label: &str, b: &'a mut [u8], peer: PeerKey, local: &NodeKeys) -> Input<'a, Self>;
++    fn data_sent(m: &mut Rekey<Self, TestClock>, now: u64, h: &mut Host<Self>) -> Outputs<Self>;
++    fn indices() -> Self::Indices;
++    fn transport() -> Self::Transport;
++    fn ids() -> Ids<Self::Transport>;
++    fn keys(s: NoiseSession) -> Self::Session;
++    fn handshake(a: &NodeKeys, b: &NodeKeys) -> (NoiseSession, NoiseSession, Vec<u8>, Vec<u8>);
++    fn receive<'a>(bytes: &'a mut [u8], local: &NodeKeys, peer: PeerKey) -> Input<'a, Self>;
++    fn frame(s: &Sealed<<Self::Session as SessionKeys>::SendCopy>, p: &[u8]) -> Vec<u8>;
++    fn packet(kind: Option<MsgKind>, bytes: Vec<u8>) -> Pkt;
++    fn peer(
++        rel: Rel,
++        keys: NodeKeys,
++        remote: PeerKey,
++        s: NoiseSession,
++        m1: &[u8],
++        m2: Vec<u8>,
++    ) -> Box<dyn Legacy>;
++    fn free(indices: &mut Self::Indices, index: u32);
++}
++impl Capture for FspXk<E> {
++    fn data_sent(m: &mut Rekey<Self, TestClock>, now: u64, h: &mut Host<Self>) -> Outputs<Self> {
++        m.step(TestInstant(now), Input::DataSent { only: () }, &mut h.env())
++    }
++    fn input<'a>(label: &str, b: &'a mut [u8], peer: PeerKey, local: &NodeKeys) -> Input<'a, Self> {
++        let route = TreeCoordinate::root(peer.addr());
++        match label {
++            "Setup" => Input::Setup {
++                msg1: b,
++                carrier: peer.addr(),
++                route,
++                only: (),
++            },
++            "Ack" => Input::Reply { bytes: b, route },
++            "Msg3" => Input::Final { bytes: b, only: () },
++            _ => Self::receive(b, local, peer),
++        }
++    }
++    fn indices() {}
++    fn transport() {}
++    fn ids() -> Ids<Self::Transport> {
++        Ids::unindexed(())
++    }
++    fn keys(s: NoiseSession) -> XkKeys {
++        XkKeys::new(s)
++    }
++    fn handshake(a: &NodeKeys, b: &NodeKeys) -> (NoiseSession, NoiseSession, Vec<u8>, Vec<u8>) {
++        let peer = PeerKey::from_xonly(&b.keypair().x_only_public_key().0);
++        let mut i =
++            HandshakeState::<E>::new_xk_initiator(a.keypair(), keys::pinned(&peer).unwrap());
++        let mut r = HandshakeState::<E>::new_xk_responder(b.keypair());
++        i.set_local_epoch(EPOCH);
++        r.set_local_epoch(EPOCH);
++        let m1 = i.write_xk_message_1().unwrap();
++        r.read_xk_message_1(&m1).unwrap();
++        let m2 = r.write_xk_message_2().unwrap();
++        i.read_xk_message_2(&m2).unwrap();
++        r.read_xk_message_3(&i.write_xk_message_3().unwrap())
++            .unwrap();
++        (i.into_session().unwrap(), r.into_session().unwrap(), m1, m2)
++    }
++    fn receive<'a>(bytes: &'a mut [u8], _: &NodeKeys, peer: PeerKey) -> Input<'a, Self> {
++        // The caller labels handshake packets separately; this arm is a frame.
++        let h = FspEncryptedHeader::parse(bytes).unwrap();
++        let _ = peer;
++        Input::Frame {
++            hint: FrameHint {
++                counter: h.counter,
++                k: h.flags & crate::proto::fsp::wire::FSP_FLAG_K != 0,
++                index: 0,
++                body: 12,
++            },
++            buf: bytes,
++        }
++    }
++    fn frame(s: &Sealed<SendCopy>, p: &[u8]) -> Vec<u8> {
++        new::session_frame(s, p)
++    }
++    fn packet(kind: Option<MsgKind>, bytes: Vec<u8>) -> Pkt {
++        match kind {
++            Some(MsgKind::Setup) => Pkt::Setup(bytes),
++            Some(MsgKind::Ack) => Pkt::Ack(bytes),
++            Some(MsgKind::Msg3) => Pkt::Msg3(bytes),
++            None => Pkt::Frame(bytes),
++            _ => unreachable!(),
++        }
++    }
++    fn peer(
++        rel: Rel,
++        keys: NodeKeys,
++        remote: PeerKey,
++        s: NoiseSession,
++        _: &[u8],
++        _: Vec<u8>,
++    ) -> Box<dyn Legacy> {
++        Box::new(FspPeer::established(
++            "legacy",
++            rel,
++            keys,
++            remote,
++            s,
++            0,
++            vec![0],
++        ))
++    }
++    fn free(_: &mut (), _: u32) {
++        unreachable!()
++    }
++}
++impl Capture for FmpIk<E> {
++    fn data_sent(_: &mut Rekey<Self, TestClock>, _: u64, _: &mut Host<Self>) -> Outputs<Self> {
++        Vec::new()
++    }
++    fn input<'a>(_: &str, b: &'a mut [u8], peer: PeerKey, local: &NodeKeys) -> Input<'a, Self> {
++        Self::receive(b, local, peer)
++    }
++    fn indices() -> IndexAllocator<E> {
++        let mut a = IndexAllocator::new();
++        a.reserve(SessionIndex::new(10)).unwrap();
++        a
++    }
++    fn transport() -> TransportId {
++        TransportId::new(7)
++    }
++    fn ids() -> Ids<Self::Transport> {
++        Ids::new(IndexLease::for_test(10), 20, TransportId::new(7))
++    }
++    fn keys(s: NoiseSession) -> LinkKeys {
++        LinkKeys::new(s)
++    }
++    fn handshake(a: &NodeKeys, b: &NodeKeys) -> (NoiseSession, NoiseSession, Vec<u8>, Vec<u8>) {
++        use crate::proto::fmp::wire::{build_msg1, build_msg2};
++        let peer = PeerKey::from_xonly(&b.keypair().x_only_public_key().0);
++        let mut i = HandshakeState::<E>::new_initiator(a.keypair(), keys::pinned(&peer).unwrap());
++        let mut r = HandshakeState::<E>::new_responder(b.keypair());
++        i.set_local_epoch(EPOCH);
++        r.set_local_epoch(EPOCH);
++        let m1 = build_msg1(SessionIndex::new(10), &i.write_message_1().unwrap());
++        r.read_message_1(&m1[8..]).unwrap();
++        let m2 = build_msg2(
++            SessionIndex::new(20),
++            SessionIndex::new(10),
++            &r.write_message_2().unwrap(),
++        );
++        i.read_message_2(&m2[12..]).unwrap();
++        (i.into_session().unwrap(), r.into_session().unwrap(), m1, m2)
++    }
++    fn receive<'a>(bytes: &'a mut [u8], local: &NodeKeys, _: PeerKey) -> Input<'a, Self> {
++        match bytes[0] & 15 {
++            1 => Input::PeerMsg1 {
++                tok: read_msg1::<E>(local, bytes).unwrap(),
++                arrival: Arrival {
++                    on_link: true,
++                    reachable: true,
++                    heard: true,
++                },
++            },
++            2 => Input::Reply { bytes, route: crate::proto::fmp::rekey::ik::Arrived { on_link: true } },
++            0 => {
++                let h = EncryptedHeader::parse(bytes).unwrap();
++                Input::Frame {
++                    hint: FrameHint {
++                        counter: h.counter,
++                        k: h.flags & 1 != 0,
++                        index: h.receiver_idx.as_u32(),
++                        body: 16,
++                    },
++                    buf: bytes,
++                }
++            }
++            _ => unreachable!(),
++        }
++    }
++    fn frame(s: &Sealed<SendCopy>, p: &[u8]) -> Vec<u8> {
++        new::link_frame(s, p)
++    }
++    fn packet(_: Option<MsgKind>, bytes: Vec<u8>) -> Pkt {
++        Pkt::Link(bytes)
++    }
++    fn peer(
++        rel: Rel,
++        keys: NodeKeys,
++        remote: PeerKey,
++        s: NoiseSession,
++        m1: &[u8],
++        m2: Vec<u8>,
++    ) -> Box<dyn Legacy> {
++        let mut a = IndexAllocator::<E>::new();
++        a.reserve(SessionIndex::new(20)).unwrap();
++        Box::new(FmpPeer::established(
++            "legacy",
++            rel,
++            keys,
++            remote,
++            EPOCH,
++            s,
++            20,
++            a,
++            10,
++            (m1, Some(m2)),
++            0,
++            vec![0],
++        ))
++    }
++    fn free(indices: &mut IndexAllocator<E>, index: u32) {
++        indices.free(SessionIndex::new(index)).unwrap();
++    }
++}
++trait Legacy: End {
++    fn start(&mut self, now: u64, out: &mut Vec<Out>);
++}
++impl Legacy for FmpPeer {
++    fn start(&mut self, now: u64, out: &mut Vec<Out>) {
++        self.initiate(now, out);
++    }
++}
++impl Legacy for FspPeer {
++    fn start(&mut self, now: u64, out: &mut Vec<Out>) {
++        self.after_messages = 0;
++        self.tick(now, out);
++        self.after_messages = 1 << 16;
++    }
++}
++struct Host<P: Capture> {
++    local: NodeKeys,
++    indices: P::Indices,
++    tags: TagSource,
++    zero: Zero,
++    scratch: Vec<u8>,
++}
++impl<P: Capture> Host<P> {
++    fn env(&mut self) -> Env<'_, P> {
++        Env {
++            indices: &mut self.indices,
++            transport: P::transport(),
++            tags: &mut self.tags,
++            workers: false,
++            jitter: &mut self.zero,
++            local: &self.local,
++            scratch: &mut self.scratch,
++        }
++    }
++}
++fn epoch<P: Profile>(v: Option<EpochView<'_, P, TestInstant>>) -> Value {
++    v.map_or(Value::Null, |e| {
++        json!({"tag":e.tag.get(),"k":e.k,"role":format!("{:?}",e.role),
++        "started_ms":e.started.0,"base_ms":e.base.map(|t|t.0),"recv":format!("{:?}",e.recv)})
++    })
++}
++fn state<P: Profile>(m: &Rekey<P, TestClock>) -> Value {
++    let v = m.view();
++    json!({"identity":format!("{:?}",v.identity),"peer_epoch_hex":v.peer_epoch.map(hex::encode),
++        "last_rx_ms":v.last_rx.map(|t|t.0),"link_since_ms":v.link_since.0,"cycle":format!("{:?}",v.cycle),
++        "current":epoch(v.current),"previous":epoch(v.previous),"pending":epoch(v.pending),"candidates":v.candidates,
++        "next_wake_ms":m.next_wake().map(|t|t.0),"k":m.k(),"sent":m.sent()})
++}
++struct Trace {
++    out: PathBuf,
++    name: String,
++    events: Vec<Value>,
++    queue: VecDeque<(bool, Pkt)>,
++    accepted: usize,
++}
++impl Trace {
++    fn bytes(&self, suffix: &str, bytes: &[u8]) -> Value {
++        let file = format!("{}-{suffix}.bin", self.name);
++        fs::write(self.out.join(&file), bytes).unwrap();
++        json!({"file":file,"hex":hex::encode(bytes),"length":bytes.len(),"sha256":hex::encode(sha256(bytes)),"pin":PIN,"generator_version":VERSION})
++    }
++    fn record<P: Capture>(
++        &mut self,
++        now: u64,
++        label: &str,
++        input: Option<&[u8]>,
++        before: Value,
++        m: &mut Rekey<P, TestClock>,
++        host: &mut Host<P>,
++        outputs: Outputs<P>,
++        app: Option<(Vec<u8>, Vec<u8>, u64, bool)>,
++    ) {
++        let mut actions = Vec::new();
++        let mut deliveries = Vec::new();
++        for (j, o) in outputs.into_iter().enumerate() {
++            let suffix = format!("{}-{j}", self.events.len());
++            match o {
++                Output::Send { msg, kind, route } => {
++                    actions.push(json!({"kind":"Send","message_kind":format!("{kind:?}"),"route":format!("{route:?}"),"bytes":self.bytes(&suffix,&msg)}));
++                    self.queue.push_back((true, P::packet(Some(kind), msg)));
++                }
++                Output::Prompt { tag } => {
++                    let p = m.seal_prompt(TestInstant(now), tag).unwrap();
++                    let b = P::frame(&p.sealed, &p.plaintext);
++                    actions.push(json!({"kind":"Prompt","tag":tag.get(),"counter":p.sealed.counter,"k":p.sealed.k,
++                        "plaintext_hex":hex::encode(p.plaintext),"bytes":self.bytes(&suffix,&b)}));
++                    self.queue.push_back((true, P::packet(None, b)));
++                }
++                Output::Release(lease) => {
++                    let i = lease.release();
++                    P::free(&mut host.indices, i);
++                    actions.push(json!({"kind":"Release","index":i}));
++                }
++                Output::Deliver { slot, tag, range } => {
++                    let bytes = input.unwrap();
++                    // Input below is the post-step authenticated buffer, not the wire ciphertext.
++                    deliveries.push(json!({"slot":format!("{slot:?}"),"tag":tag.get(),"range":[range.start,range.end],"plaintext_hex":hex::encode(&bytes[range.clone()])}));
++                    actions.push(json!({"debug":format!("Deliver {{ slot: {slot:?}, tag: {tag:?}, range: {range:?} }}")}));
++                }
++                other => actions.push(json!({"debug":format!("{other:?}")})),
++            }
++        }
++        if let Some((plaintext, b, counter, k)) = app {
++            actions.push(json!({"kind":"ApplicationFrame","counter":counter,"k":k,"plaintext_hex":hex::encode(&plaintext),"sequence":u64::from_le_bytes(plaintext[plaintext.len()-8..].try_into().unwrap()),
++                "bytes":self.bytes(&format!("{}-data",self.events.len()),&b)}));
++            self.queue.push_back((true, P::packet(None, b)));
++        }
++        self.events.push(json!({"event":self.events.len(),"node":0,"at_ms":now,"input":label,"input_hex":Value::Null,
++            "entropy_seed_hex":format!("{:016x}",0x72656b6579u64 + self.events.len() as u64),
++            "state_before":before,"outputs":actions,"state_after":state(m),"authenticated_deliveries":deliveries}));
++    }
++    fn drain<P: Capture>(
++        &mut self,
++        now: &mut u64,
++        m: &mut Rekey<P, TestClock>,
++        host: &mut Host<P>,
++        peer: &mut dyn End,
++        remote: PeerKey,
++    ) {
++        while let Some((from_new, p)) = self.queue.pop_front() {
++            *now += 10;
++            assert!(self.events.len() < 256);
++            if from_new {
++                seed_entropy(0x70656572 + *now);
++                let mut out = Vec::new();
++                let got = peer.recv(*now, &p, &mut out);
++                if matches!(got, Got::Data { .. }) {
++                    self.accepted += 1;
++                }
++                self.queue.extend(out.into_iter().map(|o| (false, o.pkt)));
++            } else {
++                let (label, mut b) = match p {
++                    Pkt::Setup(b) => ("Setup", b),
++                    Pkt::Ack(b) => ("Ack", b),
++                    Pkt::Msg3(b) => ("Msg3", b),
++                    Pkt::Frame(b) => ("Frame", b),
++                    Pkt::Link(b) => (
++                        match b[0] & 15 {
++                            1 => "Msg1",
++                            2 => "Msg2",
++                            _ => "Frame",
++                        },
++                        b,
++                    ),
++                };
++                let original = b.clone();
++                let before = state(m);
++                seed_entropy(0x72656b6579 + self.events.len() as u64);
++                let out = m.step(
++                    TestInstant(*now),
++                    P::input(label, &mut b, remote, &host.local),
++                    &mut host.env(),
++                );
++                self.record(*now, label, Some(&b), before, m, host, out, None);
++                self.events.last_mut().unwrap()["input_hex"] = json!(hex::encode(original));
++            }
++        }
++    }
++}
++
++fn run<P: Capture>(out: PathBuf, name: String, rel: Rel, old_first: bool) {
++    let local = NodeKeys::new(seeded_keypair(0), EPOCH);
++    let old_keys = NodeKeys::new(seeded_keypair(1), EPOCH);
++    let mine = PeerKey::from_xonly(&local.keypair().x_only_public_key().0);
++    let remote = PeerKey::from_xonly(&old_keys.keypair().x_only_public_key().0);
++    seed_entropy(if P::INDEXED { 0x494b } else { 0x584b });
++    let (ns, os, m1, m2) = P::handshake(&local, &old_keys);
++    let mut peer = P::peer(rel, old_keys, mine, os, &m1, m2);
++    let mut host = Host::<P> {
++        local,
++        indices: P::indices(),
++        tags: TagSource::new(),
++        zero: Zero,
++        scratch: Vec::new(),
++    };
++    let done = Completed::<P> {
++        session: Box::new(P::keys(ns)),
++        remote,
++        epoch: EPOCH,
++        theirs: if P::INDEXED { Some(20) } else { None },
++    };
++    let facts = SetupFacts {
++        peer_epoch: Some(EPOCH),
++        k: false,
++        link_since: TestInstant(0),
++        started: TestInstant(0),
++        peer_k: Some(false),
++        last_rx: Some(TestInstant(0)),
++        record: Record::new(),
++    };
++    let params = if P::INDEXED {
++        Params::fmp()
++    } else {
++        Params::fsp()
++    };
++    let (mut m, initial_out) = Rekey::<P, TestClock>::established(
++        params,
++        Bond::Key(remote),
++        mine.addr(),
++        Bond::Key(remote).check(done).unwrap(),
++        P::ids(),
++        facts,
++        TestInstant(0),
++        &mut host.env(),
++    );
++    // Setup's Bind is already executed by the fixture host; no protocol output.
++    assert!(initial_out.iter().all(|o| matches!(o, Output::Bind { .. })));
++    let initial = state(&m);
++    let mut t = Trace {
++        out,
++        name,
++        events: Vec::new(),
++        queue: VecDeque::new(),
++        accepted: 0,
++    };
++    // Keep the deployed link's real liveness timer satisfied before rotating.
++    // No backdating/setters: both ends authenticate a genuine old-key frame.
++    let mut now = 59_000;
++    let before = state(&m);
++    let sealed = m.seal(TestInstant(now)).unwrap();
++    let plain = if P::INDEXED {
++        new::link_data(sealed.elapsed, 0)
++    } else {
++        new::session_data(sealed.elapsed, 0)
++    };
++    let b = P::frame(&sealed, &plain);
++    let app = (plain, b, sealed.counter, sealed.k);
++    seed_entropy(0x72656b6579 + t.events.len() as u64);
++    let outputs = P::data_sent(&mut m, now, &mut host);
++    t.record(
++        now,
++        "Seal(DataPacket) + DataSent",
++        None,
++        before,
++        &mut m,
++        &mut host,
++        outputs,
++        Some(app),
++    );
++    let mut outs = Vec::new();
++    assert!(peer.data(now, 0, &mut outs));
++    t.queue.extend(outs.into_iter().map(|o| (false, o.pkt)));
++    t.drain(&mut now, &mut m, &mut host, peer.as_mut(), remote);
++    now = 60_000;
++    if old_first {
++        seed_entropy(0x70656572 + now);
++        let mut outs = Vec::new();
++        peer.start(now, &mut outs);
++        assert!(!outs.is_empty());
++        t.queue.extend(outs.into_iter().map(|o| (false, o.pkt)));
++    } else {
++        let before = state(&m);
++        seed_entropy(0x72656b6579 + t.events.len() as u64);
++        let outputs = m.start_now(TestInstant(now), &mut host.env());
++        t.record(
++            now,
++            "start_now (test-hook)",
++            None,
++            before,
++            &mut m,
++            &mut host,
++            outputs,
++            None,
++        );
++    }
++    t.drain(&mut now, &mut m, &mut host, peer.as_mut(), remote);
++    let mut next_tick = 61_000;
++    let mut data_seq = 0;
++    while now < 80_000 {
++        let at = m
++            .next_wake()
++            .map(|t| t.0.max(now))
++            .unwrap_or(u64::MAX)
++            .min(next_tick);
++        assert!(at >= now, "no wake in past");
++        now = at;
++        let before = state(&m);
++        seed_entropy(0x72656b6579 + t.events.len() as u64);
++        let outputs = m.step(TestInstant(now), Input::Poll, &mut host.env());
++        t.record(
++            now,
++            "Poll (legacy schedule)",
++            None,
++            before,
++            &mut m,
++            &mut host,
++            outputs,
++            None,
++        );
++        if now == next_tick {
++            next_tick += 1_000;
++            seed_entropy(0x70656572 + now);
++            let mut outs = Vec::new();
++            peer.tick(now, &mut outs);
++            t.queue.extend(outs.into_iter().map(|o| (false, o.pkt)));
++            // Traffic in both directions proves key adoption, not just completion.
++            data_seq += 1;
++            let before = state(&m);
++            let sealed = m.seal(TestInstant(now)).unwrap();
++            let plain = if P::INDEXED {
++                new::link_data(sealed.elapsed, data_seq)
++            } else {
++                new::session_data(sealed.elapsed, data_seq)
++            };
++            let b = P::frame(&sealed, &plain);
++            let app = (plain, b, sealed.counter, sealed.k);
++            seed_entropy(0x72656b6579 + t.events.len() as u64);
++            let outputs = P::data_sent(&mut m, now, &mut host);
++            t.record(
++                now,
++                "Seal(DataPacket) + DataSent",
++                None,
++                before,
++                &mut m,
++                &mut host,
++                outputs,
++                Some(app),
++            );
++            let mut outs = Vec::new();
++            assert!(
++                peer.data(now, data_seq, &mut outs),
++                "{} at {now}: {:?}",
++                t.name,
++                peer.take_notes()
++            );
++            t.queue.extend(outs.into_iter().map(|o| (false, o.pkt)));
++        }
++        t.drain(&mut now, &mut m, &mut host, peer.as_mut(), remote);
++    }
++    assert!(peer.alive() && peer.quiet());
++    assert!(t.accepted >= 15, "peer authenticated application data");
++    assert!(
++        t.events
++            .iter()
++            .filter(|e| e["authenticated_deliveries"]
++                .as_array()
++                .unwrap()
++                .iter()
++                .any(|d| {
++                    let p = hex::decode(d["plaintext_hex"].as_str().unwrap()).unwrap();
++                    if P::INDEXED {
++                        new::is_datagram(&p)
++                    } else {
++                        new::is_packet(&p)
++                    }
++                }))
++            .count()
++            >= 15,
++        "current node authenticated legacy data"
++    );
++    assert_eq!(m.view().cycle, CycleView::Idle);
++    assert!(m.view().previous.is_none());
++    assert_eq!(m.view().current.unwrap().tag.get(), 1);
++    assert!(m.k());
++    let final_state = state(&m);
++    let (outputs, _) = m.close(Close::Shutdown);
++    for o in outputs {
++        if let Output::Release(l) = o {
++            P::free(&mut host.indices, l.release());
++        }
++    }
++    let doc = json!({"schema_version":1,"pin":PIN,"generator":"fips-vectors","generator_version":VERSION,"family":"rekey-legacy",
++        "gaps":["Representative lossless rotations in both initiation directions; not the exhaustive legacy fault/explorer suite."],
++        "cases":{"legacy_release":format!("{rel:?}"),"legacy_initiates":old_first,"profile":if P::INDEXED {"FmpProfile<SeededEntropy> (Noise IK)"} else {"FspProfile<SeededEntropy> (Noise XK)"},
++            "keypair_seeds":[0,1],"startup_epoch_hex":hex::encode(EPOCH),"entropy_seed_hex":"00000072656b6579",
++            "initial_handshake":if P::INDEXED {"noise.json IK (before frame exports)"} else {"noise.json XK (before frame exports)"},
++            "params_debug":format!("{:?}",params.config()),"clock":"legacy model tick + current next_wake; 10ms channel latency",
++            "initial_state":[initial],"events":t.events,"final_state":[final_state]}});
++    let mut bytes = serde_json::to_vec_pretty(&doc).unwrap();
++    bytes.push(b'\n');
++    fs::write(t.out.join(format!("{}.json", t.name)), bytes).unwrap();
++}
++#[test]
++#[ignore = "writes oracle fixtures only to FIPS_LEGACY_EXPORT_DIR"]
++fn export_legacy_rekey_vectors() {
++    assert!(std::env::var_os("FIPS_REKEY_FAULTS").is_none());
++    assert!(std::env::var_os("FIPS_NODE_FAULTS").is_none());
++    let out = PathBuf::from(
++        std::env::var_os("FIPS_LEGACY_EXPORT_DIR").expect("explicit output directory"),
++    );
++    fs::create_dir_all(&out).unwrap();
++    assert!(crate::identity::init_secp(&[0x42; 32]));
++    for rel in Rel::ALL {
++        for old_first in [false, true] {
++            let role = if old_first {
++                "legacy-initiates"
++            } else {
++                "current-initiates"
++            };
++            let version = match rel {
++                Rel::V050 => "v050-v051",
++                Rel::V052 => "v052",
++                Rel::V053 => "v053",
++            };
++            run::<FspXk<E>>(out.clone(), format!("{version}-fsp-{role}"), rel, old_first);
++            run::<FmpIk<E>>(out.clone(), format!("{version}-fmp-{role}"), rel, old_first);
++        }
++    }
++    assert_eq!(leaked(), 0);
++}
+diff --git a/core/src/proto/rekey/tests/legacy/fmp.rs b/core/src/proto/rekey/tests/legacy/fmp.rs
+index 59e334e5..5f2c79ec 100644
+--- a/core/src/proto/rekey/tests/legacy/fmp.rs
++++ b/core/src/proto/rekey/tests/legacy/fmp.rs
+@@ -611 +611 @@ impl FmpPeer {
+-    fn initiate(&mut self, now: u64, out: &mut Vec<Out>) {
++    pub(super) fn initiate(&mut self, now: u64, out: &mut Vec<Out>) {
+diff --git a/core/src/proto/rekey/tests/legacy/mod.rs b/core/src/proto/rekey/tests/legacy/mod.rs
+index 9cba83de..865373e5 100644
+--- a/core/src/proto/rekey/tests/legacy/mod.rs
++++ b/core/src/proto/rekey/tests/legacy/mod.rs
+@@ -28,0 +29 @@ use crate::testutil::{SeededEntropy, SplitMix64};
++mod capture;

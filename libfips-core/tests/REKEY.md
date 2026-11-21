@@ -5,9 +5,11 @@ library has no test hooks; this test recompiles the shared module with
 `FIPS_TEST_HOOKS`. `fakes/rekey.c` is an intentionally non-production handshake
 transcript oracle, using real Noise transport sessions and replay windows.
 
-There are **91 registered C scenarios**, adapted/consolidated from the **92
-Rust test functions** in the direct behavioral unit files below (28 FMP, 41
-FSP, 8 next-shaped, 15 helpers). This is a many-to-many coverage map, not a
+There are **95 registered C scenarios**. The original mapping below records
+the former pin's **92 Rust test functions** (28 FMP, 41 FSP, 8 next-shaped,
+15 helpers); wave26 adds `forged_reply_budget` (IK read caps, saturation/reset,
+uncapped FSP) and `redial_is_deferred_until_host_arms`. The original map is not
+a claim to enumerate every test added upstream at `64f5b4d4`. This is a many-to-many coverage map, not a
 claim that every Rust digest, table row, helper or assertion was translated
 literally. C also checks the exact `rekey.json` `params_debug` string, invalid
 nanosecond durations, index/write failure cleanup, destroyed-machine refusal,

@@ -120,7 +120,7 @@ jobs:
             build/Testing/Temporary/
             build/fuzz-artifacts/
   interop-udp:
-    name: ${{ matrix.os }} • FIPS • C<->Rust UDP interop
+    name: ${{ matrix.os }} • FIPS • pinned C<->Rust interop
     if: github.event_name != 'schedule'
     runs-on: ${{ matrix.os }}
     strategy:
@@ -150,6 +150,13 @@ jobs:
         run: |
           pin=$(sed -n 's/^Pinned commit: .\([0-9a-f]\{40\}\).*/\1/p' libfips-core/UPSTREAM.md)
           test -n "$pin"
+          # The crate and daemon must use the same immutable oracle.
+          python3 - "$pin" <<'PY'
+          import sys, tomllib
+          from pathlib import Path
+          deps = tomllib.loads(Path('tools/fips-vectors/Cargo.toml').read_text())['dependencies']
+          assert all(deps[name]['rev'] == sys.argv[1] for name in ('fips-core', 'fips-mesh'))
+          PY
           echo "pin=$pin" >> "$GITHUB_OUTPUT"
       - name: Check out upstream FIPS at the pin
         uses: actions/checkout@v4
@@ -168,8 +175,11 @@ jobs:
         id: daemon
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/fips-rust-target/release/fips
-          key: fips-daemon-${{ runner.os }}-${{ runner.arch }}-${{ steps.pin.outputs.pin }}-${{ hashFiles('upstream-fips/rust-toolchain.toml') }}-v1
+          path: |
+            ${{ runner.temp }}/fips-rust-target/release/fips
+            ${{ runner.temp }}/fips-rust-target/release/fipsctl
+            ${{ runner.temp }}/fips-rust-target/release/examples/native-echo
+          key: fips-daemon-${{ runner.os }}-${{ runner.arch }}-${{ steps.pin.outputs.pin }}-${{ hashFiles('upstream-fips/rust-toolchain.toml') }}-v2
       - name: Restore the cargo registry
         if: steps.daemon.outputs.cache-hit != 'true'
         uses: actions/cache@v4
@@ -193,7 +203,15 @@ jobs:
           test -n "$channel"
           rustup toolchain install "$channel" --profile minimal
           cd upstream-fips
-          cargo "+$channel" build --locked --release --bin fips
+          cargo "+$channel" build --locked --release --bin fips --bin fipsctl --example native-echo
+      - name: Verify the pinned interop binaries (including cache hits)
+        env:
+          PIN: ${{ steps.pin.outputs.pin }}
+        run: |
+          test -x "${RUNNER_TEMP}/fips-rust-target/release/fips"
+          test -x "${RUNNER_TEMP}/fips-rust-target/release/fipsctl"
+          test -x "${RUNNER_TEMP}/fips-rust-target/release/examples/native-echo"
+          "${RUNNER_TEMP}/fips-rust-target/release/fips" --version | grep -F "rev ${PIN:0:10})"
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -212,17 +230,26 @@ jobs:
       - name: Configure (ASan/UBSan)
         shell: bash
         run: |
+          # Only upstream's native-echo example excludes macOS; the API's
+          # SOCK_DGRAM fallback is still exercised by the harness there.
+          rust_echo=
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            rust_echo="${RUNNER_TEMP}/fips-rust-target/release/examples/native-echo"
+          fi
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DGO_WARNINGS_AS_ERRORS=ON \
             -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON \
             -DBUILD_FIPS=ON -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF \
             -DBUILD_LIBHANAMI=OFF -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF \
             -DBUILD_NOSTR_GOBJECT=OFF -DBUILD_NOSTR_GTK=OFF -DSIGNET_ENABLE=OFF \
             -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF \
-            "-DFIPSD_UDP_INTEROP_RUST_BINARY=${RUNNER_TEMP}/fips-rust-target/release/fips"
+            "-DFIPSD_UDP_INTEROP_RUST_BINARY=${RUNNER_TEMP}/fips-rust-target/release/fips" \
+            "-DFIPSD_TCP_INTEROP_RUST_BINARY=${RUNNER_TEMP}/fips-rust-target/release/fips" \
+            "-DFIPSD_FIPSCTL_EXECUTABLE=${RUNNER_TEMP}/fips-rust-target/release/fipsctl" \
+            "-DFIPSD_UDP_INTEROP_RUST_ECHO=${rust_echo}"
       - name: Build fipsd
-        run: cmake --build build --parallel 3 --target fipsd fipsd_test_tmpdir_run fipsd_native_client_tool
-      - name: C<->Rust UDP interop (both roles, IPv4 and IPv6)
-        run: ctest --test-dir build -R '^FipsdInteropUdp' --no-tests=error --output-on-failure
+        run: cmake --build build --parallel 3 --target fipsd fipsctl fipsd_test_tmpdir_run fipsd_native_client_tool
+      - name: C<->Rust pinned interop (UDP v4/v6, TCP, saturated rekey, multi-node, control/native)
+        run: ctest --test-dir build -R '^Fipsd(Interop(Udp|Multi)|TcpInterop|ControlInterop|FipsctlInterop)' --no-tests=error --output-on-failure
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

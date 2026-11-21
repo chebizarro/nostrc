@@ -22,6 +22,7 @@ typedef struct fips_rekey_attempt {
     fips_rekey_ladder ladder;
     bool resent;
     uint8_t resend_count;
+    uint8_t misreads;
 } fips_rekey_attempt;
 /* Both variant slots are cleared on every transition; kind is the sole owner. */
 typedef struct fips_rekey_cycle {

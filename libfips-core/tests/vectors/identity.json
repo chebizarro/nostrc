@@ -8,7 +8,7 @@
           "generator_version": "0.1.0",
           "hex": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
           "length": 32,
-          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
           "sha256": "fc8b64001c5fdd0f2f40fb67dae4a865a2c5bd17836676d6d5b58b7917e33717"
         },
         "signature": {
@@ -16,7 +16,7 @@
           "generator_version": "0.1.0",
           "hex": "5fd5a311032d05cd6e83edd13ed3881c60608e173478abcfd884f60ed168cb18d274691e62ef57ab562f332d10d9f0700ecc070318a071ac535eaf4eacf89f66",
           "length": 64,
-          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
           "sha256": "6bfee57a83b4ac9eab59d4e51cb5c2c30f580fd42f4419adbece7919c9c1f2a7"
         },
         "timestamp": 1700000000,
@@ -40,7 +40,7 @@
           "generator_version": "0.1.0",
           "hex": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
           "length": 32,
-          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
           "sha256": "fc8b64001c5fdd0f2f40fb67dae4a865a2c5bd17836676d6d5b58b7917e33717"
         },
         "signature": {
@@ -48,7 +48,7 @@
           "generator_version": "0.1.0",
           "hex": "6749bc69ad49642860cb0c8fb925b79a111545ed10886aa15668ab607702ab24ceeae373d8ee896fd3519053baea3d580a1140eba099d69228365a02a278a473",
           "length": 64,
-          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
           "sha256": "babdc28a55b9c953bcd7c00322de275d825266e43638fafc463388e2b8461a4d"
         },
         "timestamp": 1700000000,
@@ -72,7 +72,7 @@
           "generator_version": "0.1.0",
           "hex": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
           "length": 32,
-          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
           "sha256": "fc8b64001c5fdd0f2f40fb67dae4a865a2c5bd17836676d6d5b58b7917e33717"
         },
         "signature": {
@@ -80,7 +80,7 @@
           "generator_version": "0.1.0",
           "hex": "24b0547d3774bce319622d11ac6c185e92def1e3eecb191353071bd7b7bdec71aca663e323245c34f8bda4a21de259cc08a90ae3a3c3fbb9474f7496d0af907b",
           "length": 64,
-          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
           "sha256": "6466f5308b7e2ae87577eb8f7c6da797cc2c7528dc5eda21ef36b5aeb07417d2"
         },
         "timestamp": 1700000000,
@@ -101,6 +101,6 @@
   "gaps": [],
   "generator": "fips-vectors",
   "generator_version": "0.1.0",
-  "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+  "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
   "schema_version": 1
 }

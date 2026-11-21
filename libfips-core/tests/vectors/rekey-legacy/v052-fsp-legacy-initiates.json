@@ -18,7 +18,7 @@
               "generator_version": "0.1.0",
               "hex": "00000e0000000000000000009b8afbf096d4b76610a5ef95bcbe25946677089f8a3e83951d1b46eb1ed3",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "0da51e22cbd5055db28a5f1337d80e47ba08e7bc9214f571706fe60790004b82"
             },
             "counter": 0,
@@ -152,7 +152,7 @@
               "generator_version": "0.1.0",
               "hex": "02d0e321d04f015b263d9063b9c3f8f14fe0a34f7c0dd7ef3601593815de3e32292b2b7f702c8d0dc8eb88dcecd69c713ab14fad5a775b097d",
               "length": 57,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "8336f53c809939296b3853f03a521a46941af39cf016560ccb54ade395f59d41"
             },
             "kind": "Send",
@@ -221,7 +221,7 @@
               "generator_version": "0.1.0",
               "hex": "000206000000000000000000289da8597350165b14ccaa440113054aafdd9d30658d",
               "length": 34,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "f4c64105d4694dfe69f5afdce1d34c6a604ded74041894187add941268783e91"
             },
             "counter": 0,
@@ -365,7 +365,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e000100000000000000591d7c14ced019a511d521ef71e1b748ea3611fceefd3ca04d80e05a795e",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "1b72b7d9fda36eb9b6a4f8e63a22293284ca49dad26f784493a7d5d0eb7fffe2"
             },
             "counter": 1,
@@ -593,7 +593,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e000200000000000000a05663e5a6f82c51c4248d36728bbf18025b1973e559155bc39a7b860486",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "9b15d8e5da0db54c793b83cfcdc558c687725d72839c477594b7a26a9a6ffebc"
             },
             "counter": 2,
@@ -821,7 +821,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e000300000000000000797ffc04b2f51f956c91f33c7680f4f23823363243e7a34692fbc0e2c1db",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "bace9f58f81359257ad5568f1bed7acfb676cfe9653a3bfb2e89678ade6b8acf"
             },
             "counter": 3,
@@ -1049,7 +1049,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e0004000000000000004ae5df6ba76be827064f51a337b8790f5e8ba7219a4117c00c4db9849c89",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "33016318ce04ce6f457219fe1c550f9d21473044d733402a5b9b719ee62d7e64"
             },
             "counter": 4,
@@ -1277,7 +1277,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e00050000000000000042a00fe212ee2c8d0244600359fd99bc36cfb5d7e47d6e83d3c7f062b6dc",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "5ed5a0086019eff67a59e12d51abfe6d4d468c17180e4e287b4979a37712117b"
             },
             "counter": 5,
@@ -1505,7 +1505,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e00060000000000000043306ee33bd75bb1c2d3c7a719c60e1c400b34863b2c0d88bb2586b853d2",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "462f33efc01d0d2c742475f41c61aafa1fda615644f109720dffd9700512568f"
             },
             "counter": 6,
@@ -1733,7 +1733,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e000700000000000000fc627122aa2143ed527915ffa31f5e586bfd087fcc73a482bb98ae202e58",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "7822cd12df5a66eb18242ef3265ebb3e46e7d358a79d58fa93ef66c1f3cba3e6"
             },
             "counter": 7,
@@ -1961,7 +1961,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e000800000000000000202d3a04a93fa6cc7c70d0073efa3e2af94925c1d2db34d70070ee00ebb0",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "6bf84d66942d78e4a55f5bb43a6d4b66f3e0596ee5b81d2a03825b94a997838d"
             },
             "counter": 8,
@@ -2189,7 +2189,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e0009000000000000006a373d0a88fb7318baea1f1541647e544ef6fea3a9b03b2edb5e66b95eeb",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "34590d4552025de0ed30a8f95c53d66a8a95552a563ab3e85dc2683808c3e318"
             },
             "counter": 9,
@@ -2417,7 +2417,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e000a0000000000000085ceb77d1051b8f4f8aefa8c95b9148c822e66cb11325fb8b76c60c5e7b2",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "a0d5be8c03ea6fc70e5be1069bb2cc5dc5e9cd6f59507bcc794fdebe372c8d07"
             },
             "counter": 10,
@@ -2645,7 +2645,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e000b0000000000000081f86b2e178483f3ddd1a63ceb5d7d192c67ca0b548eb7346d0178568d17",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "20d5eca6c939e1890e881e8893e430cb769cfc6b3598475613466f21daa6d5d8"
             },
             "counter": 11,
@@ -2922,7 +2922,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e000c0000000000000045394b8a0d8036ab50cefc0b93c614a2c4823ab1b3eb02092b5a2b543824",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "509411a882e9a98afa5c829d12258611a9b7cdd01d8661f12b2bcdc1c848c16c"
             },
             "counter": 12,
@@ -3108,7 +3108,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e000d00000000000000f2e6a32d91d99d26cce5736f23191ed4ad84d7e687c2fe208c78ff8cdef3",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "064122d366669a5d13f13f75efbea322cf8db320fca8e8bdde1b63be9a1ba31a"
             },
             "counter": 13,
@@ -3294,7 +3294,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e000e00000000000000b989e1399b427f616761c1aadcdef1e686274e975ee2a14fc3041bed56a5",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "5b3cbd7865cf115e2d03252de80b22b95370be201a23856e33cf54990056cbd7"
             },
             "counter": 14,
@@ -3480,7 +3480,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e000f00000000000000c6229c88cd6fc2a88a0aeaaa8208797497e17d773058ecc6d23cf0274ab7",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "1e15e2c03c30979ba095ec9a4de406082b4354ce1156c3c0b1dd85daa6e365f9"
             },
             "counter": 15,
@@ -3666,7 +3666,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e00100000000000000016706e527d3f0835272aa14512001ab43c5914263966f7045b95d896e673",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "ff21826260f6a311cb59c0f3a955c79f0d4cd8cc0ae8c529d79f8761dc61f2a5"
             },
             "counter": 16,
@@ -3852,7 +3852,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e0011000000000000008d0ff3c679d6d555f1239a218226abf92aeb34357630b9576da3340d4aa5",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "85714e672a8bb397400ea721b624be6f55dfaf2a2574e000a1932e4e7b820129"
             },
             "counter": 17,
@@ -4038,7 +4038,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e00120000000000000022af50874404564ec1d08dcd6efe819b778f2568138d035c9acd80c10c05",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "3687a9e1395719bbcbba85aff724e1407f7385d190a5ccb86c8c808a6b18737a"
             },
             "counter": 18,
@@ -4224,7 +4224,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e0013000000000000009535b9abf6532a3a2152257741cbdcceafae75ac31f106a2f81e6b18d700",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "4f028715e9af9f39f51a2aea1a53b451329f87f463eb92adcafb04de8dcba1b3"
             },
             "counter": 19,
@@ -4410,7 +4410,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e0014000000000000008d5bed68c117c9ac999783a3ccc3024c16fb18298e55723d107e89c0953f",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "2c4d994ba8f28961dd44af9397a6e1ea5d5773dda70945fce5e93cfd65656f91"
             },
             "counter": 20,
@@ -4583,7 +4583,7 @@
     ],
     "legacy_initiates": true,
     "legacy_release": "V052",
-    "params_debug": "Config { after: 120s, jitter: 15, messages: 65536, handshake: 30s, check: 1s, drain: 10s, retention: 120s, hold: 120s, revert: 10s, dampening: 30s, ttl: 40s, young: 5s, link_age: 30s, session_age: 10s, floor_link: 0ns, floor_session: 0ns, floor_cutover: 10s, silence: 30s, resends: 5, soft: 4611686018427387904, hard: 18446744073708503040, delay: 2s, arrival: false }",
+    "params_debug": "Config { after: 120s, jitter: 15, messages: 65536, handshake: 30s, check: 1s, drain: 10s, retention: 120s, hold: 120s, revert: 10s, dampening: 30s, ttl: 40s, young: 5s, link_age: 30s, session_age: 10s, floor_link: 0ns, floor_session: 0ns, floor_cutover: 10s, silence: 30s, resends: 5, soft: 4611686018427387904, hard: 18446744073708503040, delay: 2s, arrival: false, reads: 8 }",
     "profile": "FspProfile<SeededEntropy> (Noise XK)",
     "startup_epoch_hex": "0123456789abcdef"
   },
@@ -4593,6 +4593,6 @@
   ],
   "generator": "fips-vectors",
   "generator_version": "0.1.0",
-  "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+  "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
   "schema_version": 1
 }

@@ -22,6 +22,7 @@ fips_rekey_attribution fips_rekey_reason_attribution(fips_rekey_reason r) {
     case FIPS_REKEY_REASON_OffLink:
     case FIPS_REKEY_REASON_KeyMismatch:
     case FIPS_REKEY_REASON_AnsweredBefore:
+    case FIPS_REKEY_REASON_ReplyUnread:
     case FIPS_REKEY_REASON_ReplyUnauthenticated:
     case FIPS_REKEY_REASON_LateReply:
     case FIPS_REKEY_REASON_UnknownAttempt:

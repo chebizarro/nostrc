@@ -9,6 +9,8 @@ typedef enum change_kind {
     CH_REPLACE,
     CH_RESPOND,
     CH_REPLY,
+    CH_MISREAD,
+    CH_REDIAL,
     CH_CANDIDATE,
     CH_DROP,
     CH_ACCEPT,
@@ -34,6 +36,7 @@ typedef struct change {
     fips_rekey_route route;
     size_t candidate_index;
     bool restart, yield_own, record;
+    bool read_live, candidate_live;
     rk_frame_proof frame;
 } change;
 
@@ -174,9 +177,17 @@ static void judge_reply(const fips_rekey *m, change *c, fips_rekey_env *env) {
                                                       : FIPS_REKEY_REASON_UnknownAttempt;
         return;
     }
+    bool capped = m->profile->cap_replies;
+    if (capped && m->cycle.attempt.misreads >= m->params.cfg.reads && !in->on_link) {
+        c->reason = FIPS_REKEY_REASON_ReplyUnread;
+        return;
+    }
+    memset(&c->read, 0, sizeof c->read);
+    c->read_live = true;
     if (!m->profile->reply(&m->cycle.attempt.hs, env->local, in->bytes, in->len, &c->read) ||
         c->read.fin.len > FIPS_REKEY_WIRE_MAX || !fips_rekey_bond_check(&m->bond, &c->read.done)) {
         c->reason = FIPS_REKEY_REASON_ReplyUnauthenticated;
+        if (capped) c->kind = CH_MISREAD;
         return;
     }
     c->kind = CH_REPLY;
@@ -194,6 +205,8 @@ static void judge_setup(const fips_rekey *m, fips_instant now, change *c, fips_r
     }
     if (c->candidate_index == m->cands.count)
         return;
+    memset(&c->candidate, 0, sizeof c->candidate);
+    c->candidate_live = true;
     if (!m->profile->answer(env->local, in->bytes, in->len, &c->candidate.hs, &c->candidate.ack) ||
         c->candidate.ack.len > FIPS_REKEY_WIRE_MAX) {
         c->reason = FIPS_REKEY_REASON_SetupMalformed;
@@ -212,6 +225,8 @@ static void judge_final(const fips_rekey *m, change *c) {
         c->reason = FIPS_REKEY_REASON_FinalNoAttempt;
         return;
     }
+    memset(&c->read, 0, sizeof c->read);
+    c->read_live = true;
     for (size_t n = m->cands.count; n > 0; --n) {
         const fips_rekey_candidate *cand = &m->cands.list[n - 1];
         if (!m->profile->complete(&cand->hs, c->input.bytes, c->input.len, &c->read.done)) {
@@ -273,6 +288,8 @@ static void judge_msg1(const fips_rekey *m, fips_instant now, change *c) {
             c->msg = m->record.answer;
             c->msg_kind = FIPS_REKEY_MSG_Msg2;
             c->route = FIPS_REKEY_ROUTE_EstablishedFallback;
+        } else if (fresh && !c->input.on_link && c->input.heard) {
+            c->kind = CH_REDIAL;
         } else if (fresh) {
             c->kind = CH_REPLACE;
             c->record = true;
@@ -281,6 +298,7 @@ static void judge_msg1(const fips_rekey *m, fips_instant now, change *c) {
         return;
     }
     if (!c->input.on_link && c->input.reachable) {
+        if (fresh && c->input.heard) { c->kind = CH_REDIAL; return; }
         c->kind = CH_REFUSE;
         c->reason = FIPS_REKEY_REASON_OffLink;
         c->record = fresh;
@@ -1281,6 +1299,13 @@ static void apply(fips_rekey *m, fips_instant now, change *c, fips_rekey_env *en
     case CH_RESPOND:
         respond(m, now, c, env, out);
         break;
+    case CH_REDIAL:
+        rk_output(out, FIPS_REKEY_OUT_RedialRequested)->data.tok = *c->input.tok;
+        break;
+    case CH_MISREAD:
+        m->cycle.attempt.misreads = rk_u8add(m->cycle.attempt.misreads, 1);
+        rk_reject(out, FIPS_REKEY_REASON_ReplyUnauthenticated);
+        break;
     case CH_REPLY:
         reply(m, now, c, env, out);
         break;
@@ -1354,7 +1379,9 @@ fips_status fips_rekey_step(fips_rekey *m, fips_instant now, fips_rekey_input in
                             fips_rekey_env *env, fips_rekey_outputs *out) {
     if (!m->live || out->count)
         return FIPS_ERR_RANGE;
-    change c = {0};
+    change c;
+    c.read_live = c.candidate_live = false;
+    c.yield_own = c.record = false;
     judge(m, now, input, env, &c);
     apply(m, now, &c, env, out);
     /* Prompt handles outlive this call, so withdraw any demoted later in it. */
@@ -1368,8 +1395,19 @@ fips_status fips_rekey_step(fips_rekey *m, fips_instant now, fips_rekey_input in
     }
     sodium_memzero(out->items + write, (out->count - write) * sizeof *out->items);
     out->count = write;
-    fips_rekey_completed_clear(&c.read.done);
-    fips_rekey_hs_clear(&c.candidate.hs);
-    sodium_memzero(&c, sizeof c);
+    /* Only the three crypto judges construct owning scratch, including their
+     * failure paths. Frame/Poll/report steps neither initialize nor wipe it. */
+    if (c.read_live) {
+        fips_rekey_completed_clear(&c.read.done);
+        sodium_memzero(&c.read, sizeof c.read);
+    }
+    if (c.candidate_live) {
+        fips_rekey_hs_clear(&c.candidate.hs);
+        sodium_memzero(&c.candidate, sizeof c.candidate);
+    }
     return FIPS_OK;
+}
+
+void fips_rekey_note_redial(fips_rekey *m, fips_rekey_digest ephemeral) {
+    fips_rekey_record_push(&m->record, ephemeral);
 }

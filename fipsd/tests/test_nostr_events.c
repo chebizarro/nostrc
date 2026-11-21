@@ -350,7 +350,7 @@ int main(void)
     CHECK(sodium_init() >= 0);
     CHECK(fips_identity_init_secp(fips_fixed_entropy_adapter(&fixed), &secp) == FIPS_IDENTITY_OK);
     char *text = load("nostr.json", NULL); json_t *doc = json_loads(text, 0, NULL); CHECK(doc); free(text);
-    CHECK(!strcmp(sval(doc, "pin"), "6aa80504baa0fa312b392009eea0e3e59fb6fe4c"));
+    CHECK(!strcmp(sval(doc, "pin"), "64f5b4d482cfe14abad108ffc2d92128f7658311"));
     json_t *cases = json_object_get(doc, "cases"); CHECK(json_array_size(cases) == 4);
     for (size_t i = 0; i < json_array_size(cases); ++i) fixture(json_array_get(cases, i));
     freshness(); bounds(); advert_inbox_bounds(); local_adverts(); properties();

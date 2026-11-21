@@ -1693,7 +1693,9 @@ the future relay/session owner before replay insertion or side effects.
 
 #### Bounds and upstream differences
 
-Pinned oracle: `6aa80504baa0fa312b392009eea0e3e59fb6fe4c`.
+Bounds-assessment oracle: `6aa80504baa0fa312b392009eea0e3e59fb6fe4c`
+(historical line references below; current compatibility pin is in
+`libfips-core/UPSTREAM.md`).
 `src/nostr/runtime.rs:1967-2134`, `signal.rs:17,105-259,303-335`, and
 `traversal.rs:28-49,398-426` are the corresponding upstream rules. The November
 12 bounding fix limits **planning** to 32 offered local candidates and eight

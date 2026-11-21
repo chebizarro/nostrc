@@ -8,7 +8,7 @@ bool fips_path_capability_due(const fips_path_capability *c,fips_instant now) { 
 void fips_path_capability_send(fips_path_capability *c,fips_instant now,uint32_t path,uint32_t id,fips_duration timeout,const fips_path_config *cfg)
 {
     c->sent=p_inc(c->sent); c->path=path;
-    c->out=(fips_path_sent){id,now,fips_deadline(now,timeout),FIPS_PATH_PROBE_MIN_SIZE};
+    c->out=(fips_path_sent){id,now,fips_deadline(now,timeout),FIPS_PATH_PROBE_MIN_SIZE,timeout};
     c->next_at=fips_deadline(now,fips_path_capability_gap(c->sent,cfg));
 }
 bool fips_path_capability_take(fips_path_capability *c,fips_path_sent *out)

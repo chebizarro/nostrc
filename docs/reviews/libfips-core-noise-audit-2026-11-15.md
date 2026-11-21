@@ -279,3 +279,49 @@ is affected. Recorded in `VERSION_MANIFEST.md`.
 - **F-5 (Tier A4/B design note)** — worker clones now carry no issuable counter: the dispatcher reserves with `fips_noise_session_take_send_counter` and workers seal with `fips_cipher_state_seal_with_counter`; record this in the rekey/host design when porting `core/src/proto/rekey`.
 - **F-7 (libfips-core, low, nostrc-02p6s)** — `fips_rekey_step` zero-initialises and wipes its ≈3.2 KB `change` scratch (input, read, candidate, wire, proof) on every step, plus `completed_clear`/`hs_clear` on fields an `AuthenticatedFrame` judge never touches. Bounding those wipes by `change.kind` needs the same per-kind writer audit as R-1.
 - **F-6 (CI, optional)** — run `fips_core_ct_probe` on a quiet dedicated runner as a non-gating nightly, since wall-clock t-tests are unsuitable for shared PR runners.
+
+
+## Addendum 2026-11-21 — per-judge rekey change scratch (nostrc-u19cz.5)
+
+R-2 (performance; ownership preserved): `fips_rekey_step` no longer zeroes and
+wipes its ~3.2 KiB `change` on every AuthenticatedFrame/Poll/report. The private
+change record is not retained or exposed. Each field's writer/reader was audited:
+
+- `judge` always writes `kind`, `input`, `reason`. Step initializes only small
+  ownership flags (`read_live`, `candidate_live`) and the two conditional flags
+  `yield_own`, `record`. No secret resides in those scalar defaults.
+- `judge_reply` first resolves the index/attempt and read cap. Only immediately
+  before the profile callback it zeroes `read` and sets `read_live`. Failure,
+  invalid output length or bond mismatch retain that flag; success moves keys
+  into the epoch (clearing the source) but still clears remaining read metadata.
+  Both Reply and Misread therefore destroy/wipe exactly the scratch they wrote.
+  `rk_epoch_new` uses `fips_noise_session_take_cleared` from `done->session`
+  and clears `done`; both reply and final-completion apply paths use that same
+  move. The step cleanup cannot destroy the destination epoch.
+- `judge_final` with no candidate touches no crypto scratch. Otherwise it zeroes
+  `read` and sets `read_live` before trying any complete callback; each refused
+  candidate clears `read.done` before the next. Drop, Accept and terminal reject
+  all keep the owner flag until step clears the entire `read`.
+- `judge_setup` resolves replay/capacity refusals before constructing a candidate.
+  Immediately before `answer`, it zeroes the **whole** candidate (including
+  has_bound/sequence defaults) and sets `candidate_live`. Failure still clears
+  its handshake; success moves it into the candidate list, whose existing move
+  clears the source. Step destroys the handshake and wipes the full candidate
+  in either case. No raw `kind` check could cover failed callbacks correctly;
+  the explicit constructed-owner flags deliberately do.
+- `CH_RESEND` writes msg/msg_kind/route before reading them; msg holds public
+  framed ciphertext only. `CH_RESPOND` reads yield_own (default false); the
+  replace/refuse rows read record (default false). PeerDone and Final write
+  restart before their successful apply. Frame writes its complete proof;
+  Worker/Delegated/Undelegated write only the slot that apply reads. Poll,
+  DataSent, PathFacts, Open and reject do not read either owning scratch slot.
+  No callback receives the whole change or writes outside its explicitly
+  initialized output slot.
+
+Every constructed secret scratch slot is still wiped **before the step returns**,
+including partially-written failure outputs. No owned slot is initialized or
+cleared on the hot non-crypto judges. Replay/output compaction's own wipe is
+unchanged. Shared rekey unit/profiles, failure/bond/replay/legacy traces and
+production-node cap tests run under both sanitizer configurations; the new cap
+is profile-selected (IK only), not inferred from the protocol layer (the test
+suite also contains a deliberately uncapped three-message FMP profile).

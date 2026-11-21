@@ -173,7 +173,7 @@ const fips_rekey_profile rk_test_ik = {.layer = FIPS_REKEY_LAYER_Fmp,
                                        .responder_cutover = FIPS_REKEY_OnFrame,
                                        .dampen_at = FIPS_REKEY_DAMPEN_Answer,
                                        .select = FIPS_REKEY_ByIndex,
-                                       .indexed = true,
+                                       .indexed = true, .cap_replies = true,
                                        COMMON};
 const fips_rekey_profile rk_test_xk = {.layer = FIPS_REKEY_LAYER_Fsp,
                                        .messages = 3,

@@ -18,7 +18,7 @@
               "generator_version": "0.1.0",
               "hex": "00000e0000000000000000009b8afbf096d4b76610a5ef95bcbe25946677089f8a3e83951d1b46eb1ed3",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "0da51e22cbd5055db28a5f1337d80e47ba08e7bc9214f571706fe60790004b82"
             },
             "counter": 0,
@@ -152,7 +152,7 @@
               "generator_version": "0.1.0",
               "hex": "02d0e321d04f015b263d9063b9c3f8f14fe0a34f7c0dd7ef3601593815de3e3229",
               "length": 33,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "4d852d042a5fa1bd4b2504fb045edfa969bccd2b840078f32d24d76b5105c72d"
             },
             "kind": "Send",
@@ -218,7 +218,7 @@
               "generator_version": "0.1.0",
               "hex": "1ddcfc19018a28210deb347ae47f74e558a61c54e1fd1b950d1093b7ea7fda2869b62babb73e823b6652c9c1de5bc8f635da3df9c6f5eefdfb1a0f47c93f101a31187ecd226400eec1",
               "length": 73,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "601d6f6f6f84a43c73273d5ad36ac9ac07d1a883be2981ee2d6dce65b8ac4343"
             },
             "kind": "Send",
@@ -231,7 +231,7 @@
               "generator_version": "0.1.0",
               "hex": "000206000000000000000000c50e57ae4873765d27161271010eea5d4582b523422f",
               "length": 34,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "b4ccd53a1a34cd8142eabf838a940569d03b9397ecf733cc15da74874c3d7e63"
             },
             "counter": 0,
@@ -246,7 +246,7 @@
               "generator_version": "0.1.0",
               "hex": "0000060001000000000000003bfe906828a3792c395b20298c3c5b373a114423f1c7",
               "length": 34,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "2e3e8bba291887560ac9028c847f69174bf45382c988a41573d040233c0d0975"
             },
             "counter": 1,
@@ -387,7 +387,7 @@
               "generator_version": "0.1.0",
               "hex": "00000e000200000000000000ff5a56bfdc52e2a6218dd6bac8c075f53446e739c3608abab5d40b897086",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "44edf5b690e207c5b95e31f2e0a54969e6d2ef52b45383dec0281188117469e1"
             },
             "counter": 2,
@@ -482,7 +482,7 @@
               "generator_version": "0.1.0",
               "hex": "0002060001000000000000002786ced737e4f9a643cdac642204e7d444da6b9eeacf",
               "length": 34,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "8cd457de3dd343fde72b32bb10d0ad0001be88d0d1ee50a5643d06dbbcbe36dd"
             },
             "counter": 1,
@@ -636,7 +636,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e00020000000000000007527deee029e65d0b9087a6a2a6535166de60a4ee94df22ced9833a4049",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "26d53608f84e4704ed9c8616750c41d984c72ff78d578c8e1e10cfd1c92ce2b1"
             },
             "counter": 2,
@@ -864,7 +864,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e000300000000000000f3269c7baf19ac88b77cd80a468a8666e86526be01d5de1078f4a0f95dfb",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "81b3047f5fabfe3a77d5f860a272c0e8b2634f5940dcbe4606c0f746a75d3496"
             },
             "counter": 3,
@@ -1092,7 +1092,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e00040000000000000033542cefdb28d7e754068c4e3929fd97a16d95912b60b7bde4276b4afe27",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "a1b2a08de11260781119b03786199ddff831053d9350da0883179da51ad03fd9"
             },
             "counter": 4,
@@ -1320,7 +1320,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e0005000000000000000eae11491c93d00abb36ccf7fb7e6a79edac12d64699b53d1668ff46a2ec",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "d31652133d4c50b69d8560002daca420cb5fc9af5d10c1b930dd1a1ac0b02382"
             },
             "counter": 5,
@@ -1548,7 +1548,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e000600000000000000e361815eb92fd6e8df97c3436ddb10da1facd6df1e5a0d35932946e9b314",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "ee8e1006d57c69655eabf7d526daf6f19386916e2a208e700ab6a57e2575ec30"
             },
             "counter": 6,
@@ -1776,7 +1776,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e000700000000000000802538fe82738ebe49b77d08a6cc1444cb35b7ab4a500de5409982d4d533",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "36323099f515726538eaef62c30e74127ab77da0c7246b9aa7bd2ad5f29758f1"
             },
             "counter": 7,
@@ -2004,7 +2004,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e0008000000000000009776653b638bfb12bb09022cd2efe006807d7ee35c03635740fbfcec8ea2",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "22d211aeb5908013c5873a49c4a85003b06704532cdd474ac177d91e8b1c8131"
             },
             "counter": 8,
@@ -2232,7 +2232,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e0009000000000000006c3f450309d157b705a05e6561139e271531857bcd6e60ad4c2c2c8ae5e2",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "a4f370da28937f9f0f80abb7db5beb367e17dad9f3d6b473576168c42190dd15"
             },
             "counter": 9,
@@ -2460,7 +2460,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e000a000000000000006a0b9386de87c21485d15f7bc135d7d8588425810cb87b5d365c094a8c4a",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "e9d0b3c35fdecca11c561b6619918b3f3fde8f66ac05b7ba6dfdc372cddb575b"
             },
             "counter": 10,
@@ -2688,7 +2688,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e000b00000000000000b13e37ecf4ccaba0f60c3fce4e27ec3b3c5b0f30125e57fa3af222e58cef",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "53b130a469827941cacaa0328c3a5908427f38c387d62008f30019b0af0fb092"
             },
             "counter": 11,
@@ -2965,7 +2965,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e000c0000000000000070924f70f2bf052202b0fff0cee29c6d5334d4b3cb1481e799b3b9084a6b",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "571ffe7a7c5419f1fd65cc1af54ebba159f41631a5855b4f783f570308c84805"
             },
             "counter": 12,
@@ -3151,7 +3151,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e000d000000000000005150df5b6374b75364cbf2e80e0f599881e37b5da89802a4fd77c756e41e",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "c73a77ae9b95df5966d93a949c2da5a57d1a0a66ca5bd95ce3dbd0420bc09d8d"
             },
             "counter": 13,
@@ -3337,7 +3337,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e000e000000000000000946970f5c6d286d7e3d8f6e10248cb46de092ff7af13195291df43da194",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "72046a65ff8ebeb684af5016840df23ec889b33a47260493fb2c117aa16dbd8a"
             },
             "counter": 14,
@@ -3523,7 +3523,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e000f0000000000000075d1cd2fe6ab6804ab7034f84c9ab8cd50166a66bf60f00ad4ffb6e5bb3a",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "630d3d0de243edfa0ea579a4f0af62f6560aa57c556afba3d1f002b6e72c785e"
             },
             "counter": 15,
@@ -3709,7 +3709,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e001000000000000000225f236e336d77e357ffa0caa7781b1634f02f65ee13af524fab6ea225ea",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "b838b22fb1205c55a805902d844b43b19e1136fcad3e3f223465c1b52b709f4a"
             },
             "counter": 16,
@@ -3895,7 +3895,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e001100000000000000e51c8d68a09cc71717de825da21c9364fc3f0e511671d0d3f3befdfcfe24",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "5759d0a13bbc0e45d17cd79c84ef3474047f51b3a5166305c191a2704fdb6eea"
             },
             "counter": 17,
@@ -4081,7 +4081,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e0012000000000000006d5a745b74db08cb4d74b0f5b555bf14e6e387f896886a1899d486e61bed",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "1a6b7a064245e9616ad1f06dc7430d1ec5713e4d90724bde595302488c3f48d4"
             },
             "counter": 18,
@@ -4267,7 +4267,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e001300000000000000edd0507448bda4198d1d93d512bc5f4e9a7f34f55d58ef6e39463024522d",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "60095a06a7cfaef66d763b6303a894676e9a4b73c1a6d51fdd0f9aafcf7c0b6f"
             },
             "counter": 19,
@@ -4453,7 +4453,7 @@
               "generator_version": "0.1.0",
               "hex": "00020e001400000000000000c41cf15951751a876bc0c892e54188ac59b6aaa871d5bb89a9ff965b22a0",
               "length": 42,
-              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
               "sha256": "353c6f9bb269e73959c74cf0b01f01eb5a0ca484b18d812f2f4228e1ff371d6f"
             },
             "counter": 20,
@@ -4626,7 +4626,7 @@
     ],
     "legacy_initiates": false,
     "legacy_release": "V052",
-    "params_debug": "Config { after: 120s, jitter: 15, messages: 65536, handshake: 30s, check: 1s, drain: 10s, retention: 120s, hold: 120s, revert: 10s, dampening: 30s, ttl: 40s, young: 5s, link_age: 30s, session_age: 10s, floor_link: 0ns, floor_session: 0ns, floor_cutover: 10s, silence: 30s, resends: 5, soft: 4611686018427387904, hard: 18446744073708503040, delay: 2s, arrival: false }",
+    "params_debug": "Config { after: 120s, jitter: 15, messages: 65536, handshake: 30s, check: 1s, drain: 10s, retention: 120s, hold: 120s, revert: 10s, dampening: 30s, ttl: 40s, young: 5s, link_age: 30s, session_age: 10s, floor_link: 0ns, floor_session: 0ns, floor_cutover: 10s, silence: 30s, resends: 5, soft: 4611686018427387904, hard: 18446744073708503040, delay: 2s, arrival: false, reads: 8 }",
     "profile": "FspProfile<SeededEntropy> (Noise XK)",
     "startup_epoch_hex": "0123456789abcdef"
   },
@@ -4636,6 +4636,6 @@
   ],
   "generator": "fips-vectors",
   "generator_version": "0.1.0",
-  "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+  "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
   "schema_version": 1
 }

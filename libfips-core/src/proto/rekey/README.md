@@ -7,6 +7,23 @@ in `fmp/rekey` and `fsp/rekey`; the bounded host binding is `node/session`.
 Legacy 0.5.x models remain upstream; twelve captured compatibility traces
 are replayed by `FipsDiffRekeyLegacy` (see `../../../tests/REKEY.md`).
 
+## Pin 64f5b4d4 admission additions
+
+IK profiles opt into `cap_replies`; hosts must supply `Reply.on_link` from
+trusted transport/address/path ownership, not from unauthenticated packet
+claims. Each attempt saturating-counts refused reads. At `cfg.reads` (default
+8), off-link replies produce `ReplyUnread` before any crypto read; on-link
+replies remain readable, including the genuine answer. This count is the one
+new unauthenticated state change. FSP profiles and the node's direct first-dial
+read are uncapped. The C node attributes an unread reply to `handshake.off_link`.
+
+For a fresh off-link msg1 of a heard peering, `PeerMsg1.heard` can yield
+`RedialRequested`. Execute it by arming a pending redial first, then call
+`note_redial` with the output token's ephemeral; the request itself records
+nothing and must not evict the incumbent. The existing C host deliberately
+leaves `heard` false until its settlement adoption (`nostrc-qtpj9`), so this
+API addition is not a claim that the host redial flow was rewired.
+
 ## API and state ownership
 
 Include `<fips/proto/rekey/mod.h>`. Names and file boundaries follow the pinned

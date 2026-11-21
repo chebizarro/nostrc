@@ -242,6 +242,7 @@ void hs_metrics_rekey(handlers *h, bool session, const fips_rekey_output *o)
         } else {
             switch (o->reason) {
             case FIPS_REKEY_REASON_AnsweredBefore: METRIC(h, handshake, answered_before); break;
+            case FIPS_REKEY_REASON_ReplyUnread:
             case FIPS_REKEY_REASON_OffLink: METRIC(h, handshake, off_link); break;
             case FIPS_REKEY_REASON_PendingHeld: METRIC(h, handshake, rekey_pending); break;
             case FIPS_REKEY_REASON_DualInitWon: METRIC(h, handshake, rekey_tiebreak); break;
