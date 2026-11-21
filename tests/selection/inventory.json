@@ -32879,9 +32879,9 @@
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "4d8a97bad71d2f2ff8c8a8bcf85ee0862002b54ee361321381d3fa5edfea31ed",
+      "source_sha256": "ce69578b869849fa0a166afbd245450ab03c7d4843afb4ad6eb5011fcf1b9524",
       "unsupported_reason": "Windows toolchain/installer/package execution is not supported by the current Linux/macOS realization profiles; publisher identity/artifact contracts remain legacy.",
-      "workflow_sha256": "8ef47bdca7d051e689d7a1442fe22dfff77f90423869a11c99f5ab3fe70161ba"
+      "workflow_sha256": "7ceb029a80b82ab78c64874c688f778a8d75488722cc766db4cb048aff324337"
     },
     ".github/workflows/dependency-tests.yml:policy_regressions": {
       "profiles": [],
