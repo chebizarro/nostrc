@@ -3,8 +3,8 @@
 Source: `core/src/proto/settle/` in jmcorgan/fips at
 `64f5b4d482cfe14abad108ffc2d92128f7658311`.
 
-This directory ports **params, links and legs**, not the full peer settlement
-machine. Public API: `fips/proto/settle/settle.h`. Test mapping and qualification:
+This directory ports **params, links, legs and gates**, not yet the full peer
+settlement machine. Input/output vocabulary is declared in sibling headers. Public API: `fips/proto/settle/settle.h`. Test mapping and qualification:
 [`tests/SETTLE.md`](../../../tests/SETTLE.md).
 
 - `params.c`: upstream defaults, binary64 backoff/truncation; bounded deadlines
@@ -28,7 +28,11 @@ capacity and a 4096-byte transcript bound. Capacity/ID/transcript rejection is
 transactional. Poll conservatively preflights `1 + path_count` close slots per
 reaped link; this can exceed the number of actual deduplicated closes.
 
-Not ported: gates, peer arbitration table, input/output vocabulary, join policy,
+- `gates.c`: all six restart sources, floors, replay/silent/redial memory,
+  dampener stamps, refused counts and identity expiry. Caller-selected identity
+  capacity and 64-entry per-identity ephemeral bounds fail transactionally.
+
+Not yet ported: peer arbitration table, join policy,
 parity schedules, mutation switches, model history/judge and explorers/simulators.
 Test-only Rust replant/naming/drive helpers and the shell-specific `reap_one`
 entrypoint are not exposed. Those are **not** replaced by a fake judge or by the

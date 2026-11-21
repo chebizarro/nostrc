@@ -1,5 +1,5 @@
 /* Independent family runner: does not alter D1's shared schema/pin scaffolding. */
-#include <fips/proto/settle/settle.h>
+#include <fips/proto/settle/gates.h>
 #include "../fakes/host.h"
 #include <jansson.h>
 #include <stdio.h>
@@ -162,6 +162,68 @@ static size_t check_legs(json_t *trace)
     REQUIRE(!fips_settle_leg_get(&legs,link));
     return json_array_size(rows);
 }
+static bool optional(json_t *v) { REQUIRE(v); return !json_is_null(v); }
+static size_t check_gates(json_t *trace)
+{
+    fips_settle_memory *slots=calloc(8,sizeof(*slots)); REQUIRE(slots);
+    fips_settle_gates g; REQUIRE(fips_settle_gates_init(&g,slots,8)==FIPS_OK);
+    fips_settle_params p=fips_settle_params_default();
+    json_t *rows=field(trace,"rows"); REQUIRE(json_is_array(rows) && json_array_size(rows)>0);
+    for (size_t row=0;row<json_array_size(rows);++row) {
+        json_t *r=json_array_get(rows,row), *op=field(r,"op"), *result=json_null();
+        uint64_t type=at(op,0), id=at(op,1); REQUIRE(id<256); fips_node_addr peer=holder(id).identity;
+        fips_instant now=fips_test_instant(num(field(r,"now"))), memory;
+        uint8_t e[32], epoch[8];
+        switch (type) {
+        case 0: {
+            REQUIRE(at(op,2)<=5 && at(op,3)<=2);
+            fips_settle_ask a={.source=(fips_settle_source)at(op,2),.has_held=at(op,3)!=0,
+                .held={.heard=at(op,3)==2,.installed=fips_test_instant(at(op,4)),.has_last=optional(json_array_get(op,5))},
+                .has_ephemeral=optional(json_array_get(op,6)),.has_epoch=optional(json_array_get(op,7)),.has_memory=optional(json_array_get(op,9))};
+            if (a.held.has_last) a.held.last=fips_test_instant(at(op,5));
+            if (a.has_ephemeral) memset(a.ephemeral,(int)at(op,6),32);
+            if (a.has_epoch) memset(a.epoch,(int)at(op,7),8);
+            if (a.has_memory) a.memory=fips_test_instant(at(op,9));
+            REQUIRE(at(op,8)==now.opaque[0]); fips_settle_refusal refusal;
+            REQUIRE(fips_settle_gate(&g,peer,&a,now,&p,&refusal)==FIPS_OK); result=integer(refusal); break;
+        }
+        case 1:
+            memset(e,(int)at(op,2),32); memory=optional(json_array_get(op,4)) ? fips_test_instant(at(op,4)) : now;
+            REQUIRE(fips_settle_gate_promoted(&g,peer,e,now,&memory,&p)==FIPS_OK); break;
+        case 2: {
+            bool started; fips_duration length; bool ep=optional(json_array_get(op,2)), setup=optional(json_array_get(op,3));
+            if (ep) memset(epoch,(int)at(op,2),8);
+            if (setup) memset(e,(int)at(op,3),32);
+            memory=optional(json_array_get(op,5)) ? fips_test_instant(at(op,5)) : now;
+            REQUIRE(fips_settle_gate_ended(&g,peer,ep ? epoch : NULL,setup ? e : NULL,now,&memory,&p,&started,&length)==FIPS_OK);
+            result=started ? integer(length.secs*1000+length.nanos/1000000) : json_null(); break;
+        }
+        case 3: fips_settle_gate_heard(&g,&peer); break;
+        case 4: fips_settle_gate_framed(&g,&peer); break;
+        case 5: fips_settle_gate_forget(&g,&peer); break;
+        case 6: memset(e,(int)at(op,2),32); REQUIRE(fips_settle_gate_redialed(&g,peer,e,now,&p)==FIPS_OK); break;
+        case 7: REQUIRE(fips_settle_gate_swapped(&g,peer,boolean(json_array_get(op,2)),now)==FIPS_OK); break;
+        case 8: { uint32_t count; result=fips_settle_gate_count_refused(&g,&peer,&count) ? integer(count) : json_null(); break; }
+        case 9: result=integer(fips_settle_gate_take_refused(&g,&peer)); break;
+        default: REQUIRE(false);
+        }
+        equal(result,field(r,"result")); json_t *view=json_array();
+        for (unsigned n=0;n<256;++n) {
+            fips_node_addr who=holder(n).identity; const fips_settle_memory *m=fips_settle_gate_get(&g,&who); if (!m) continue;
+            json_t *v=json_array(); add(v,integer(n)); add(v,integer(m->replay_count)); add(v,integer(m->redial_count));
+            add(v,m->silence.present ? integer(m->silence.count) : json_null()); add(v,m->has_stamp ? integer(m->stamp.opaque[0]) : json_null());
+            fips_settle_silencing silence;
+            json_t *s=json_null();
+            if (fips_settle_gate_refusing(&g,&who,now,&silence)) {
+                s=json_array(); add(s,silence.has_epoch ? integer(silence.epoch[0]) : json_null()); add(s,integer(silence.silent));
+                add(s,integer(silence.remaining.secs*1000+silence.remaining.nanos/1000000));
+            }
+            add(v,s); add(view,v);
+        }
+        equal(view,field(r,"view"));
+    }
+    free(slots); return json_array_size(rows);
+}
 int main(int argc, char **argv)
 {
     REQUIRE(argc<=2); json_error_t error;
@@ -171,11 +233,12 @@ int main(int argc, char **argv)
     REQUIRE(!strcmp(text(field(root,"pin")),PIN)); REQUIRE(!strcmp(text(field(root,"family")),"settle"));
     REQUIRE(!strcmp(text(field(root,"generator")),"fips-vectors")); REQUIRE(!strcmp(text(field(root,"generator_version")),"0.1.0"));
     REQUIRE(json_is_array(field(root,"gaps")));
-    json_t *cases=field(root,"cases"); REQUIRE(json_is_array(cases) && json_array_size(cases)==12);
+    json_t *cases=field(root,"cases"); REQUIRE(json_is_array(cases) && json_array_size(cases)==13);
     size_t rows=0;
     for (size_t i=0; i<json_array_size(cases); ++i) {
         json_t *trace=json_array_get(cases,i); const char *kind=text(field(trace,"kind"));
         if (!strcmp(kind,"links")) rows+=check_links(trace);
+        else if (!strcmp(kind,"gates")) rows+=check_gates(trace);
         else { REQUIRE(!strcmp(kind,"legs")); rows+=check_legs(trace); }
     }
     printf("settle: %zu checked traces, %zu checked steps, 0 skipped, 0 failed\n",json_array_size(cases),rows);

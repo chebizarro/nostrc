@@ -6,8 +6,9 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* Partial settlement port at upstream 64f5b4d482cf: params, links, legs only.
- * No peer arbitration/table, restart gates or node integration is provided.
+/* Settlement primitives at upstream 64f5b4d482cf: params, links and legs.
+ * Gates and input/output vocabulary are in the sibling headers. The table
+ * and node integration are separate layers.
  * Storage belongs to the caller and must not overlap arguments/outputs. No
  * allocation, IO, clock reads or global state. Instants use fips/host.h.
  * Objects/slots are private-by-contract; inspect but do not mutate or copy

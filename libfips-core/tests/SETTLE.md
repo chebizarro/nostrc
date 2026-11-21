@@ -6,16 +6,16 @@ Source: `core/src/proto/settle/` at
 ## Scope
 
 Implemented: params, link records/paths/derived index/attribution/close rule,
-and handshake legs/answers/resends/deadlines/lease ownership. This is a coherent
-primitive subset, **not the settlement table or an independent model judge**.
+handshake legs/answers/resends/deadlines/lease ownership and restart gates.
+Input/output vocabulary is declared for the following table layer. This is a coherent
+primitive/gates layer, **not yet the settlement table or an independent model judge**.
 No fipsd integration, hosted CI, live networking or full settlement convergence
 is claimed. Remaining core work is `nostrc-f12v2.8`; leave `nostrc-f12v2.7` open.
 Pinned upstream specs are in `src/proto/settle/upstream/`, verbatim and expressly
 not a claim that every upstream rule is implemented in this subset.
 
 The complete inventory below contains **369 actual Rust test functions in 36
-files**, including feature-gated slow tests: **16 covered-by, 353 not ported,
-zero literal one-for-one ports**. Covered-by is a many-to-many behavioral mapping,
+files**, including feature-gated slow tests: **18 ported, 16 covered-by, 335 not ported**. Covered-by is a many-to-many behavioral mapping,
 not a claim that every original assertion/helper was translated. Attribute-line
 numbers identify the pinned sources. An earlier raw substring count of 370
 included the string literal `"#[test]"` in `tests/mod.rs`'s source scanner;
@@ -23,16 +23,22 @@ only real standalone attributes are counted here.
 
 ## C coverage
 
-`FipsCoreSettleTest` (`test_settle.c`) adds capacity preflight/output sentinels,
+`FipsCoreSettleTest` includes 18 same-named direct upstream gate tests in
+`test_settle_gates.c`, plus transactional arena/parameter rejection checks.
+The gate/model history and default-interval comparisons await the independent
+model judge. `test_settle.c` also adds capacity preflight/output sentinels,
 full arenas, ID exhaustion, oversized transcripts, replacement/take lease moves,
 failed sends, zero resend cap, short host clock and actual slot reuse followed
 by ascending close/lease output. Four pthreads run **independent** caller-owned
 states; shared-object mutation requires caller synchronization.
 
-`FipsDiffSettle` (`diff/settle.c`, `vectors/settle.json`) checks 12 traces and
-280 steps: 192 deterministic mixed link operations with every record, index,
+`FipsDiffSettle` (`diff/settle.c`, `vectors/settle.json`) checks 13 traces and
+428 steps: 192 deterministic mixed link operations with every record, index,
 placement and close snapshot, plus 11 leg traces varying multiplier, resend
-interval, origin cap, answer and failed-send retry. The new exporter module
+interval, origin cap, answer and failed-send retry. A gate trace checks all six sources, both floors, stamps, replay/silent/redial
+memory, partial forgetting, refusal counts, identity lapse and split clocks.
+Ephemerals are opaque IDs mapped injectively on each side of the gate trace;
+this tests gate semantics, not hashing. The new exporter module
 `tools/fips-vectors/src/settle.rs` executes unmodified upstream `fips-core` at
 the exact pin, not a C-derived oracle. It rejects mutation environment switches.
 The replay rejects wrong pin/family/schema, trace count and mismatched outputs.
@@ -46,7 +52,7 @@ replacement for upstream worlds, scheduler exploration or mutation testing.
 
 ## Not-ported reasons
 
-- **CORE**: gates, table arbitration and join need the full unported state
+- **CORE**: table arbitration and join need the full unported state
   machine and input/output vocabulary. No substitute helper coverage claimed.
 - **MODEL**: independent model history/judge and their 55 tests remain unported.
   Rust primitive differential traces do not replace this independent judge.
@@ -231,26 +237,26 @@ hosted CI acceptance.
 
 | Upstream test (attribute line) | Disposition | C coverage / reason |
 |---|---|---|
-| `the_unheard_floor_refuses_until_one_second_and_accepts_at_it` (L78) | not ported | CORE (see boundary above) |
-| `the_heard_floor_counts_from_the_last_frame` (L91) | not ported | CORE (see boundary above) |
-| `the_heard_floor_counts_from_installation_when_no_frame_has_arrived` (L101) | not ported | CORE (see boundary above) |
-| `the_dampener_refuses_until_its_ceiling_after_the_last_accepted_restart` (L111) | not ported | CORE (see boundary above) |
-| `an_own_msg2_restart_goes_through_the_gate_and_is_accepted_inside_its_floors` (L136) | not ported | CORE (see boundary above) |
-| `an_own_msg2_restart_does_not_stamp_the_dampener` (L159) | not ported | CORE (see boundary above) |
-| `the_replay_memory_refuses_an_ephemeral_that_already_promoted_an_unheard_peering` (L173) | not ported | CORE (see boundary above) |
-| `the_replay_memory_holds_at_most_eight` (L201) | not ported | CORE (see boundary above) |
-| `a_frame_forgets_the_replay_memory_and_the_silent_sessions` (L226) | not ported | CORE (see boundary above) |
-| `silent_sessions_start_a_refusal_at_the_third_in_a_row` (L252) | not ported | CORE (see boundary above) |
-| `each_further_silent_session_doubles_the_refusal_up_to_its_cap` (L298) | not ported | CORE (see boundary above) |
-| `gate_memory_holds_no_entry_once_an_identitys_state_has_lapsed` (L330) | not ported | CORE (see boundary above) |
-| `the_refused_count_goes_with_its_silent_session_record` (L388) | not ported | CORE (see boundary above) |
+| `the_unheard_floor_refuses_until_one_second_and_accepts_at_it` (L78) | ported | `test_settle_gates.c`: same-named adapted upstream test |
+| `the_heard_floor_counts_from_the_last_frame` (L91) | ported | `test_settle_gates.c`: same-named adapted upstream test |
+| `the_heard_floor_counts_from_installation_when_no_frame_has_arrived` (L101) | ported | `test_settle_gates.c`: same-named adapted upstream test |
+| `the_dampener_refuses_until_its_ceiling_after_the_last_accepted_restart` (L111) | ported | `test_settle_gates.c`: same-named adapted upstream test |
+| `an_own_msg2_restart_goes_through_the_gate_and_is_accepted_inside_its_floors` (L136) | ported | `test_settle_gates.c`: same-named adapted upstream test |
+| `an_own_msg2_restart_does_not_stamp_the_dampener` (L159) | ported | `test_settle_gates.c`: same-named adapted upstream test |
+| `the_replay_memory_refuses_an_ephemeral_that_already_promoted_an_unheard_peering` (L173) | ported | `test_settle_gates.c`: same-named adapted upstream test |
+| `the_replay_memory_holds_at_most_eight` (L201) | ported | `test_settle_gates.c`: same-named adapted upstream test |
+| `a_frame_forgets_the_replay_memory_and_the_silent_sessions` (L226) | ported | `test_settle_gates.c`: same-named adapted upstream test |
+| `silent_sessions_start_a_refusal_at_the_third_in_a_row` (L252) | ported | `test_settle_gates.c`: same-named adapted upstream test |
+| `each_further_silent_session_doubles_the_refusal_up_to_its_cap` (L298) | ported | `test_settle_gates.c`: same-named adapted upstream test |
+| `gate_memory_holds_no_entry_once_an_identitys_state_has_lapsed` (L330) | ported | `test_settle_gates.c`: same-named adapted upstream test |
+| `the_refused_count_goes_with_its_silent_session_record` (L388) | ported | `test_settle_gates.c`: same-named adapted upstream test |
 | `the_default_intervals_are_the_frcs` (L433) | not ported | CORE (see boundary above) |
 | `the_gates_agree_with_the_model_on_every_gate_history` (L625) | not ported | CORE (see boundary above) |
-| `a_redial_is_not_held_by_the_heard_floor` (L732) | not ported | CORE (see boundary above) |
-| `the_redial_memory_refuses_a_seen_ephemeral_and_a_full_memory_until_it_ages_out` (L749) | not ported | CORE (see boundary above) |
-| `the_swap_stamps_the_dampener_only_for_a_heard_peering_and_clears_the_redial_memory` (L774) | not ported | CORE (see boundary above) |
-| `the_redial_memory_outlives_a_frame_and_the_lapse_of_the_rest_of_the_identitys_memory` (L810) | not ported | CORE (see boundary above) |
-| `the_redial_memory_outlives_the_first_frame_of_a_heard_session_and_a_move` (L831) | not ported | CORE (see boundary above) |
+| `a_redial_is_not_held_by_the_heard_floor` (L732) | ported | `test_settle_gates.c`: same-named adapted upstream test |
+| `the_redial_memory_refuses_a_seen_ephemeral_and_a_full_memory_until_it_ages_out` (L749) | ported | `test_settle_gates.c`: same-named adapted upstream test |
+| `the_swap_stamps_the_dampener_only_for_a_heard_peering_and_clears_the_redial_memory` (L774) | ported | `test_settle_gates.c`: same-named adapted upstream test |
+| `the_redial_memory_outlives_a_frame_and_the_lapse_of_the_rest_of_the_identitys_memory` (L810) | ported | `test_settle_gates.c`: same-named adapted upstream test |
+| `the_redial_memory_outlives_the_first_frame_of_a_heard_session_and_a_move` (L831) | ported | `test_settle_gates.c`: same-named adapted upstream test |
 ### `tests/join.rs`
 
 | Upstream test (attribute line) | Disposition | C coverage / reason |

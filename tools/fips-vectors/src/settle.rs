@@ -259,6 +259,189 @@ fn leg_trace(multiplier: f64, resend: u64, cap: Option<u32>, answer: bool, retry
     }
     json!({"kind":"legs","multiplier_bits":format!("{:016x}",multiplier.to_bits()),"resend":resend,"cap":cap,"answer":answer,"retry":retry,"rows":rows})
 }
+fn gate_trace() -> Value {
+    use fips_core::proto::{
+        fmp::EphemeralDigest,
+        settle::gates::{Ask, Gates, Liveness, Refusal, Source},
+    };
+    fn eph(n: u64) -> EphemeralDigest {
+        EphemeralDigest::of_noise_msg1(&[n as u8; 33]).unwrap()
+    }
+    fn peer(n: u64) -> NodeAddr {
+        NodeAddr::from_bytes([n as u8; 16])
+    }
+    fn refusal(r: Option<Refusal>) -> u64 {
+        match r {
+            None => 0,
+            Some(Refusal::Unheard) => 1,
+            Some(Refusal::Heard) => 2,
+            Some(Refusal::Dampened) => 3,
+            Some(Refusal::Replayed) => 4,
+            Some(Refusal::ReplayFull) => 5,
+            Some(Refusal::Silent) => 6,
+            Some(Refusal::Redialed) => 7,
+        }
+    }
+    let p = Params::default();
+    let mut g = Gates::<At>::new();
+    let mut ops = Vec::new();
+    for source in 0..6 {
+        for now in [999, 1000, 14999, 15000, 29999, 30000] {
+            ops.push(json!([0, 0, source, 1, 0, null, 1, 1, now, null]));
+            ops.push(json!([0, 1, source, 2, 0, 5000, 2, 1, now, null]));
+        }
+    }
+    for n in 0..10 {
+        ops.push(json!([1, 2, n, n * 1000, null]));
+        ops.push(json!([
+            0,
+            2,
+            2,
+            1,
+            n * 1000,
+            null,
+            n + 1,
+            1,
+            n * 1000 + 1000,
+            null
+        ]));
+    }
+    for n in 1..10 {
+        ops.push(json!([2, 3, 1, n, n * 1000, null]));
+        ops.push(json!([8, 3]));
+    }
+    for source in 0..6 {
+        ops.push(json!([0, 3, source, 2, 0, 0, 20, 1, 10000, null]));
+    }
+    ops.extend([
+        json!([9, 3]),
+        json!([3, 3]),
+        json!([6, 3, 1, 40000]),
+        json!([3, 3]),
+        json!([4, 3]),
+        json!([5, 3]),
+    ]);
+    for n in 1..10 {
+        ops.push(json!([6, 3, n, 41000]));
+        ops.push(json!([0, 3, 3, 2, 0, 41000, n, 1, 42000, null]));
+    }
+    ops.extend([
+        json!([7, 3, false, 43000]),
+        json!([0, 3, 3, 2, 0, 43000, 1, 1, 43001, null]),
+        json!([7, 3, true, 44000]),
+        json!([0, 3, 3, 2, 0, 44000, 2, 1, 58999, null]),
+        json!([0, 3, 3, 2, 0, 44000, 2, 1, 59000, null]),
+        json!([1, 2, 20, 60000, 1000]),
+        json!([0, 2, 2, 1, 0, null, 20, 1, 60000, 1001]),
+        json!([0, 0, 0, 0, 0, null, 0, 1, 3600000, null]),
+    ]);
+    let mut now = 0;
+    let mut rows = Vec::new();
+    for op in ops {
+        let a = op.as_array().unwrap();
+        let n = a[1].as_u64().unwrap();
+        let who = peer(n);
+        let result = match a[0].as_u64().unwrap() {
+            0 => {
+                let sources = [
+                    Source::NotHeld,
+                    Source::Restart,
+                    Source::Replacement,
+                    Source::Redial,
+                    Source::OwnMsg2,
+                    Source::RekeyMsg2,
+                ];
+                now = a[8].as_u64().unwrap();
+                let held = if a[3] == 0 {
+                    None
+                } else {
+                    Some(Liveness {
+                        heard: a[3] == 2,
+                        installed: At(a[4].as_u64().unwrap()),
+                        last: a[5].as_u64().map(At),
+                    })
+                };
+                let ask = Ask {
+                    source: sources[a[2].as_u64().unwrap() as usize],
+                    held,
+                    ephemeral: a[6].as_u64().map(eph),
+                    epoch: a[7].as_u64().map(|n| [n as u8; 8]),
+                    memory: a[9].as_u64().map(At),
+                };
+                json!(refusal(g.gate(who, ask, At(now), &p)))
+            }
+            1 => {
+                now = a[3].as_u64().unwrap();
+                g.promoted(
+                    who,
+                    eph(a[2].as_u64().unwrap()),
+                    At(now),
+                    a[4].as_u64().map(At),
+                    &p,
+                );
+                Value::Null
+            }
+            2 => {
+                now = a[4].as_u64().unwrap();
+                json!(
+                    g.ended(
+                        who,
+                        a[2].as_u64().map(|n| [n as u8; 8]),
+                        a[3].as_u64().map(eph),
+                        At(now),
+                        a[5].as_u64().map(At),
+                        &p
+                    )
+                    .map(|d| u64::try_from(d.as_millis()).unwrap())
+                )
+            }
+            3 => {
+                g.heard(&who);
+                Value::Null
+            }
+            4 => {
+                g.framed(&who);
+                Value::Null
+            }
+            5 => {
+                g.forget(&who);
+                Value::Null
+            }
+            6 => {
+                now = a[3].as_u64().unwrap();
+                g.redialed(who, eph(a[2].as_u64().unwrap()), At(now), &p);
+                Value::Null
+            }
+            7 => {
+                now = a[3].as_u64().unwrap();
+                g.swapped(who, a[2].as_bool().unwrap(), At(now));
+                Value::Null
+            }
+            8 => json!(g.count_refused(&who)),
+            9 => json!(g.take_refused(&who)),
+            _ => unreachable!(),
+        };
+        let view: Vec<_> = g
+            .known()
+            .map(|who| {
+                json!([
+                    who.as_bytes()[0],
+                    g.replays(who),
+                    g.redials(who),
+                    g.silent(who),
+                    g.stamp(who).map(|t| t.0),
+                    g.refusing(who, At(now)).map(|r| json!([
+                        r.epoch.map(|e| e[0]),
+                        r.silent,
+                        u64::try_from(r.remaining.as_millis()).unwrap()
+                    ]))
+                ])
+            })
+            .collect();
+        rows.push(json!({"op":op,"result":result,"now":now,"view":view}));
+    }
+    json!({"kind":"gates","rows":rows})
+}
 pub fn export(out: &Path) -> Result<()> {
     for name in [
         "FIPS_SETTLE_FAULTS",
@@ -272,7 +455,7 @@ pub fn export(out: &Path) -> Result<()> {
             );
         }
     }
-    let mut traces = vec![link_trace()];
+    let mut traces = vec![link_trace(), gate_trace()];
     for m in [1.3333, 1.5, 2.0, 2.5005] {
         traces.push(leg_trace(m, 1000, None, false, false));
     }
@@ -284,7 +467,7 @@ pub fn export(out: &Path) -> Result<()> {
     }
     traces.push(leg_trace(2.0, 1000, None, true, false));
     traces.push(leg_trace(2.0, 1000, None, false, true));
-    let doc = json!({"schema_version":1,"pin":PIN,"generator":"fips-vectors","generator_version":VERSION,"family":"settle","cases":traces,"gaps":["Only params/links/legs: no table/gates/judge/joint/legacy simulator equivalence"]});
+    let doc = json!({"schema_version":1,"pin":PIN,"generator":"fips-vectors","generator_version":VERSION,"family":"settle","cases":traces,"gaps":["Params/links/legs and gates: no table/judge/joint/legacy simulator equivalence"]});
     let mut data = serde_json::to_vec(&doc)?;
     data.push(b'\n');
     fs::write(out.join("settle.json"), data)?;
