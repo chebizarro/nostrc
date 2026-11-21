@@ -19,9 +19,20 @@ static int sys_socket(void *u,int d,int t,int p) { (void)u; return socket(d,t,p)
 static int sys_ioctl(void *u,int f,unsigned long q,void *v) { (void)u; return ioctl(f,q,v); }
 static int sys_connect(void *u,int f,const struct sockaddr *a,socklen_t n) { (void)u; return connect(f,a,n); }
 static int sys_getsockopt(void *u,int f,int l,int q,void *v,socklen_t *n) { (void)u; return getsockopt(f,l,q,v,n); }
-static int sys_prepare(void *u,int fd) { (void)u; return fipsd_network_fd_prepare(fd); }
+static int sys_prepare(void *u,int fd)
+{
+    (void)u;
+    if (fipsd_network_fd_prepare(fd)) return -1;
+    /* The device owns this fd; shim stop joins users before sys_close. */
+    return gof_io_register_owned_fd(fd);
+}
 static int sys_route_socket(void *u) { (void)u; return fipsd_network_socket(false); }
-static int sys_close(void *u,int f) { (void)u; return close(f); }
+static int sys_close(void *u,int f)
+{
+    (void)u;
+    (void)gof_io_reset_fd(f); /* revoke even on setup failure, before fd reuse */
+    return close(f);
+}
 static unsigned sys_index(void *u,const char *n) { (void)u; return if_nametoindex(n); }
 static int sys_name(void *u,int f,char *n,size_t z)
 {

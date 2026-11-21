@@ -203,6 +203,25 @@ GO_FIBER_API int         gof_io_reset_fd(gof_socket_t fd);
 GO_FIBER_API int         gof_io_cancel_fd(gof_socket_t fd);
 
 #if !defined(_WIN32)
+/** Prepare an exclusively owned POSIX open file description for fiber I/O.
+ * Sets O_NONBLOCK and resets readiness/cancellation state, like reset_fd.
+ * For fd numbers below 4096, read/write and socket messages then omit F_GETFL
+ * until the next reset_fd; larger descriptors remain correct but uncached.
+ *
+ * The owner controls ALL users and aliases of the open file description.
+ * Before close/reuse, transfer, or any alias clearing O_NONBLOCK: cancel waits
+ * as needed, join/quiesce all users, and reset_fd to revoke this registration.
+ * Re-register only after regaining exclusive control. Never mutate flags or
+ * close concurrently with I/O. Aliases and raw close are not intercepted;
+ * violating this ownership contract can block a worker. A reset, including a
+ * reset that fails, invalidates the cached generation before returning.
+ * Registration fails for invalid fds, pending waits or allocation failure;
+ * a concurrent reset cannot publish a stale verification/ownership verdict.
+ * This opt-in does not change unregistered read/write's per-call checks or
+ * message calls' MSG_DONTWAIT protection. Windows uses IOCP, not this API.
+ */
+GO_FIBER_API int         gof_io_register_owned_fd(gof_socket_t fd);
+
 /** Writability waits for a writer whose own syscall cannot park (nostrc-e3ps5;
  * POSIX readiness backends only, not declared on Windows).
  *
