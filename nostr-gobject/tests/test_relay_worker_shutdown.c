@@ -128,13 +128,29 @@ static gboolean peer_closed(Fixture *f) { return f->closed > 0; }
 static gboolean callback_seen(Fixture *f) { return f->callbacks > 0; }
 static gboolean all_closed(Fixture *f) { return f->closed == f->peers->len; }
 
+static gboolean torn_down(Fixture *f) { return !f->service && all_closed(f); }
+
+static void service_finalized(gpointer data, GObject *where)
+{
+    (void)where;
+    Fixture *f = data;
+    f->service = NULL;
+    g_main_loop_quit(f->loop);
+}
+
 static void fixture_clear(Fixture *f)
 {
+    /* Stopping only cancels the in-flight accept; its listener-socket source
+     * stays in the default context until that cancellation dispatches. An
+     * explicit g_socket_listener_close() here closed the fd under that source
+     * (macOS g_poll: EBADF). The pending accept owns a service ref, so
+     * finalization, which closes the listeners, marks its retirement. */
     g_socket_service_stop(f->service);
-    g_socket_listener_close(G_SOCKET_LISTENER(f->service));
-    g_cancellable_cancel(f->cancel);
-    wait_for(f, all_closed); /* async reads no longer borrow Fixture/Peer */
+    g_signal_handlers_disconnect_by_data(f->service, f);
+    g_object_weak_ref(G_OBJECT(f->service), service_finalized, f);
     g_object_unref(f->service);
+    g_cancellable_cancel(f->cancel);
+    wait_for(f, torn_down); /* async reads no longer borrow Fixture/Peer */
     g_ptr_array_unref(f->peers);
     g_object_unref(f->cancel);
     g_main_loop_unref(f->loop);
