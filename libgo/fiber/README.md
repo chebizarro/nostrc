@@ -623,3 +623,18 @@ There is no forced preemption or signal-based interruption.
   without locking.
 - `gof_dump_stacks` serializes output internally to avoid interleaved
   writes from concurrent callers.
+
+### Exclusively owned POSIX descriptors
+
+`gof_io_register_owned_fd(fd)` sets nonblocking mode and opts a descriptor into
+cached `gof_read`/`gof_write` flag verification (also priming socket message I/O).
+The caller owns every user and alias of the open file description: cancel/join
+users and call `gof_io_reset_fd` **before** close/reuse, ownership transfer, or an
+alias changing `O_NONBLOCK` (revoke every registered alias before shared flag
+changes). Re-register only after regaining exclusive control.
+The cache is valid only for that registration generation; any reset revokes it,
+including a reset that reports an error. Raw close/dup/flag mutation is not
+intercepted. Unannounced alias mutation violates the contract and can block a
+worker; never opt shared or externally controlled descriptors into this API.
+Unregistered read/write retain their per-call checks; cached socket message calls
+still use `MSG_DONTWAIT`. Windows remains completion-based and has no owned-fd API.

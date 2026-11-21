@@ -1997,3 +1997,380 @@ Direct static gates passed: `check-unsequenced-args.py --root <worktree>`,
 `check-gui-test-gdk-frame.py` (55 sources), `check-linux-ci-packages.py`, and
 `git diff --check`. No workflow files, tracker state or pre-push wrapper were
 changed/run. The manifest keeps fipsd and fipsctl at 0.1.0 Unreleased.
+
+## Wave 26 A: exact scheduler wake routing (2026-11-21)
+
+Code: **`33a0e20d4`** (wake routing introduced in `cb89bdccf`), based on **`96409f73c`**, branch `wave26/libgo`.
+The final C/C series uses that libgo commit and otherwise the same
+fipsd/native helper sources as the baseline. This is local macOS and Ubuntu
+ARM64 VM evidence, not hosted qualification. No sibling UDP, native, core, pin,
+or CI changes are included. libgo stays **0.3.0 Unreleased** (PATCH-class internal
+performance correction folded into the unreleased version); fipsd is docs-only.
+
+### Change and bead findings
+
+- **u19cz.19: fixed.** Each worker has its own idle condvar. A targeted queue push
+  signals only its destination. Untargeted inject/timer notifications claim a
+  distinct idle wait, so two notifications cannot collapse onto the same worker
+  before it reacquires the idle mutex. Untargeted selection rotates rather than
+  always favoring the lowest-index idle worker. Bootstrap injection still wakes worker 0;
+  stop and last-fiber completion still wake all. The state-claim protocol,
+  waiter-before-arm ordering, TSan context annotations, and timer clock/skip
+  policy are unchanged. The private idle-wake regression holds the mutex across
+  two untargeted notifications and duplicate targeted notifications; all three
+  intended workers must return. W8 external-channel and W4/two-poller idle-I/O
+  registrations extend the existing lost-wake, shutdown and I/O race coverage.
+- **u19cz.18: finding, not fixed.** A discarded POSIX prototype let a single idle
+  worker own epoll/kqueue, with latched eventfd/EVFILT_USER interruption. Idle-only
+  polling starved I/O when every worker had runnable yielding fibers (caught by
+  the existing loopback tests). Adding a nonblocking readiness check every 64
+  scheduling turns passed the 46-test macOS Debug suite, but the combined
+  worker-poll/relative-timer experiment delivered only **49.45/41.52 Mbit/s** at
+  offered 100 (loss **50.55/58.39%**). This was not an isolated measurement of
+  polling alone: disabling worker polling in that combined build also regressed.
+  The prototype was removed, not made an opt-in shipped path. A replacement needs
+  readiness fairness while workers execute noncooperative daemon work, plus
+  timer/notification ownership, rather than only moving the blocking syscall.
+  The dedicated poller and the two-wake handoff remain.
+- **u19cz.10: finding, not fixed.** `rq_steal_one` deliberately refuses a running
+  victim, preserves its next-to-run head and applies live/queue thresholds;
+  worker-originated wakes still choose the producer's local queue, not remembered
+  affinity. Exact notifications do not provide placement. Removing that gate or
+  enabling stealing by default is not a long-lived-fiber placement policy. No
+  unwired placement API or default migration-policy change is included; real
+  daemon caller/ownership decisions remain necessary.
+- **u19cz.21: finding, not fixed.** The discarded Darwin relative-condvar/skip
+  stage without worker polling delivered **93.13 Mbit/s, 6.63% loss** at offered
+  100; relative waiting without the skip delivered **99.27 Mbit/s, 0.726% loss**.
+  These preliminary shared-host samples do not establish a beneficial or safe
+  timer-policy change. Both experiments were removed. The conservative REALTIME
+  fallback and its per-park notification remain; no clock-step fix is claimed.
+- **u19cz.7: finding, not fixed.** `MSG_DONTWAIT` makes the existing registered-fd
+  message cache safe against stale state. `read`/`write` have no equivalent safety
+  net. `reset_fd` invalidates a generation but does not assert exclusive ownership
+  or forbid aliases clearing `O_NONBLOCK`. Silently extending caching can block a
+  scheduler worker after descriptor reuse or alias mutation. TCP/TUN adoption and
+  close/reset changes are outside this agent's `libgo/**` ownership; no sibling
+  call sites or unused owner-registration API were added. The original bead is
+  the follow-up for a caller-wired ownership contract.
+
+### Measurements
+
+Final **macOS**, counterbalanced candidate then baseline, 1200-byte payloads,
+3-second traffic windows; CPU is sender / receiver microseconds per delivered
+datagram (event-bounded traffic markers, including the harness's drain window).
+
+| Binary | Mode | Offered / chosen max Mbit/s | Goodput Mbit/s | Loss % | CPU us/datagram S / R |
+|---|---|---:|---:|---:|---:|
+| base | 100 Mbit/s trial 1 | 100.00 | 99.57 | 0.426 | 26.99 / 25.07 |
+| base | 100 Mbit/s trial 2 | 100.00 | 100.00 | 0.000 | 34.24 / 32.96 |
+| base | paced maximum | 1112.50 | 1111.30 | 0.108 | 16.99 / 12.47 |
+| base | unpaced | - | 1402.12 | 0.867 | 14.95 / 10.06 |
+| final | 100 Mbit/s trial 1 | 100.00 | 99.22 | 0.784 | 30.32 / 28.06 |
+| final | 100 Mbit/s trial 2 | 100.00 | 100.00 | 0.000 | 23.68 / 22.40 |
+| final | paced maximum | 1600.00 | 1596.21 | 0.237 | 12.77 / 8.90 |
+| final | unpaced | - | 1497.33 | 0.412 | 14.85 / 9.53 |
+
+Final **Linux VM**, same traffic parameters, candidate then baseline:
+
+| Binary | Mode | Offered / chosen max Mbit/s | Goodput Mbit/s | Loss % | CPU us/datagram S / R |
+|---|---|---:|---:|---:|---:|
+| base | 100 Mbit/s trial 1 | 100.00 | 97.14 | 2.864 | 63.91 / 49.74 |
+| base | 100 Mbit/s trial 2 | 100.00 | 100.00 | 0.000 | 63.68 / 49.28 |
+| base | paced maximum | 146.87 | 146.87 | 0.000 | 45.54 / 39.00 |
+| base | unpaced | - | 1275.68 | 1.725 | 11.84 / 10.23 |
+| final | 100 Mbit/s trial 1 | 100.00 | 100.00 | 0.000 | 52.16 / 42.24 |
+| final | 100 Mbit/s trial 2 | 100.00 | 96.18 | 3.818 | 60.22 / 44.91 |
+| final | paced maximum | 887.50 | 884.01 | 0.393 | 15.31 / 11.62 |
+| final | unpaced | - | 1382.02 | 1.596 | 11.60 / 9.77 |
+
+One baseline and one candidate Linux fixed-rate trial exceed 1% loss; their CPU
+numbers remain visible but are **not loss-qualified comparisons**. The two
+loss-free trials report sender/receiver **63.68/49.28 -> 52.16/42.24 us/datagram**.
+The large movement in the chosen Linux search rate is not evidence of a stable
+sixfold capacity gain: the search reuses daemon pairs, results are load- and
+history-sensitive, and the earlier locked searches reported below show very
+large variation. No benchmark assertion or search algorithm was weakened.
+
+
+In the final eight-worker, 200-handoff Debug micro, baseline -> candidate:
+**2326 -> 464 involuntary context switches**, **79.31 -> 20.00 million cycles**,
+**64.49 -> 29.82 million instructions**, same **0.30 s** elapsed. This is direct
+wake-path evidence, not a claim that every daemon datagram saves that ratio.
+
+
+
+
+A first fully locked series at intermediate `cb89bdccf` (before rotating
+untargeted selection) reported macOS unpaced **1480.53 -> 1472.20 Mbit/s**,
+paced chosen rate **675.00 -> 393.75 Mbit/s**, and Linux unpaced
+**1174.52 -> 1237.75 Mbit/s**, paced chosen rate **49.22 -> 196.87 Mbit/s**.
+The opposite platform movements and earlier macOS baseline unpaced **350.00**
+versus **1480.53** show why these are not stable release-capacity claims. In that
+series one Linux baseline and one candidate fixed-rate trial exceeded 1% loss;
+those trials are not loss-qualified CPU comparisons. The final series above is
+counterbalanced (candidate before baseline), with this agent's host and VM
+measurements serialized rather than overlapped. No earlier result was discarded.
+
+
+All timing commands hold the plan's platform perf lock. The final Linux series
+also holds the shared build lock to exclude concurrent VM builds. These remain
+shared-host measurements: the VM and macOS share physical hardware, and other
+agents' non-timing work is not globally stopped. Sustainable-rate search is a
+report-only noisy capacity estimate, not a throughput gate; each reported chosen
+probe must meet strict loss <1%. Unpaced goodput is not loss-free capacity.
+Earlier diagnostic baseline/final and failed experiment JSON is retained under
+`build/w26-evidence/` in the task worktree; it was not used to select a best run.
+
+Reproduce the same Release closure (set `ROOT` to the absolute assigned worktree,
+`/home/bizarro/w26-libgo` on Linux):
+
+```sh
+ROOT=/Users/bizarro/Documents/Projects/nostrc-wt/w26-libgo
+cmake -S "$ROOT" -B "$ROOT/build/w26-release" -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DFIPS_ENABLE_BENCH=ON -DBUILD_FIPS=ON \
+  -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF -DBUILD_LIBHANAMI=OFF \
+  -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF -DBUILD_NOSTR_GOBJECT=OFF \
+  -DBUILD_NOSTR_GTK=OFF -DSIGNET_ENABLE=OFF -DWITH_NOSTRDB=OFF \
+  -DLIBNOSTR_WITH_NOSTRDB=OFF
+cmake --build "$ROOT/build/w26-release" -j4 --target fipsd fipsd_perf_native
+lockf /tmp/w26-mac-perf.lock python3 "$ROOT/fipsd/tests/perf_loopback.py" \
+  --pairs c-c --rust /tmp/fips-rust-target-perffix/release/fips \
+  --fipsd "$ROOT/build/w26-release/fipsd/fipsd" \
+  --native-tool "$ROOT/build/w26-release/fipsd/tests/fipsd_perf_native" \
+  --latency-samples 100 --work-dir "$ROOT/build/p" --runs 2 \
+  --paced-rate 100 --paced-seconds 3 --output "$ROOT/build/fixed.json"
+```
+
+For sustainable rate replace `--runs 2 --paced-rate 100 --paced-seconds 3` with
+`--runs 1 --paced --paced-seconds 3` (default resolution .02, strict loss .01,
+ceiling 3200). For unpaced use `--runs 1 --seconds 3` instead. The final series
+runs candidate then baseline for each mode, in order fixed, paced, unpaced.
+Linux uses `build/release`, `--rust /bin/true` (the C/C-only path never executes a
+Rust binary), and wraps the whole series with
+`flock /tmp/w26-build.lock flock /tmp/w26-perf.lock sh ...`; all Linux builds use
+`flock /tmp/w26-build.lock` and `-j4`. The baseline daemon was copied before any
+source edit; source, native helper and Release flags are otherwise identical.
+The eight-worker wake micro uses the unchanged Debug `gof_test_chan_ext`,
+`GOF_NWORKERS=8 /usr/bin/time -lp ...`, baseline then candidate under the macOS
+perf lock; it is not the daemon throughput workload.
+
+### Exact verification and limits
+
+- **macOS Debug:** standalone `cmake -S "$ROOT/libgo" -B "$ROOT/build/w26-debug"
+  -G Ninja -DCMAKE_BUILD_TYPE=Debug`; `cmake --build ... -j4`;
+  `ctest --test-dir "$ROOT/build/w26-debug" -j4 --output-on-failure`: **49/49**.
+- **macOS ASan/UBSan and TSan:** configure the same top-level closure as Release
+  above in `build/w26-asan` / `build/w26-tsan`, with Debug, bench disabled and
+  `-DNOSTR_USE_SYSTEM_NSYNC=OFF`. ASan adds `-DGO_ENABLE_ASAN=ON
+  -DGO_ENABLE_UBSAN=ON -DSANITIZE=address,undefined`; TSan adds
+  `-DGO_ENABLE_TSAN=ON -DSANITIZE=thread`. Build with `-j4 --target libgo/all
+  libfips-core/all fipsd_tests fipsd fipsctl`. ASan environment is
+  `ASAN_OPTIONS=abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1`; TSan is
+  `TSAN_OPTIONS=halt_on_error=1`. For each, `ctest --test-dir "$BUILD/libgo"
+  -j4 --output-on-failure`: **49/49**. `ctest --test-dir "$BUILD" -R '^Fips'
+  -j4 --output-on-failure`: **211 passed, 14 skipped, 1 disabled, 0 failed**.
+  The skips are external Rust control/UDP/TCP/multinode/fipsctl/Tor interop and
+  privileged TUN/IPv6/Ethernet/BPF; the existing soak test is disabled. This is
+  not all-226-tests-executed qualification. Apple's ASan runtime rejects
+  `detect_leaks=1`; the initial invocation aborted before test bodies and was
+  corrected to supported ASan/UBSan options, not reported as LSan success.
+- **Linux Debug:** standalone `cmake -S /home/bizarro/w26-libgo/libgo
+  -B /home/bizarro/w26-libgo/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug`, build
+  `-j4`, then `ctest --test-dir .../build/debug -j4 --output-on-failure`:
+  **49/49** (GCC 13.3).
+- **Linux ASan/UBSan:** standalone build `build/asan-clang`, Debug,
+  `-DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18
+  -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DNOSTR_USE_SYSTEM_NSYNC=OFF`, build
+  `-j4`; `ASAN_OPTIONS=detect_leaks=1:abort_on_error=1
+  UBSAN_OPTIONS=halt_on_error=1 ctest --test-dir .../build/asan-clang -j4
+  --output-on-failure`: **49/49**. The standalone vendored lookup uses a
+  task-local `libgo/third_party -> ../third_party` symlink on the VM only.
+- **Linux TSan:** same standalone/vendored configuration in `build/tsan` with
+  Clang 18 and `-DGO_ENABLE_TSAN=ON`; `TSAN_OPTIONS=halt_on_error=1 ctest
+  --test-dir .../build/tsan -j4 --output-on-failure`: **49/49**.
+- **Both macOS and Linux TSan:** set `BUILD` to the macOS `build/w26-tsan/libgo`
+  or Linux `build/tsan` test directory and additionally run `ctest --test-dir "$BUILD"
+  -R 'GoFiber(TsanMigrationTest|SchedWakeTest|ChanExtTestW8|IoIdleMultiPollerTestW4)$'
+  --repeat until-fail:10 --output-on-failure -j4` with the TSan environment:
+  **40/40 executions passed per platform**.
+- **Windows 11 ARM64:** `PATH=C:\msys64\clangarm64\bin;C:\msys64\usr\bin;...`,
+  Clang 23.1.5, system nsync; `cmake -S C:/Users/bizarro/w26-libgo/libgo
+  -B C:/Users/bizarro/w26-libgo/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug`;
+  `cmake --build C:/Users/bizarro/w26-libgo/build/debug -j4`;
+  `ctest --test-dir C:/Users/bizarro/w26-libgo/build/debug -j4
+  --output-on-failure`: **49/49**. IOCP and Windows fiber code are unchanged.
+- **Additional failure tracked as `nostrc-2k5ih`:** Linux GCC 13.3 ASan/UBSan
+  timed out both starvation tests at their unchanged 20 s limit, **both on the
+  candidate and independently on untouched `96409f73c`** (46/48 candidate tests
+  passed; shared-host contention was not excluded). No timeout extension, retry-as-proof, suppression or assertion
+  weakening was applied. Clang's passing matrix is reported separately.
+- Static checks: `python3 "$ROOT/scripts/check-unsequenced-args.py" --root
+  "$ROOT"`, `python3 "$ROOT/scripts/check-errno-after-park.py" --root "$ROOT"`,
+  and `git -C "$ROOT" diff --check` pass. CI is unchanged (no actionlint needed).
+  Oracle review's distinct-pending-wake finding was fixed and covered by the
+  private regression; no re-review was substituted for execution.
+
+Cleanup verified: `/home/bizarro/w26-libgo` and
+`C:\Users\bizarro\w26-libgo` were removed after capturing logs, with no task
+processes left. No build directory outside the assigned macOS worktree or
+container was created. Shared locks, sibling task directories, pre-existing Rust
+binaries and the unmerged branch/worktree were preserved. Detailed command logs,
+all preliminary/final JSON and the discarded experiment patch remain only in the
+ignored task-local `build/w26-evidence/`, not in sibling checkouts.
+
+## Wave 26 A follow-up: owned TCP/TUN descriptors (u19cz.7)
+
+Code **`449f2af75`**, on top of `0c8e8d50c`, completes `.7` and supersedes its
+non-fix finding above. The accepted `.19` change and `.18/.10/.21` findings are
+unchanged. Both TCP and TUN are included; this is not a TCP-only fallback.
+
+### Ownership contract and production wiring
+
+`gof_io_register_owned_fd(fd)` is a POSIX-only, explicit ownership assertion. It
+sets `O_NONBLOCK`, prepares readiness state, and publishes a verified/owned bit
+pair in the fd's registration-generation word. `gof_read`/`gof_write` skip
+`F_GETFL` only for that owned generation. Every `gof_io_reset_fd` advances the
+generation and clears both bits **before** checking readiness state, even when
+reset fails. Registration checks for pending waits, and its compare/exchange
+cannot publish ownership if a concurrent reset invalidated that generation.
+Descriptors >=4096 remain correct but uncached. Socket messages keep their
+`MSG_DONTWAIT` protection; unregistered reads/writes keep checking flags.
+
+The owner must control **all users and aliases of the open file description**.
+Cancel/join or otherwise quiesce users and reset registration before close,
+reuse, transfer, or an alias clearing `O_NONBLOCK`; shared flag changes require
+revoking **every registered alias**, not merely the fd used to change the flags.
+Raw close/dup/flag changes are not intercepted: violating this contract can block a read/write worker. This is
+not a promise to discover arbitrary aliases without a syscall.
+
+TCP registers at both inbound configured-socket and outbound socket adoption in
+`transport/tcp/conn.c`, propagating registration errors. Its existing
+`tcp_fd_close` resets only after reader/writer joins, before the blocking close.
+The current TCP code already reset descriptors for message caching; the new
+ownership assertion removes the remaining stream-read checks and primes the
+message verdict at adoption. Shared `transport/stream.c` is unchanged.
+
+TUN's real POSIX system `prepare` registers after network-fd preparation, and its
+system `close` resets before closing on setup failure or teardown. Shim shutdown
+joins users before device close. Fake ops and Windows Wintun/IOCP paths are
+unchanged. No UDP, native API, dataplane, core or CI changes are included.
+
+libgo's additive API is MINOR-class, folded into **0.3.0 Unreleased**; the private
+fipsd performance correction folds into **0.1.1**, its already-declared unreleased
+patch after 0.1.0. No public layout/ABI break, numeric bump, wire/config/CLI change,
+release tag or release-column change. `VERSION_MANIFEST.md` records this decision.
+
+### Measured syscall saving
+
+Ubuntu ARM64 VM, Clang 18 Debug, identical **10,000 AF_UNIX stream write/read
+pairs** through the real `gof_write`/`gof_read` entrypoints in the same candidate
+binary, with assertions enabled. Checked mode retains the previous mandatory
+flag-check behavior; owned mode registers both descriptors before the loop.
+
+| Mode | `F_GETFL` calls | `F_SETFL` calls | Completed pairs |
+|---|---:|---:|---:|
+| Checked / unregistered | 20,000 | 2 | 10,000 |
+| Owned registration | 2 | 2 | 10,000 |
+
+The two owned `F_GETFL` calls are registration setup: **zero during the I/O loop**,
+19,998 fewer flag-query syscalls overall (99.99%). This is a syscall-count micro,
+not a TCP/TUN throughput or daemon-capacity claim. Actual caller wiring is covered
+by the TCP integration tests and the real-device IPv6 shim smoke below. No
+macOS dtruss or macOS syscall-count result is claimed.
+
+Exact measurement command, under the plan's Linux perf lock:
+
+```sh
+flock /tmp/w26-perf.lock sh -c '
+  strace -f -e trace=fcntl -o /home/bizarro/w26-libgo/evidence/checked.strace \
+    /home/bizarro/w26-libgo/build/debug/gof_test_io_owned --count-unowned &&
+  strace -f -e trace=fcntl -o /home/bizarro/w26-libgo/evidence/owned.strace \
+    /home/bizarro/w26-libgo/build/debug/gof_test_io_owned --count-owned'
+grep -c F_GETFL /home/bizarro/w26-libgo/evidence/checked.strace # 20000
+grep -c F_GETFL /home/bizarro/w26-libgo/evidence/owned.strace   # 2
+```
+
+### Verification
+
+`GoFiberIoOwnedTest` covers registered read/write, revocation before alias flag
+mutation, empty-read/full-write cooperative progress, pending-wait registration
+rejection, failed registration on a closed fd, descriptor-number reuse, and
+cached message safety despite an illicit alias change. It uses no timer to retry
+I/O: a stale blocking verdict prevents the peer fiber from running and fails the
+existing 10 s test timeout. The busy-waiter case uses the scheduler's block trace
+for deterministic ordering. The final test-only errno accessor reacquires TLS
+after any yield; its focused check was rerun in every POSIX configuration.
+
+- **macOS libgo:** Debug, ASan/UBSan, TSan: **50/50 each**. Same configurations and
+  selected top-level sanitizer closures as the preceding Wave 26 A section.
+  Build: `cmake --build "$ROOT/build/w26-debug" -j4`; sanitizer builds use
+  `-j4 --target libgo/all fipsd_tests`. Test commands:
+  `ctest --test-dir "$ROOT/build/w26-debug" -j4 --output-on-failure`,
+  `ASAN_OPTIONS=abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ctest --test-dir
+  "$ROOT/build/w26-asan/libgo" -j4 --output-on-failure`, and
+  `TSAN_OPTIONS=halt_on_error=1 ctest --test-dir "$ROOT/build/w26-tsan/libgo"
+  -j4 --output-on-failure`.
+- **macOS Fips:** `ASAN_OPTIONS=abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1
+  ctest --test-dir "$ROOT/build/w26-asan" -R '^Fips' -j4 --output-on-failure`
+  and `TSAN_OPTIONS=halt_on_error=1 ctest --test-dir "$ROOT/build/w26-tsan"
+  -R '^Fips' -j4 --output-on-failure`: **211 passed, 14 skipped, 1 disabled,
+  0 failed per sanitizer**, with the same external/privileged limitations listed
+  above. This is not all-226-tests-executed qualification or macOS LSan evidence.
+- **Linux libgo:** standalone Clang 18 Debug, ASan/UBSan, TSan: **50/50 each**.
+  Configure `-S /home/bizarro/w26-libgo/libgo -B /home/bizarro/w26-libgo/build/MODE
+  -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang-18
+  -DCMAKE_CXX_COMPILER=clang++-18`. ASan adds `-DGO_ENABLE_ASAN=ON
+  -DGO_ENABLE_UBSAN=ON -DNOSTR_USE_SYSTEM_NSYNC=OFF`; TSan adds
+  `-DGO_ENABLE_TSAN=ON -DNOSTR_USE_SYSTEM_NSYNC=OFF`. The task-local
+  `libgo/third_party -> ../third_party` symlink supplies the pinned vendored nsync
+  (instrumented under TSan). All builds use `flock /tmp/w26-build.lock` and `-j4`.
+  `ctest --test-dir /home/bizarro/w26-libgo/build/MODE -j4 --output-on-failure`
+  uses no sanitizer environment for Debug,
+  `ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1` for
+  ASan, and `TSAN_OPTIONS=halt_on_error=1` for TSan.
+- **Both POSIX TSan builds:** additionally
+  `GOF_NWORKERS=4 TSAN_OPTIONS=halt_on_error=1 ctest --test-dir "$BUILD"
+  -R '^GoFiber(IoOwnedTest|TsanMigrationTest)$' --repeat until-fail:10 -j2
+  --output-on-failure`: **20/20 executions passed per platform**. `BUILD` is
+  macOS `build/w26-tsan/libgo` or Linux `build/tsan`.
+- **Linux TCP/TUN:** the same minimal top-level FIPS closure as above, Debug with
+  Clang 18, in `/home/bizarro/w26-libgo/build/fips`; build `fipsd_tests` with the
+  shared build lock and `-j4`. `ctest --test-dir /home/bizarro/w26-libgo/build/fips
+  -R '^Fipsd(Tcp|Tun)' -j4 --output-on-failure`: **8 passed, 4 skipped, 0 failed**.
+  Skips: the ordinary non-root TUN smoke and three external Rust TCP interop
+  cases. The TUN smoke was then actually executed, not treated as acceptance by
+  its skip.
+- **Linux privileged real TUN:** both smokes **2/2 passed**, isolated from the
+  VM's network namespace with the exact command:
+
+  ```sh
+  sudo -n unshare --net -- sh -c 'ip link set lo up &&
+    FIPSD_TUN_PRIVILEGED_SMOKE=1 ctest \
+      --test-dir /home/bizarro/w26-libgo/build/fips \
+      -R "^Fipsd(Tun|Ipv6)PrivilegedSmokeTest$" --output-on-failure -V'
+  ```
+
+  Real device/address/MTU/self-ping/teardown passed. The real IPv6 shim reported
+  **read=2, unreachable=1, written=1, host_drops=0**; the kernel accepted its
+  ICMPv6 unreachable response. No `fipsSmoke` link remained after the tests, and
+  exiting the private namespace released its routes. No host network settings
+  were changed.
+- **Windows 11 ARM64 libgo:** native Clang 23.1.5 Debug/system nsync: **49/49**.
+  New owned-fd API/test are POSIX-only. With the existing clangarm64/bin and
+  usr/bin PATH, `cmake -S C:/Users/bizarro/w26-libgo/libgo
+  -B C:/Users/bizarro/w26-libgo/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug`;
+  `cmake --build C:/Users/bizarro/w26-libgo/build/debug -j4`;
+  `ctest --test-dir C:/Users/bizarro/w26-libgo/build/debug -j4 --output-on-failure`.
+- Both static checkers (`check-unsequenced-args.py`, `check-errno-after-park.py`,
+  each with `--root "$ROOT"`) and `git diff --check` pass. Oracle review found
+  no correctness findings under the documented contract; it reviewed supplied
+  source/lifecycle details, not executed tests. No new follow-up bead; the prior
+  GCC ASan baseline issue `nostrc-2k5ih` is unchanged and no GCC success is claimed.
+
+Detailed logs and syscall traces are retained in ignored, task-local
+`build/w26-owned-evidence/`. Cleanup verified: `/home/bizarro/w26-libgo` and
+`C:\Users\bizarro\w26-libgo` were removed after log collection, with no task
+processes remaining. No outside-worktree macOS build directory, container or
+persistent namespace was created. Shared locks, sibling directories and the
+unmerged branch/worktree were preserved. No push or merge was performed.

@@ -29,7 +29,7 @@ static int set_nonblock(int fd) {
 
 /* Message calls on a descriptor registered with gof_io_reset_fd check
  * O_NONBLOCK once per registration instead of an F_GETFL per datagram
- * (nostrc-bmsti). Each slot is (generation << 1) | verified: 0 means never
+ * (nostrc-bmsti). Each slot is (generation << 2) | owned | verified: 0 means never
  * registered, so unregistered descriptors keep the per-call check. reset_fd
  * bumps the generation, which owners must do before closing or reusing the
  * number, so a recycled fd is checked again; a check racing a reset cannot
@@ -40,14 +40,25 @@ static int set_nonblock(int fd) {
 #define NONBLOCK_CACHE_FDS 4096
 static _Atomic uint32_t g_nonblock_cache[NONBLOCK_CACHE_FDS];
 
-static void nonblock_cache_reset(int fd) {
-  if (fd < 0 || fd >= NONBLOCK_CACHE_FDS) return;
+static uint32_t nonblock_cache_reset(int fd) {
+  if (fd < 0 || fd >= NONBLOCK_CACHE_FDS) return 0;
   uint32_t old = atomic_load_explicit(&g_nonblock_cache[fd], memory_order_relaxed), next;
   do {
-    next = (old & ~1u) + 2u;
-    if (next == 0) next = 2u; /* generation wrap must not read as unregistered */
+    next = (old & ~3u) + 4u;
+    if (next == 0) next = 4u; /* generation wrap must not read as unregistered */
   } while (!atomic_compare_exchange_weak_explicit(&g_nonblock_cache[fd], &old, next,
                                                   memory_order_acq_rel, memory_order_relaxed));
+  return next;
+}
+
+/* Only an explicit open-file-description owner may omit the per-call check
+ * for read/write: unlike socket messages, they have no MSG_DONTWAIT fallback.
+ * Reset clears ownership as well as verification in the same generation word. */
+static int owned_nonblock(int fd) {
+  if (fd >= 0 && fd < NONBLOCK_CACHE_FDS &&
+      (atomic_load_explicit(&g_nonblock_cache[fd], memory_order_acquire) & 3u) == 3u)
+    return 0;
+  return set_nonblock(fd);
 }
 
 static int message_nonblock(int fd, int *flags) {
@@ -187,17 +198,28 @@ static int fdwait_arm(gof_fdwait *e, int events, uint64_t deadline_ns) {
   return gof_netpoll_arm(e->fd, events, deadline_ns);
 }
 
-int gof_io_reset_fd(gof_socket_t fd) {
+static int prepare_fd(gof_socket_t fd, int owned) {
   if (fd < 0) { fiber_set_errno(EINVAL); return -1; }
-  nonblock_cache_reset(fd); /* always safe: forces the next message call to re-check */
+  uint32_t generation = nonblock_cache_reset(fd);
   pthread_mutex_lock(&io_mu);
   gof_fdwait *e = fdwait_get(fd, 1);
   int error = !e ? ENOMEM : fdwait_events(e) ? EBUSY : 0;
+  if (!error && owned) {
+    if (set_nonblock(fd) != 0) error = fiber_get_errno();
+    else if (generation &&
+             !atomic_compare_exchange_strong_explicit(&g_nonblock_cache[fd], &generation,
+                                                       generation | 3u,
+                                                       memory_order_acq_rel, memory_order_relaxed))
+      error = EBUSY; /* a concurrent reset must not publish stale ownership */
+  }
   if (!error) { e->cancelled = 0; e->wr_pending = 0; e->wr_lowat = 0; }
   pthread_mutex_unlock(&io_mu);
   if (error) { fiber_set_errno(error); return -1; }
   return 0;
 }
+
+int gof_io_reset_fd(gof_socket_t fd) { return prepare_fd(fd, 0); }
+int gof_io_register_owned_fd(gof_socket_t fd) { return prepare_fd(fd, 1); }
 
 int gof_io_cancel_fd(gof_socket_t fd) {
   if (fd < 0) { fiber_set_errno(EINVAL); return -1; }
@@ -382,8 +404,8 @@ int gof_io_wake_writers(gof_socket_t fd) {
 }
 
 ssize_t gof_read(gof_socket_t fd, void *buf, size_t n) {
-  (void)set_nonblock(fd);
   for(;;) {
+    if (owned_nonblock(fd) != 0) return -1;
     ssize_t r = read(fd, buf, n);
     if (r >= 0) return r;
     /* Like the message wrappers, reacquire errno on this worker after each
@@ -400,10 +422,10 @@ ssize_t gof_read(gof_socket_t fd, void *buf, size_t n) {
 }
 
 ssize_t gof_write(gof_socket_t fd, const void *buf, size_t n) {
-  (void)set_nonblock(fd);
   const char *p = (const char*)buf;
   size_t left = n;
   while (left > 0) {
+    if (owned_nonblock(fd) != 0) return -1;
     ssize_t w = write(fd, p, left);
     if (w >= 0) { left -= (size_t)w; p += w; continue; }
     int error = fiber_get_errno();

@@ -19,14 +19,18 @@ static void *configure(void *arg)
     s->error = s->result ? errno : 0;
     return NULL;
 }
+/* This connection owns the socket and all its users. No fd alias may clear
+ * O_NONBLOCK; tcp_fd_close revokes registration after reader/writer joins. */
 static bool establish(tcp_conn *c, int *error)
 {
     tcp_instance *u = c->owner;
     if (c->direction == FIPS_LINK_INBOUND) {
         socket_setup s = {.u = u, .fd = c->fd}; go_blocking_submit(configure, &s);
         nsync_mu_lock(&u->mu);
-        bool ok = !stopped(c) && s.result == 0 && gof_io_reset_fd(c->fd) == 0;
-        *error = s.error; nsync_mu_unlock(&u->mu); return ok;
+        bool ok = !stopped(c) && s.result == 0;
+        *error = s.error;
+        if (ok && gof_io_register_owned_fd(c->fd)) { *error = fipsd_io_errno(); ok = false; }
+        nsync_mu_unlock(&u->mu); return ok;
     }
     const fipsd_stream_dialer *dialer = u->config.dialer;
     tcp_endpoint *items = NULL; size_t n = 0;
@@ -38,7 +42,10 @@ static bool establish(tcp_conn *c, int *error)
         go_blocking_submit(configure, &s);
         if (s.result || stopped(c)) { *error = s.fd < 0 ? s.error : 0; tcp_fd_close(s.fd); continue; }
         nsync_mu_lock(&u->mu);
-        if (stopped(c) || gof_io_reset_fd(s.fd)) { nsync_mu_unlock(&u->mu); tcp_fd_close(s.fd); break; }
+        if (stopped(c)) { nsync_mu_unlock(&u->mu); tcp_fd_close(s.fd); break; }
+        if (gof_io_register_owned_fd(s.fd)) {
+            *error = fipsd_io_errno(); nsync_mu_unlock(&u->mu); tcp_fd_close(s.fd); break;
+        }
         c->fd = s.fd;
         nsync_mu_unlock(&u->mu);
         uint64_t now = fipsd_transport_now_ms();

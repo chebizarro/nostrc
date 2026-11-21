@@ -876,6 +876,41 @@ if(COMMAND nostrc_describe_test)
   nostrc_describe_test(GoSwapTest OWNER libgo TARGETS go_swap_test)
 endif()
 
+add_executable(gof_test_sched_wake fiber/tests/test_sched_wake.c)
+target_link_libraries(gof_test_sched_wake PRIVATE go_fiber)
+apply_warnings(gof_test_sched_wake)
+apply_sanitizers(gof_test_sched_wake)
+add_test(NAME GoFiberSchedWakeTest COMMAND gof_test_sched_wake)
+set_tests_properties(GoFiberSchedWakeTest PROPERTIES TIMEOUT 10)
+if(COMMAND nostrc_describe_test)
+  nostrc_describe_test(GoFiberSchedWakeTest OWNER libgo TARGETS gof_test_sched_wake)
+endif()
+
+# Targeted readiness/channel wakes must reach one of many idle workers
+# without relying on the old shared-condvar broadcast.
+add_test(NAME GoFiberChanExtTestW8 COMMAND gof_test_chan_ext)
+set_tests_properties(GoFiberChanExtTestW8 PROPERTIES TIMEOUT 30
+  ENVIRONMENT "GOF_NWORKERS=8")
+add_test(NAME GoFiberIoIdleMultiPollerTestW4 COMMAND gof_test_io_idle)
+set_tests_properties(GoFiberIoIdleMultiPollerTestW4 PROPERTIES TIMEOUT 60
+  ENVIRONMENT "GOF_NWORKERS=4;GOF_NPOLLERS=2")
+if(COMMAND nostrc_describe_test)
+  nostrc_describe_test(GoFiberChanExtTestW8 OWNER libgo TARGETS gof_test_chan_ext)
+  nostrc_describe_test(GoFiberIoIdleMultiPollerTestW4 OWNER libgo TARGETS gof_test_io_idle)
+endif()
+
+if(NOT WIN32)
+  add_executable(gof_test_io_owned fiber/tests/test_io_owned.c)
+  target_link_libraries(gof_test_io_owned PRIVATE go_fiber)
+  apply_warnings(gof_test_io_owned)
+  apply_sanitizers(gof_test_io_owned)
+  add_test(NAME GoFiberIoOwnedTest COMMAND gof_test_io_owned)
+  set_tests_properties(GoFiberIoOwnedTest PROPERTIES TIMEOUT 10)
+  if(COMMAND nostrc_describe_test)
+    nostrc_describe_test(GoFiberIoOwnedTest OWNER libgo TARGETS gof_test_io_owned)
+  endif()
+endif()
+
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   nostrc_finalize_test_inventory()
 endif()
