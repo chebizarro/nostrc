@@ -30232,6 +30232,7 @@
         "-DBUILD_LIBVAULT_MARMOT=OFF",
         "-DBUILD_APPS=OFF",
         "-DBUILD_RELAYD=OFF",
+        "-DBUILD_FIPS=OFF",
         "-DNOSTR_WITH_GLIB=OFF",
         "-DENABLE_NIP44=ON",
         "-DENABLE_NIP59=ON",

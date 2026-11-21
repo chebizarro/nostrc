@@ -23,6 +23,21 @@ class RepresentativeSelectionTests(unittest.TestCase):
         return ci.project(s.make_plan(policy, [change(path) for path in paths],
                                      head='a' * 40, context='ci', mode=mode))
 
+    def test_subset_configurations_exclude_unrelated_fips_dependencies(self):
+        policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        self.assertIn('-DBUILD_FIPS=OFF', policy['profiles']['homed.vault.linux']['configure_args'])
+        for name in ('libgo-ci', 'nostr-homed-ci'):
+            text = workflow(name)
+            # Check the actual configure commands, not a comment or an install step.
+            self.assertIn('cmake -S . -B build', text)
+            for block in text.split('cmake -S . -B build')[1:]:
+                command = block.split('\n\n', 1)[0]
+                if name == 'nostr-homed-ci' or '-DENABLE_FUZZING=ON' in command:
+                    self.assertIn('-DBUILD_FIPS=OFF', command)
+        self.assertIn('scripts/ci/configure-release.sh build -DBUILD_FIPS=OFF',
+                      workflow('gnostr-appimage'))
+        self.assertNotIn('-DBUILD_FIPS=OFF', workflow('fips-ci'))
+
     def test_fips_paths_select_only_fips_without_broad_fallback(self):
         for path in ('libfips-core/src/host.c', 'fipsd/src/host_os.c',
                      'tools/fips-vectors/src/main.rs', '.github/workflows/fips-ci.yml'):
