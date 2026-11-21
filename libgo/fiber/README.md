@@ -630,7 +630,8 @@ There is no forced preemption or signal-based interruption.
 cached `gof_read`/`gof_write` flag verification (also priming socket message I/O).
 The caller owns every user and alias of the open file description: cancel/join
 users and call `gof_io_reset_fd` **before** close/reuse, ownership transfer, or an
-alias changing `O_NONBLOCK`. Re-register only after regaining exclusive control.
+alias changing `O_NONBLOCK` (revoke every registered alias before shared flag
+changes). Re-register only after regaining exclusive control.
 The cache is valid only for that registration generation; any reset revokes it,
 including a reset that reports an error. Raw close/dup/flag mutation is not
 intercepted. Unannounced alias mutation violates the contract and can block a

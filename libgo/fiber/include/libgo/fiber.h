@@ -211,6 +211,7 @@ GO_FIBER_API int         gof_io_cancel_fd(gof_socket_t fd);
  * The owner controls ALL users and aliases of the open file description.
  * Before close/reuse, transfer, or any alias clearing O_NONBLOCK: cancel waits
  * as needed, join/quiesce all users, and reset_fd to revoke this registration.
+ * Revoke EVERY registered alias before changing shared O_NONBLOCK flags.
  * Re-register only after regaining exclusive control. Never mutate flags or
  * close concurrently with I/O. Aliases and raw close are not intercepted;
  * violating this ownership contract can block a worker. A reset, including a
