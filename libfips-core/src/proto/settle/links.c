@@ -1,4 +1,5 @@
 #include <fips/proto/settle/settle.h>
+#include <fips/proto/settle/faults.h>
 #include <string.h>
 
 static fips_settle_link *find(const fips_settle_links *s, uint64_t n)
@@ -15,7 +16,7 @@ static bool valid(const fips_settle_pair *p)
 {
     return p->addr.len<=FIPS_TRANSPORT_ADDR_CAPACITY;
 }
-static bool counts(fips_settle_proven p) { return p==FIPS_SETTLE_LIVE || p==FIPS_SETTLE_ACKED; }
+static bool counts(fips_settle_proven p) { return p==FIPS_SETTLE_LIVE || p==FIPS_SETTLE_ACKED || (p==FIPS_SETTLE_PROBING && SETTLE_FAULT(ProbingCounts)); }
 static bool proven(const fips_settle_link *r, const fips_settle_pair *p)
 {
     for (size_t i=0; i<r->path_count; ++i)
@@ -24,7 +25,7 @@ static bool proven(const fips_settle_link *r, const fips_settle_pair *p)
 }
 static bool uses(const fips_settle_link *r, const fips_settle_pair *p)
 {
-    return (fips_settle_pair_equal(&r->setup,p) && (!r->path_count || !r->holder.peer)) || proven(r,p);
+    return (fips_settle_pair_equal(&r->setup,p) && (!r->path_count || !r->holder.peer)) || (!SETTLE_FAULT(CloseBySetupAddress) && proven(r,p));
 }
 fips_status fips_settle_links_init(fips_settle_links *s, fips_settle_link *slots,
     size_t capacity, fips_settle_path *paths, size_t paths_per_link)
@@ -99,13 +100,13 @@ fips_status fips_settle_link_moved(fips_settle_links *s, uint64_t n,
 bool fips_settle_link_indexed(const fips_settle_links *s, uint64_t n, const fips_settle_pair *pair)
 {
     const fips_settle_link *r=find(s,n);
-    return r && ((!r->released && fips_settle_pair_equal(&r->setup,pair)) || proven(r,pair));
+    return r && (((!r->released || SETTLE_FAULT(ReleasedSetupIndexed)) && fips_settle_pair_equal(&r->setup,pair)) || proven(r,pair));
 }
 bool fips_settle_link_in_use(const fips_settle_links *s, const fips_settle_pair *pair, uint64_t except)
 {
     for (size_t i=0; i<s->capacity; ++i) {
         const fips_settle_link *r=&s->slots[i];
-        if (r->active && r->number!=except && uses(r,pair)) return true;
+        if (r->active && r->number!=except && (!SETTLE_FAULT(CloseByPeerAddress) || r->holder.peer) && uses(r,pair)) return true;
     }
     return false;
 }
@@ -144,7 +145,7 @@ fips_status fips_settle_link_release(fips_settle_links *s, uint64_t n,
     size_t left=0;
     for (size_t i=0; i<r->path_count; ++i) if (!fips_settle_pair_equal(&r->paths[i].pair,pair)) ++left;
     bool own=fips_settle_pair_equal(&r->setup,pair) && (!left || !r->holder.peer);
-    bool close=!keep && !own && !fips_settle_link_in_use(s,pair,n);
+    bool close=(!keep || SETTLE_FAULT(KeepIgnored)) && !own && !fips_settle_link_in_use(s,pair,n);
     if (close && !capacity) return FIPS_ERR_RANGE;
     left=0;
     for (size_t i=0; i<r->path_count; ++i)
@@ -182,6 +183,7 @@ fips_settle_placement fips_settle_place(const fips_settle_links *s,
         if (p.has_unanswered) p.unanswered=named->number;
     }
     if (!p.has_expected && fallback) { p.has_expected=true; p.expected=fallback->holder.identity; }
-    if (!has_path) p.on_link=named && named->number==held && !named->capable;
+    if (!has_path) p.on_link=named && named->number==held && (!named->capable || SETTLE_FAULT(CapableIgnored));
+    if (SETTLE_FAULT(AttributeBySetupOnly)) p.on_link=on && fips_settle_pair_equal(&on->setup,pair);
     return p;
 }

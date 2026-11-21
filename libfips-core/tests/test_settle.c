@@ -208,8 +208,13 @@ void fips_test_settle_table_boundaries(void);
 void fips_test_settle_model(void);
 void fips_test_settle_join(void);
 void fips_test_settle_parity(void);
-int main(void)
+void fips_test_settle_faults_api(void);
+#include "fakes/settle_faults.h"
+int main(int argc,char **argv)
 {
+    const char *fixture; fips_settle_faults *faults=fips_test_settle_fault_args(argc,argv,&fixture);
+    if (fixture) { fprintf(stderr,"unit runner takes no fixture\n"); return 2; }
+    if (!faults) fips_test_settle_faults_api();
     fips_test_settle_gates();
     fips_test_settle_table_boundaries();
     fips_test_settle_model(); fips_test_settle_join(); fips_test_settle_parity();
@@ -217,5 +222,6 @@ int main(void)
     pthread_t threads[4];
     for (unsigned i=0; i<4; ++i) CHECK(pthread_create(&threads[i],NULL,independent,NULL)==0);
     for (unsigned i=0; i<4; ++i) CHECK(pthread_join(threads[i],NULL)==0);
+    fips_test_settle_fault_done(faults);
     puts("settle: links/legs/timing + four independent concurrent owners passed"); return 0;
 }

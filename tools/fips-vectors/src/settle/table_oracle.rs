@@ -398,7 +398,10 @@ impl Table<At> {
 }
 mod upstream_tests {
     include!("table_tests.rs");
+    include!("table_supplement.rs");
 }
 pub(super) fn traces() -> Vec<Value> {
-    upstream_tests::run()
+    let mut traces = upstream_tests::run();
+    traces.extend(upstream_tests::supplemental());
+    traces
 }

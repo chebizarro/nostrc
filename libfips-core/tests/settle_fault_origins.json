@@ -1,0 +1,454 @@
+{
+  "pin": "64f5b4d482cfe14abad108ffc2d92128f7658311",
+  "faults": {
+    "IndexStale": [
+      "links.rs"
+    ],
+    "CloseByPeerAddress": [
+      "links.rs"
+    ],
+    "CloseBySetupAddress": [
+      "links.rs"
+    ],
+    "ProbingCounts": [
+      "links.rs"
+    ],
+    "KeepIgnored": [
+      "links.rs"
+    ],
+    "ReleasedSetupIndexed": [
+      "links.rs"
+    ],
+    "CapableIgnored": [
+      "links.rs"
+    ],
+    "UnheardInclusive": [
+      "gates.rs"
+    ],
+    "HeardFromInstall": [
+      "gates.rs"
+    ],
+    "HeardNeedsFrame": [
+      "gates.rs"
+    ],
+    "DampenerFromRefusal": [
+      "gates.rs"
+    ],
+    "OutboundGated": [
+      "gates.rs"
+    ],
+    "DampenerAtMsg2": [
+      "gates.rs"
+    ],
+    "ReplayUnbounded": [
+      "gates.rs"
+    ],
+    "ReplaySeenIgnored": [
+      "gates.rs"
+    ],
+    "HeardKeepsMemory": [
+      "gates.rs"
+    ],
+    "FrameForgetsReplays": [
+      "table.rs"
+    ],
+    "SilentReadsHeard": [
+      "table.rs"
+    ],
+    "StandbyRoamResets": [
+      "join.rs"
+    ],
+    "MemoryNeverDropped": [
+      "gates.rs"
+    ],
+    "SilentEarly": [
+      "gates.rs"
+    ],
+    "SilentFlat": [
+      "gates.rs"
+    ],
+    "IntervalTen": [
+      "params.rs"
+    ],
+    "LegNeverReaped": [
+      "legs.rs"
+    ],
+    "ResendFresh": [
+      "legs.rs"
+    ],
+    "AnswerFresh": [
+      "legs.rs"
+    ],
+    "PollAhead": [
+      "legs.rs"
+    ],
+    "DeadlineWraps": [
+      "params.rs"
+    ],
+    "LeaseKept": [
+      "legs.rs"
+    ],
+    "UnsentStaysDue": [
+      "legs.rs"
+    ],
+    "UnsentDueAtWake": [
+      "legs.rs"
+    ],
+    "UnsentPastCap": [
+      "legs.rs"
+    ],
+    "MoveKeepsOldPair": [
+      "table.rs"
+    ],
+    "MoveKeepsInboundLink": [
+      "table.rs",
+      "tests/legacy/master.rs"
+    ],
+    "MoveClosesNewPair": [
+      "table.rs"
+    ],
+    "MoveLeavesDialOpen": [
+      "table.rs"
+    ],
+    "MoveNoReset": [
+      "table.rs"
+    ],
+    "MoveLeavesUnheard": [
+      "table.rs",
+      "tests/legacy/master.rs"
+    ],
+    "MoveKeepsReplayMemory": [
+      "table.rs"
+    ],
+    "IgnoreOwnDial": [
+      "table.rs"
+    ],
+    "CrossedRunsKeep": [
+      "table.rs"
+    ],
+    "TouchKeepsHeardInstant": [
+      "table.rs"
+    ],
+    "MovedLeavesEntry": [
+      "table.rs"
+    ],
+    "EpochAtCutover": [
+      "table.rs"
+    ],
+    "ModelFallbackInCore": [
+      "table.rs"
+    ],
+    "ReplacementUngated": [
+      "table.rs"
+    ],
+    "RedialInstallsAtSent": [
+      "table.rs"
+    ],
+    "LegHeardIgnored": [
+      "table.rs"
+    ],
+    "RedialUngated": [
+      "gates.rs"
+    ],
+    "RedialHeardFloored": [
+      "gates.rs"
+    ],
+    "RedialSlotIgnored": [
+      "table.rs"
+    ],
+    "RedialLegKept": [
+      "table.rs"
+    ],
+    "RedialEntryKeptAtPromote": [
+      "table.rs"
+    ],
+    "RedialMemoryIgnored": [
+      "table.rs"
+    ],
+    "RedialSkipsDampener": [
+      "table.rs"
+    ],
+    "RedialTearsDownAtMsg1": [
+      "table.rs"
+    ],
+    "RedialNeverExpires": [
+      "table.rs"
+    ],
+    "AuthorizedRedialUnnoted": [
+      "table.rs"
+    ],
+    "RedialMemoryLapses": [
+      "gates.rs"
+    ],
+    "RedialSwapHeard": [
+      "table.rs"
+    ],
+    "RedialKeptAtDisconnect": [
+      "table.rs"
+    ],
+    "UnsendableKeepsRedial": [
+      "table.rs"
+    ],
+    "AttributeBySetupOnly": [
+      "links.rs"
+    ],
+    "AttributeByCurrent": [
+      "table.rs"
+    ],
+    "PathMoveIgnored": [
+      "table.rs"
+    ],
+    "SwitchIgnored": [
+      "table.rs"
+    ],
+    "SwitchLeavesPeer": [
+      "table.rs"
+    ],
+    "HeardMovesPeer": [
+      "table.rs"
+    ],
+    "FollowResets": [
+      "table.rs"
+    ],
+    "SwitchWritesLive": [
+      "links.rs"
+    ],
+    "ReleaseKeepsPair": [
+      "table.rs"
+    ],
+    "StateIgnored": [
+      "table.rs"
+    ],
+    "PunchedDropped": [
+      "table.rs"
+    ],
+    "SendFailedDropsLeg": [
+      "table.rs"
+    ],
+    "OrphanedIgnored": [
+      "table.rs"
+    ],
+    "OrphanedNoRetry": [
+      "table.rs"
+    ],
+    "RestartNoRetry": [
+      "table.rs"
+    ],
+    "RedialNoRetry": [
+      "table.rs"
+    ],
+    "RemovalClosesEveryPair": [
+      "table.rs"
+    ],
+    "CapLifted": [
+      "table.rs"
+    ],
+    "AnswerBeforeAdmit": [
+      "table.rs"
+    ],
+    "CapNotCounted": [
+      "table.rs"
+    ],
+    "ReachOneMore": [
+      "tests/explore.rs"
+    ],
+    "FlightByHash": [
+      "tests/world.rs"
+    ],
+    "FrameOpensAny": [
+      "tests/world.rs"
+    ],
+    "NoHeartbeat": [
+      "tests/party.rs"
+    ],
+    "ReplyNewConn": [
+      "tests/world.rs"
+    ],
+    "EofDropped": [
+      "tests/world.rs"
+    ],
+    "BleSecondConn": [
+      "tests/world.rs"
+    ],
+    "SendAtDial": [
+      "tests/world.rs"
+    ],
+    "DelayUnbounded": [
+      "tests/world.rs"
+    ],
+    "ConnectRefusedSilent": [
+      "tests/world.rs"
+    ],
+    "RefusedConnKept": [
+      "tests/joint/party.rs",
+      "tests/legacy/maint.rs",
+      "tests/legacy/master.rs",
+      "tests/party.rs"
+    ],
+    "ReplacedConnKept": [
+      "tests/joint/party.rs",
+      "tests/party.rs"
+    ],
+    "ShapeBlind": [
+      "tests/world.rs"
+    ],
+    "ShapeLoose": [
+      "tests/world.rs"
+    ],
+    "ExemptByPath": [
+      "tests/oracle.rs"
+    ],
+    "RightLinkOff": [
+      "tests/oracle.rs"
+    ],
+    "RightLinkPairOnly": [
+      "tests/oracle.rs"
+    ],
+    "RightLinkNoDirection": [
+      "tests/oracle.rs"
+    ],
+    "OneSessionNoSplit": [
+      "tests/oracle.rs"
+    ],
+    "OneSessionNoPending": [
+      "tests/oracle.rs"
+    ],
+    "OneSessionNoFresh": [
+      "tests/oracle.rs"
+    ],
+    "ClassifiedNoRefusal": [
+      "tests/shadow.rs"
+    ],
+    "ResyncKeepsAll": [
+      "tests/shadow.rs"
+    ],
+    "ModelDropsFallback": [
+      "tests/party.rs"
+    ],
+    "PacketStamp": [
+      "tests/joint/party.rs"
+    ],
+    "StoredByBytes": [
+      "table.rs"
+    ],
+    "StoredAnswersAny": [
+      "table.rs"
+    ],
+    "YieldKept": [
+      "tests/shadow.rs"
+    ],
+    "RekeyOutlivesPeer": [
+      "tests/shadow.rs"
+    ],
+    "PreviousUnheard": [
+      "tests/shadow.rs"
+    ],
+    "ReachablePeeks": [
+      "tests/joint/party.rs"
+    ],
+    "NoShrink": [
+      "tests/sim.rs"
+    ],
+    "RecordedCompared": [
+      "tests/shadow.rs"
+    ],
+    "FrameCutoverMissed": [
+      "tests/shadow.rs"
+    ],
+    "CandidateHoldsNothing": [
+      "tests/joint/party.rs"
+    ],
+    "AgedTieBreak": [
+      "table.rs"
+    ],
+    "WireByNumber": [
+      "tests/world.rs"
+    ],
+    "MoveBuildsFresh": [
+      "join.rs"
+    ],
+    "RenewSkipped": [
+      "tests/joint/machines.rs"
+    ],
+    "ModeIgnored": [
+      "tests/joint/machines.rs"
+    ],
+    "ReplaceDropped": [
+      "tests/joint/route.rs"
+    ],
+    "PathsUnmirrored": [
+      "tests/joint/route.rs"
+    ],
+    "RestartDropped": [
+      "tests/joint/route.rs"
+    ],
+    "KeyFromView": [
+      "tests/joint/machines.rs"
+    ],
+    "KeyOmitsBundle": [
+      "tests/joint/machines.rs"
+    ],
+    "HeardFeedDropped": [
+      "tests/joint/feeds.rs"
+    ],
+    "ArrivalIgnored": [
+      "tests/joint/mod.rs"
+    ],
+    "ProvenCompared": [
+      "tests/shadow.rs"
+    ],
+    "RedialCompared": [
+      "tests/shadow.rs"
+    ],
+    "RedialUnnoted": [
+      "tests/drive.rs",
+      "tests/joint/party.rs",
+      "tests/legacy/master.rs"
+    ],
+    "ReopenedCompared": [
+      "tests/shadow.rs"
+    ],
+    "MoveBuildsStale": [
+      "tests/joint/machines.rs"
+    ],
+    "ReplaceKeepsMachine": [
+      "tests/joint/party.rs"
+    ],
+    "LeaseForgotten": [
+      "tests/joint/party.rs"
+    ],
+    "CloseSkipped": [
+      "tests/joint/party.rs"
+    ],
+    "OrphanKept": [
+      "tests/joint/route.rs"
+    ],
+    "BackoffDoubles": [
+      "params.rs"
+    ],
+    "FirstResendAtInterval": [
+      "legs.rs"
+    ],
+    "OriginIgnored": [
+      "legs.rs"
+    ],
+    "ConnectingUnlinked": [
+      "table.rs"
+    ],
+    "ConnectingCloses": [
+      "table.rs"
+    ],
+    "UnsendableCloses": [
+      "table.rs"
+    ],
+    "TeardownIgnoresKeep": [
+      "table.rs"
+    ],
+    "UnpinOwnOnly": [
+      "table.rs"
+    ],
+    "TimerNever": [
+      "tests/joint/party.rs"
+    ]
+  }
+}

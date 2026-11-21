@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#define REQUIRE(x) do { if (!(x)) { fprintf(stderr,"settle:%d: %s\n",__LINE__,#x); exit(1); } } while (0)
+#define REQUIRE(x) do { if (!(x)) { fprintf(stderr,"settle:%d: %s\n",__LINE__,#x); abort(); } } while (0)
 #define PIN "64f5b4d482cfe14abad108ffc2d92128f7658311"
 static json_t *field(json_t *o, const char *key) { json_t *v=json_object_get(o,key); REQUIRE(v); return v; }
 static uint64_t num(json_t *v) { REQUIRE(json_is_integer(v) && json_integer_value(v)>=0); return (uint64_t)json_integer_value(v); }
@@ -22,7 +22,7 @@ static void equal(json_t *a, json_t *b)
     if (!json_equal(a,b)) {
         char *actual=json_dumps(a,JSON_COMPACT|JSON_SORT_KEYS), *want=json_dumps(b,JSON_COMPACT|JSON_SORT_KEYS);
         fprintf(stderr,"actual: %s\nexpected: %s\n",actual?actual:"<null>",want?want:"<null>");
-        free(actual); free(want); exit(1);
+        free(actual); free(want); abort();
     }
     json_decref(a);
 }
@@ -551,16 +551,17 @@ static size_t check_model(json_t *trace,bool with_gates)
 }
 #include "settle_join.h"
 #include "settle_parity.h"
+#include "../fakes/settle_faults.h"
 int main(int argc, char **argv)
 {
-    REQUIRE(argc<=2); json_error_t error;
-    json_t *root=json_load_file(argc==2 ? argv[1] : FIPS_SETTLE_VECTOR,JSON_REJECT_DUPLICATES,&error);
+    const char *fixture; fips_settle_faults *faults=fips_test_settle_fault_args(argc,argv,&fixture); json_error_t error;
+    json_t *root=json_load_file(fixture ? fixture : FIPS_SETTLE_VECTOR,JSON_REJECT_DUPLICATES,&error);
     if (!root) { fprintf(stderr,"settle: invalid fixture: %s\n",error.text); return 1; }
     REQUIRE(json_is_object(root)); REQUIRE(num(field(root,"schema_version"))==1);
     REQUIRE(!strcmp(text(field(root,"pin")),PIN)); REQUIRE(!strcmp(text(field(root,"family")),"settle"));
     REQUIRE(!strcmp(text(field(root,"generator")),"fips-vectors")); REQUIRE(!strcmp(text(field(root,"generator_version")),"0.1.0"));
     REQUIRE(json_is_array(field(root,"gaps")));
-    json_t *cases=field(root,"cases"); REQUIRE(json_is_array(cases) && json_array_size(cases)==161);
+    json_t *cases=field(root,"cases"); REQUIRE(json_is_array(cases) && json_array_size(cases)==162);
     size_t rows=0;
     for (size_t i=0; i<json_array_size(cases); ++i) {
         json_t *trace=json_array_get(cases,i); const char *kind=text(field(trace,"kind"));
@@ -574,5 +575,5 @@ int main(int argc, char **argv)
         else { REQUIRE(!strcmp(kind,"legs")); rows+=check_legs(trace); }
     }
     printf("settle: %zu checked traces, %zu checked steps, 0 skipped, 0 failed\n",json_array_size(cases),rows);
-    json_decref(root); return 0;
+    json_decref(root); fips_test_settle_fault_done(faults); return 0;
 }

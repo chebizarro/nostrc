@@ -1,4 +1,5 @@
 #include <fips/proto/settle/gates.h>
+#include <fips/proto/settle/faults.h>
 #include <string.h>
 
 _Static_assert(FIPS_SETTLE_GATE_EPHEMERALS_MAX >= FIPS_SETTLE_DEFAULT_REPLAYS,
@@ -26,12 +27,13 @@ fips_status fips_settle_gates_init(fips_settle_gates *g, fips_settle_memory *slo
 static bool valid(const fips_settle_params *p)
 { return p->replays<=FIPS_SETTLE_GATE_EPHEMERALS_MAX && p->counted>0 && p->counted<=FIPS_SETTLE_GATE_EPHEMERALS_MAX; }
 static bool expired(const fips_settle_silence *r, fips_instant now, const fips_settle_params *p)
-{ return cmp(now,fips_deadline(r->has_until ? r->until : r->last,p->horizon))>=0; }
+{ return cmp(now,settle_deadline(r->has_until ? r->until : r->last,p->horizon))>=0; }
 static bool live(const fips_settle_memory *m, fips_instant now, fips_instant memory, const fips_settle_params *p)
 {
+    if (SETTLE_FAULT(MemoryNeverDropped)) return true;
     if (m->has_stamp && recent(m->stamp,now,p)) return true;
     for (size_t i=0;i<m->replay_count;++i) if (recent(m->replays[i].at,memory,p)) return true;
-    for (size_t i=0;i<m->redial_count;++i) if (recent(m->redials[i].at,memory,p)) return true;
+    for (size_t i=0;i<m->redial_count;++i) if (!SETTLE_FAULT(RedialMemoryLapses) && recent(m->redials[i].at,memory,p)) return true;
     return m->silence.present && !expired(&m->silence,now,p);
 }
 static size_t prune(fips_settle_remembered *entries, size_t count, fips_instant now, const fips_settle_params *p)
@@ -51,6 +53,7 @@ static bool room(const fips_settle_gates *g, const fips_node_addr *peer,
 }
 static void lapse(fips_settle_gates *g, fips_instant now, fips_instant memory, const fips_settle_params *p)
 {
+    if (SETTLE_FAULT(MemoryNeverDropped)) return;
     for (size_t i=0;i<g->capacity;++i) {
         fips_settle_memory *m=&g->slots[i]; if (!m->active) continue;
         m->replay_count=prune(m->replays,m->replay_count,memory,p);
@@ -82,35 +85,41 @@ fips_status fips_settle_gate(fips_settle_gates *g, fips_node_addr peer,
     bool stamp=false;
     if (m && (a->source==FIPS_SETTLE_SOURCE_NOT_HELD || a->source==FIPS_SETTLE_SOURCE_REPLACEMENT ||
         a->source==FIPS_SETTLE_SOURCE_REDIAL) && silencing(m,a->has_epoch ? a->epoch : NULL,now)) r=FIPS_SETTLE_GATE_SILENT;
-    else if (a->source!=FIPS_SETTLE_SOURCE_NOT_HELD && a->has_held && a->source<=FIPS_SETTLE_SOURCE_REDIAL) {
+    else if (a->source!=FIPS_SETTLE_SOURCE_NOT_HELD && a->has_held && (a->source<=FIPS_SETTLE_SOURCE_REDIAL || (a->source==FIPS_SETTLE_SOURCE_OWN_MSG2 && SETTLE_FAULT(OutboundGated)))) {
         if (a->source==FIPS_SETTLE_SOURCE_REDIAL) {
             size_t n=0;
-            if (a->has_ephemeral && m) for (size_t i=0;i<m->redial_count;++i) {
+            if (!SETTLE_FAULT(RedialUngated) && a->has_ephemeral && m) for (size_t i=0;i<m->redial_count;++i) {
                 if (!recent(m->redials[i].at,memory,p)) continue;
                 ++n;
                 if (!memcmp(m->redials[i].ephemeral,a->ephemeral,32)) r=FIPS_SETTLE_GATE_REDIALED;
             }
-            if (a->has_ephemeral && n>=p->replays) r=FIPS_SETTLE_GATE_REDIALED;
+            if (!SETTLE_FAULT(RedialUngated) && a->has_ephemeral && n>=p->replays) r=FIPS_SETTLE_GATE_REDIALED;
+            if (r==FIPS_SETTLE_GATE_ACCEPT && !SETTLE_FAULT(RedialUngated) && SETTLE_FAULT(RedialHeardFloored) && a->held.heard && recent(a->held.has_last ? a->held.last : a->held.installed,now,p)) r=FIPS_SETTLE_GATE_HEARD;
         } else {
             if (!a->held.heard && a->has_ephemeral) {
                 size_t n=0;
                 if (m) for (size_t i=0;i<m->replay_count;++i) {
                     if (!recent(m->replays[i].at,memory,p)) continue;
                     ++n;
-                    if (!memcmp(m->replays[i].ephemeral,a->ephemeral,32)) r=FIPS_SETTLE_GATE_REPLAYED;
+                    if (!SETTLE_FAULT(ReplaySeenIgnored) && !memcmp(m->replays[i].ephemeral,a->ephemeral,32)) r=FIPS_SETTLE_GATE_REPLAYED;
                 }
-                if (r==FIPS_SETTLE_GATE_ACCEPT && n>=p->replays) r=FIPS_SETTLE_GATE_REPLAY_FULL;
+                if (r==FIPS_SETTLE_GATE_ACCEPT && !SETTLE_FAULT(ReplayUnbounded) && n>=p->replays) r=FIPS_SETTLE_GATE_REPLAY_FULL;
             }
-            fips_instant from=a->held.heard && a->held.has_last ? a->held.last : a->held.installed;
+            fips_instant from=a->held.heard && a->held.has_last && !SETTLE_FAULT(HeardFromInstall) ? a->held.last : a->held.installed;
             fips_duration floor=a->held.heard ? p->interval : p->unheard;
-            if (r==FIPS_SETTLE_GATE_ACCEPT && dcmp(now.ops->saturating_duration_since(now,from),floor)<0)
+            int age=dcmp(now.ops->saturating_duration_since(now,from),floor);
+            bool young=age<0 || (!a->held.heard && SETTLE_FAULT(UnheardInclusive) && age==0);
+            if (a->held.heard && !a->held.has_last && SETTLE_FAULT(HeardNeedsFrame)) young=false;
+            if (r==FIPS_SETTLE_GATE_ACCEPT && young)
                 r=a->held.heard ? FIPS_SETTLE_GATE_HEARD : FIPS_SETTLE_GATE_UNHEARD;
         }
-        if (r==FIPS_SETTLE_GATE_ACCEPT && m && m->has_stamp && recent(m->stamp,now,p)) r=FIPS_SETTLE_GATE_DAMPENED;
-        stamp=r==FIPS_SETTLE_GATE_ACCEPT && a->held.heard && a->source!=FIPS_SETTLE_SOURCE_REDIAL;
+        if (r==FIPS_SETTLE_GATE_ACCEPT && !(a->source==FIPS_SETTLE_SOURCE_REDIAL && SETTLE_FAULT(RedialUngated)) && m && m->has_stamp && recent(m->stamp,now,p)) r=FIPS_SETTLE_GATE_DAMPENED;
+        stamp=a->source!=FIPS_SETTLE_SOURCE_REDIAL && ((r==FIPS_SETTLE_GATE_ACCEPT && a->held.heard) || (r!=FIPS_SETTLE_GATE_ACCEPT && SETTLE_FAULT(DampenerFromRefusal)));
     }
-    if (stamp && !room(g,&peer,now,memory,p)) return FIPS_ERR_RANGE;
+    if (a->has_held && a->source!=FIPS_SETTLE_SOURCE_NOT_HELD && a->source!=FIPS_SETTLE_SOURCE_REDIAL && a->source>=FIPS_SETTLE_SOURCE_OWN_MSG2 && !(a->source==FIPS_SETTLE_SOURCE_OWN_MSG2 && SETTLE_FAULT(OutboundGated)) && SETTLE_FAULT(DampenerAtMsg2)) stamp=true;
+    if ((stamp || SETTLE_FAULT(MemoryNeverDropped)) && !room(g,&peer,now,memory,p)) return FIPS_ERR_RANGE;
     lapse(g,now,memory,p);
+    if (SETTLE_FAULT(MemoryNeverDropped)) (void)entry(g,peer);
     if (stamp) { fips_settle_memory *w=entry(g,peer); w->has_stamp=true; w->stamp=now; }
     *out=r; return FIPS_OK;
 }
@@ -137,17 +146,17 @@ fips_status fips_settle_gate_promoted(fips_settle_gates *g, fips_node_addr peer,
     fips_instant at=memory ? *memory : now;
     if (!valid(p) || !room(g,&peer,now,at,p)) return FIPS_ERR_RANGE;
     lapse(g,now,at,p); fips_settle_memory *m=entry(g,peer);
-    remember(m->replays,&m->replay_count,ephemeral,at,p->replays); return FIPS_OK;
+    remember(m->replays,&m->replay_count,ephemeral,at,SETTLE_FAULT(ReplayUnbounded) ? FIPS_SETTLE_GATE_EPHEMERALS_MAX : p->replays); return FIPS_OK;
 }
 static void forget(fips_settle_gates *g, const fips_node_addr *peer, bool replays, bool silence)
 {
     fips_settle_memory *m=find(g,peer); if (!m) return;
     if (replays) m->replay_count=0;
     if (silence) memset(&m->silence,0,sizeof(m->silence));
-    if (!m->has_stamp && !m->replay_count && !m->silence.present && !m->redial_count) memset(m,0,sizeof(*m));
+    if (!m->has_stamp && !m->replay_count && !m->silence.present && (!m->redial_count || SETTLE_FAULT(RedialMemoryLapses)) && !SETTLE_FAULT(MemoryNeverDropped)) memset(m,0,sizeof(*m));
 }
-void fips_settle_gate_heard(fips_settle_gates *g, const fips_node_addr *peer) { forget(g,peer,true,true); }
-void fips_settle_gate_framed(fips_settle_gates *g, const fips_node_addr *peer) { forget(g,peer,false,true); }
+void fips_settle_gate_heard(fips_settle_gates *g, const fips_node_addr *peer) { if (!SETTLE_FAULT(HeardKeepsMemory)) forget(g,peer,true,true); }
+void fips_settle_gate_framed(fips_settle_gates *g, const fips_node_addr *peer) { if (!SETTLE_FAULT(HeardKeepsMemory)) forget(g,peer,false,true); }
 void fips_settle_gate_forget(fips_settle_gates *g, const fips_node_addr *peer) { forget(g,peer,true,false); }
 fips_status fips_settle_gate_ended(fips_settle_gates *g, fips_node_addr peer,
     const uint8_t *epoch, const uint8_t *setup, fips_instant now, const fips_instant *memory,
@@ -178,14 +187,16 @@ fips_status fips_settle_gate_ended(fips_settle_gates *g, fips_node_addr peer,
     }
     if (r->count<UINT32_MAX) ++r->count;
     r->last=now;
-    if (r->count<p->silent) return FIPS_OK;
-    *length=fips_backoff(r->count-p->silent,p->silentbase,p->silentcap); *started=true;
-    r->until=fips_deadline(now,*length); r->has_until=true; return FIPS_OK;
+    uint32_t limit=SETTLE_FAULT(SilentEarly) && p->silent ? p->silent-1 : p->silent;
+    if (r->count<limit) return FIPS_OK;
+    *length=fips_backoff(SETTLE_FAULT(SilentFlat) ? 0 : r->count-limit,p->silentbase,p->silentcap); *started=true;
+    r->until=settle_deadline(now,*length); r->has_until=true; return FIPS_OK;
 }
 fips_status fips_settle_gate_redialed(fips_settle_gates *g, fips_node_addr peer,
     const uint8_t ephemeral[32], fips_instant now, const fips_settle_params *p)
 {
     if (!valid(p)) return FIPS_ERR_RANGE;
+    if (SETTLE_FAULT(RedialUngated)) return FIPS_OK;
     fips_settle_memory *m=find(g,&peer);
     if (!m) { m=entry(g,peer); if (!m) return FIPS_ERR_RANGE; }
     m->redial_count=prune(m->redials,m->redial_count,now,p);

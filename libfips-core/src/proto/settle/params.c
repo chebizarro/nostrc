@@ -1,4 +1,5 @@
 #include <fips/proto/settle/settle.h>
+#include <fips/proto/settle/faults.h>
 #include <fips/proto/math.h>
 #include <fips/proto/fmp/silent.h>
 #include <math.h>
@@ -13,7 +14,7 @@ _Static_assert(sizeof(double) == sizeof(uint64_t), "backoff uses binary64 bits")
 fips_settle_params fips_settle_params_default(void)
 {
     fips_settle_params p = {
-        .unheard={1,0}, .interval={15,0}, .silentbase={30,0},
+        .unheard={1,0}, .interval={SETTLE_FAULT(IntervalTen) ? 10u : 15u,0}, .silentbase={30,0},
         .silentcap={600,0}, .horizon={600,0}, .handshake={30,0},
         .first={1,0}, .resend={1,0}, .retry={1,0},
         .replays=FIPS_SETTLE_DEFAULT_REPLAYS, .counted=FIPS_SETTLE_DEFAULT_COUNTED,
@@ -31,6 +32,7 @@ fips_duration fips_settle_wait(const fips_settle_params *p, uint32_t sent)
     else base = p->resend.secs*1000 + p->resend.nanos/1000000;
     double multiplier;
     memcpy(&multiplier, &p->backoff, sizeof(multiplier));
+    if (SETTLE_FAULT(BackoffDoubles)) return fips_backoff(sent,p->resend,(fips_duration){UINT64_MAX,999999999});
     double ms = (double)base * fips_powi(multiplier, sent);
     /* Rust float-to-u64 cast saturates, including NaN -> 0. */
     uint64_t wait = !(ms > 0) ? 0 : ms >= 0x1p64 ? UINT64_MAX : (uint64_t)ms;

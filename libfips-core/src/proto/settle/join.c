@@ -1,4 +1,5 @@
 #include <fips/proto/settle/join.h>
+#include <fips/proto/settle/faults.h>
 #include <string.h>
 #include <sodium.h>
 _Static_assert(FIPS_REKEY_OUTPUTS_MAX>=1,"refused shift needs one release");
@@ -102,6 +103,7 @@ fips_status fips_settle_join(fips_settle_joined *j,fips_node_addr peer,const fip
         fips_peer_key key=v.identity.key; fips_rekey_carry carry;
         bool have=fips_rekey_close_machine(e->rekey,FIPS_REKEY_CLOSE_CrossConnectionMove,&j->close_out,&carry); *e->has_rekey=false;
         if (!have) { refused(j,e->setup); break; }
+        if (SETTLE_FAULT(MoveBuildsFresh)) { carry=(fips_rekey_carry){.has_peer_epoch=true,.link_since=e->caps->now,.started=e->caps->now}; memcpy(carry.peer_epoch,e->setup->done.epoch,8); }
         (void)build(j,e,key,&carry);
         if (e->paths) { (void)fips_path_bundle_renew(e->paths,e->caps->now,e->path_env,(fips_path_ref){.transport=e->to.transport,.addr=e->to.addr},&j->owned_paths); j->paths=&j->owned_paths; }
         break;
@@ -116,7 +118,7 @@ fips_status fips_settle_join(fips_settle_joined *j,fips_node_addr peer,const fip
         break;
     case FIPS_SETTLE_JOIN_ROAM:
         j->has_tail=true;
-        if (e->has_from) j->tail=(fips_settle_input){.kind=FIPS_SETTLE_IN_MOVED,.data.moved={.link=e->link,.from=e->from,.to=e->to,.roam=!e->standby}};
+        if (e->has_from) j->tail=(fips_settle_input){.kind=FIPS_SETTLE_IN_MOVED,.data.moved={.link=e->link,.from=e->from,.to=e->to,.roam=!e->standby || SETTLE_FAULT(StandbyRoamResets)}};
         else j->tail=(fips_settle_input){.kind=FIPS_SETTLE_IN_STATE,.data.state={.link=e->link,.pair=e->to,.proven=FIPS_SETTLE_LIVE}}; break;
     }
     return FIPS_OK;

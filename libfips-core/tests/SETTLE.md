@@ -9,8 +9,9 @@ Implemented: params, link records/paths/derived index/attribution/close rule,
 handshake legs/answers/resends/deadlines/lease ownership, restart gates,
 input/output vocabulary, production table arbitration and the independent
 model history/judge, the production join adapter and test-only parity
-vocabulary/schedules/trace machinery. Fault integration and dependent world
-infrastructure are **not implemented yet**.
+vocabulary/schedules/trace machinery, plus the complete 147-name fault catalog
+and 92 applicable core guard mutations. Dependent world infrastructure and
+alternative candidate policies are **not implemented yet**.
 No fipsd integration, hosted CI, live networking or full settlement convergence
 is claimed. Remaining core work is `nostrc-f12v2.8`; leave `nostrc-f12v2.7` open.
 Pinned upstream specs are in `src/proto/settle/upstream/`, verbatim and expressly
@@ -34,8 +35,8 @@ failed sends, zero resend cap, short host clock and actual slot reuse followed
 by ascending close/lease output. Four pthreads run **independent** caller-owned
 states; shared-object mutation requires caller synchronization.
 
-`FipsDiffSettle` (`diff/settle.c`, `vectors/settle.json`) checks 161 traces and
-2580 trace rows (including construction/cleanup): 192 deterministic mixed link operations with every record, index,
+`FipsDiffSettle` (`diff/settle.c`, `vectors/settle.json`) checks 162 traces and
+2591 trace rows (including construction/cleanup): 192 deterministic mixed link operations with every record, index,
 placement and close snapshot, plus 11 leg traces varying multiplier, resend
 interval, origin cap, answer and failed-send retry. A gate trace checks all six sources, both floors, stamps, replay/silent/redial
 memory, partial forgetting, refusal counts, identity lapse and split clocks.
@@ -76,11 +77,26 @@ Parity adds 791 parser/round-trip/core-override rows, all 46 immutable shared
 schedules, the ten unshared-start explanations and derived rekey/path settings.
 All four original parity assertion bodies run in the Rust exporter, with their
 C adaptations in `test_settle_parity.c`. Diagnostic strings become typed bit
-masks. C-local text is NUL-free ASCII, names at most95 bytes, and each trace is
-bounded to8 settings/128 lines/64 overrides; parse/format/capacity failure is
+masks. C-local text is NUL-free ASCII, names at most 95 bytes, and each trace is
+bounded to 8 settings/128 lines/64 overrides; parse/format/capacity failure is
 transactional. The data-only include is generated from the pinned Rust oracle
 by `tests/tools/generate_settle_parity.py` (`--check` detects drift). Parity's
 reader is not itself evidence that either side executed those schedules.
+
+`FipsSettleFaults` runs both unmutated executables first, then requires an
+invariant assertion or golden mismatch for every enabled mutation; arbitrary
+crashes, sanitizer errors and unsupported/no-op names do not count as kills.
+All 92 implemented mutations are killed. The first sweep found a real fixture
+gap for `ReplacementUngated`; an additional pinned upstream replacement-request
+history now checks both the heard-floor refusal and exact boundary acceptance.
+The test scope is caller-owned and explicitly borrowed per thread, not a core
+environment read. Production macros are literal false and the archive contains
+no fault, parity or model implementation symbols. `SETTLE-FAULTS.md` inventories
+all 147 names: `IndexStale` is structurally absent because C derives its index;
+`AgedTieBreak` requires the alternative candidate policy; 53 guard only unported
+world/joint/legacy/comparison infrastructure. They refuse activation rather than
+being ineffective toggles. Native tests check unknown/high bits, atomic refusal,
+nested scopes and thread isolation. This is not the original full 147-name sweep.
 
 `FIPS_ENABLE_FUZZERS=ON` adds `fips_fuzz_settle`. The core is instrumented with
 `-fsanitize=fuzzer-no-link`. Bounded link/leg operations and all 28 table inputs plus poll/close check
@@ -96,8 +112,9 @@ replacement for upstream worlds, scheduler exploration or mutation testing.
   ordered effects. Existing C rekey/path modules alone cannot qualify this.
 - **LEGACY**: current-node/shell simulation and explorers need node parity;
   node wiring is outside this task. No legacy/live compatibility claim.
-- **MUTATION**: fault switches/candidate sweeps and parity hooks still need the
-  complete joined machine, so are deferred rather than ported as ineffective toggles.
+- **MUTATION**: alternative candidate-policy sweeps and the full world/harness
+  guard sweep remain unported. The 92 applicable runtime guard mutations and
+  parity machinery are implemented; see the separate complete fault inventory.
 - **STRUCTURE**: Rust lint/module/source-scanning fences are language-specific;
   no equivalent C structural scan is claimed by this partial module.
 
@@ -110,9 +127,11 @@ replant/naming/drive helpers are not exposed. See the module README for API boun
 2026-11-21: vocabulary/gates, table, independent model, join and parity layers
 pass **2/2, zero skipped** on macOS arm64 (Homebrew LLVM), separately under
 ASan+UBSan and TSan, with warnings-as-errors. The previous layers (through the
-independent model) also qualified on Ubuntu24.04 arm64 (`clang-18`) with2/2 in
-each sanitizer configuration and20,000 clean fuzz runs. The final Linux run for
-join/parity is pending until the remaining layer is finished.
+independent model) also qualified on Ubuntu 24.04 arm64 (`clang-18`) with 2/2 in
+each sanitizer configuration and 20,000 clean fuzz runs. The final Linux run for
+join/parity/mutations is pending until the remaining infrastructure is finished.
+The mutation layer additionally passes **3/3** on macOS in both configurations
+(unit, differential and mutation tests), with 92/92 mutations killed.
 The TSan test executables compile all production settlement sources directly because
 global CMake deliberately leaves the core archive uninstrumented under TSan.
 No suppression or sanitizer exclusion was added.
@@ -134,12 +153,12 @@ cmake -S "$SRC" -B "$BUILD" -G Ninja -DCMAKE_C_COMPILER="$CC" \
 # macOS additionally uses -DNOSTR_USE_SYSTEM_NSYNC=OFF.
 # For TSan replace all three ASan/UBSan/fuzzer flags with -DGO_ENABLE_TSAN=ON.
 cmake --build "$BUILD" --target fips_core_settle_test fips_diff_settle -j4
-ctest --test-dir "$BUILD" -R '^(FipsCoreSettleTest|FipsDiffSettle)$' --output-on-failure
+ctest --test-dir "$BUILD" -R '^(FipsCoreSettleTest|FipsDiffSettle|FipsSettleFaults)$' --output-on-failure
 # Linux: prefix EVERY build with flock /tmp/w26-build.lock (VM has 3 GB RAM).
 
 # Fuzz smoke: ASan/UBSan build only, seeds copied into a scratch CORPUS.
 cmake --build "$BUILD" --target fips_fuzz_settle -j4
-"$BUILD/libfips-core/fuzz/fips_fuzz_settle" "$CORPUS" -runs=20000 -max_len=1024
+"$BUILD/libfips-core/fuzz/fips_fuzz_settle" "$CORPUS" -runs=20000 -max_len=4096
 ```
 
 Vectors were generated using a scratch Rust driver importing the unmodified new
@@ -157,7 +176,8 @@ families and shared pin metadata. Scratch builds/drivers are removed at handoff.
 
 Verified after merging D1: both sanitizer build targets are present, including
 TSan; its explicit `FipsCoreSettleTest` run compensates for the broader core
-exclusion, while `FipsDiffSettle` is not excluded. `fips_fuzz_settle` appears in
+exclusion, while `FipsDiffSettle` is not excluded. The existing `^Fips`
+selection also includes `FipsSettleFaults`, which is not excluded by `^FipsCore`. `fips_fuzz_settle` appears in
 both fuzz build/run lists, using the actual `libfips-core/fuzz/corpus/fips_fuzz_settle`
 directory. No workflow correction was needed. Local VM/host evidence is not
 hosted CI acceptance.
@@ -269,7 +289,7 @@ hosted CI acceptance.
 
 | Upstream test (attribute line) | Disposition | C coverage / reason |
 |---|---|---|
-| `every_guard_switch_turns_each_test_it_names_red_and_each_passes_with_none` (L2016) | not ported | MUTATION (see boundary above) |
+| `every_guard_switch_turns_each_test_it_names_red_and_each_passes_with_none` (L2016) | not ported | Original147-name world/guard meta-test not translated; the C-local `FipsSettleFaults` sweep kills all92 implemented runtime mutations with unmutated controls. Unsupported53 harness guards +candidate +structurally absent cached-index mutation are explicitly inventoried. |
 ### `tests/gates.rs`
 
 | Upstream test (attribute line) | Disposition | C coverage / reason |

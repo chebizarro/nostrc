@@ -59,7 +59,15 @@ reaped link; this can exceed the number of actual deduplicated closes.
   domain are documented in `parity.h`. Generated data is checked against Rust.
   Reading the committed trace is not a claim of executing a node/world schedule.
 
-Not yet ported: mutation switches and explorers/simulators.
+- `faults.c` (test-only): all 147 source names, 92 applicable core mutation
+  sites, caller-owned thread scopes and fail-closed selection. Production macros
+  are literal false. The registered mutation test kills every enabled mutation
+  only after unmutated controls pass; unsupported harness/candidate guards are
+  inventoried rather than exposed as no-op switches. C derives its index, so the
+  cached-index staleness mutation is structurally inapplicable. See
+  `tests/SETTLE-FAULTS.md` for every source site and boundary.
+
+Not yet ported: alternative candidate policies and wider explorers/simulators.
 The D1 rekey dependency is included by the approved normal merge.
 Test-only Rust replant/naming/drive helpers are not exposed. The production
 shell adapters `reap_leg`, `open_link`, `drop_leg`, `unadopt` and refused-count
