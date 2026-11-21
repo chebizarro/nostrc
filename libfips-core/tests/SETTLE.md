@@ -134,16 +134,37 @@ replant/naming/drive helpers are not exposed. See the module README for API boun
 ## Qualification commands
 
 2026-11-21: vocabulary/gates, table, independent model, join and parity layers
-pass **2/2, zero skipped** on macOS arm64 (Homebrew LLVM), separately under
-ASan+UBSan and TSan, with warnings-as-errors. The previous layers (through the
-independent model) also qualified on Ubuntu 24.04 arm64 (`clang-18`) with 2/2 in
-each sanitizer configuration and 20,000 clean fuzz runs. The final Linux run for
-join/parity/mutations is pending until the remaining infrastructure is finished.
-The mutation layer additionally passes **3/3** on macOS in both configurations
-(unit, differential and mutation tests), with 92/92 mutations killed.
+passed **2/2, zero skipped** on macOS arm64 (Homebrew LLVM), separately under
+ASan+UBSan and TSan, with warnings-as-errors. Mutation and composed-lifecycle
+layers then passed **3/3, zero skipped** in each configuration. Final results:
+
+| Platform | ASan+UBSan | TSan | ASan/UBSan fuzz smoke |
+|---|---|---|---|
+| macOS arm64, Homebrew LLVM | 3/3; 92/92 mutations killed | 3/3; 92/92 mutations killed | 20,000 runs, clean |
+| Ubuntu 24.04 arm64 VM, clang-18 | 3/3; 92/92 mutations killed | 3/3; 92/92 mutations killed | 20,000 runs, clean |
+
+Both replays check **162 traces / 2591 steps, zero skipped/failed** against the
+same fixture SHA-256:
+`741fdbad47ffed9f191315c778f5912b47e7d2d9d7a2aaf719fa5d9e85e36b64`.
+Linux configurations/builds held `/tmp/w26-build.lock` and used `-j4`.
+
+The first Linux mutation runs timed out at the unchanged 120-second test limit:
+Ubuntu's piped Apport handler runs on intentional assertion aborts despite
+`RLIMIT_CORE=0`. Only explicit mutation children now use
+`prctl(PR_SET_DUMPABLE, 0)` to prevent crash-report collection. The complete
+reruns passed in both configurations, with no timeout increase, sanitizer
+suppression, disabled check or skipped mutation. A Linux planted 123-byte leak
+under that flag was still diagnosed by LeakSanitizer (expected exit 1);
+a surviving unit-only mutation control also exited cleanly. Default test
+processes do not change dumpability.
 The TSan test executables compile all production settlement sources directly because
 global CMake deliberately leaves the core archive uninstrumented under TSan.
-No suppression or sanitizer exclusion was added.
+No suppression or sanitizer exclusion was added. Archive symbol checks on
+both platforms confirm that test-only model/parity/fault implementations are
+absent from the default production archive. The one static Oracle review for
+this continuation found only the composed fixture's weak renewal assertion;
+it was corrected before final qualification. Both repository static checkers,
+generated-data checks and `git diff --check` pass.
 
 ```sh
 # macOS:

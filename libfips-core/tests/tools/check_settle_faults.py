@@ -42,7 +42,7 @@ for name in names:
     for label, runner in [('diff', a.runner), ('unit', a.unit)]:
         result = run([runner, '--fault', name])
         diagnostic = result.stderr
-        assertion = (re.search(r'(?m)^(settle|gates|table|join|model|parity|faults):\d+:', diagnostic)
+        assertion = (re.search(r'(?m)^(settle|gates|table|join|model|parity|faults|composed):\d+:', diagnostic)
                      or ('actual: ' in diagnostic and '\nexpected: ' in diagnostic)
                      or 'unchecked settle deadline' in diagnostic
                      or ('Assertion' in diagnostic and '/libfips-core/tests/' in diagnostic))
