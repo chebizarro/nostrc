@@ -1997,3 +1997,342 @@ Direct static gates passed: `check-unsequenced-args.py --root <worktree>`,
 `check-gui-test-gdk-frame.py` (55 sources), `check-linux-ci-packages.py`, and
 `git diff --check`. No workflow files, tracker state or pre-push wrapper were
 changed/run. The manifest keeps fipsd and fipsctl at 0.1.0 Unreleased.
+
+## Wave 26 UDP follow-up: receive ownership and inline bursts
+
+**Historical round 1: rejected for merge.** The combined change below was
+split and requalified in the u19cz.22 isolation section that follows. These
+initial syscall/CPU gains do not establish throughput nonregression.
+
+Measured 2026-11-21 against `96409f73c`, Release builds, OpenSSL AEAD,
+1200-byte native datagrams. These are local macOS M4 Max and Ubuntu 24.04
+arm64 VM observations, not hosted/release qualification. No sibling libgo,
+native API, upstream-pin or settle changes were incorporated. All timing
+commands ran under `lockf /tmp/w26-mac-perf.lock` (host) or
+`flock /tmp/w26-perf.lock` (VM); VM builds used `/tmp/w26-build.lock` and `-j4`.
+
+### Changes and ownership (nostrc-u19cz.12 / .20)
+
+Linux receives keep the existing 32-slot `recvmmsg`, source/pktinfo/ECN and
+oversize handling. Accepted datagrams form one owned event chain per receive
+call and cross the transport channel once. The dispatcher detaches/releases
+individual events, counts each against its 64-event turn budget and includes
+pending chain entries in inline-backlog admission. Stop/cancellation is
+checked per datagram and before transfer; refusal retains the whole chain.
+MTU-sized events return to a mutex-protected cache (at most 64 idle events
+per socket). Each event retains the pool, allowing borrowed events to outlive
+drain teardown; oversize allocations are not cached.
+
+Inline after-batch-only crypto jobs retain their completion reservations and
+results-open pins. Compatible jobs collect up to 32 entries, then use the
+existing per-peer gate/send-batch step and queue completions. Flushes precede
+worker handoff, incompatible same-shard completion, timer service and every
+dispatcher yield/wait, including timer/poll-originated jobs. No delay is added.
+Generation, held-barrier, per-frame results and dispatcher accounting retain
+their existing owners. Immediate inline callers keep their original contract.
+
+A review-found missing post-poll flush was reproduced by a node test asserting
+the deferred after-step ran before the next wait callback. Without the extra
+flush it aborts; with it, the completion drains through shutdown. Other new
+assertions cover chain order/turn budget, handler-failure drain, pool reuse
+and return after teardown, inline burst bounds, capacity refusal, interleaved
+session/link shards, worker handoff and same-shard ordering. Existing UDP GSO
+partial-send/fallback and dataplane gate regressions remain.
+
+### Fixed-rate results
+
+Cells contain both independent runs, not a selected best run. CPU is
+traffic-window microseconds per delivered datagram (sender / receiver).
+Recipe: `perf_loopback.py --runs 2 --pairs c-c,c-rust,rust-rust --paced-rate
+RATE --paced-seconds 4 --latency-samples 300`; macOS omitted Rust-Rust.
+Baseline and candidate alternate by rate.
+
+| Linux VM | Base | Candidate |
+|---|---|---|
+| 100 Mbit/s C-C CPU | 62.6/51.1, 61.7/49.4 | 60.2/51.4, 57.8/50.9 |
+| 100 Mbit/s C-C loss | 0%, 0% | 0%, 0% |
+| 100 Mbit/s C-Rust CPU | 65.3/64.3, 66.2/66.2 | 62.3/63.2, 60.3/64.3 |
+| 100 Mbit/s C-Rust loss | 0.338%, 0.319% | 0.192%, 0.019% |
+| 300 Mbit/s C-C delivered | 278.15, 299.98 Mbit/s | 299.73, 299.82 Mbit/s |
+| 300 Mbit/s C-C CPU | 33.4/26.1, 30.0/23.6 | 31.2/23.7, 29.4/23.6 |
+| 300 Mbit/s C-Rust delivered | 290.28, 272.25 Mbit/s | 253.08, 295.19 Mbit/s |
+| 300 Mbit/s C-Rust CPU | 31.6/28.3, 35.3/29.6 | 38.5/28.9, 28.6/26.7 |
+| 300 Mbit/s Rust-Rust delivered (unchanged control) | 289.76, 298.62 | 290.58, 299.47 |
+
+At 100 Mbit/s C-C sender CPU falls about 5%; receiver CPU is effectively flat.
+C-Rust sender CPU falls about 7%. At 300 Mbit/s C-Rust remains variable;
+there is no demonstrated consistent throughput gain there.
+
+An additional 8-second 100 Mbit/s probe used `perf stat -p PID` with syscall
+tracepoints and an uprobe at `fipsd_transport_emit_event`:
+
+| C-C counter | Base | Candidate |
+|---|---:|---:|
+| sender `sendmmsg` calls | 82,780 | 41,724 |
+| sender `fcntl` calls | 83,109 | 42,072 |
+| receiver transport-channel submissions | 83,650 | 34,505 |
+| receiver `recvmmsg` calls (includes readiness/EAGAIN attempts) | 70,466 | 68,365 |
+| delivered datagrams | 83,333 | 83,333 |
+
+Thus .20 halves moderate-rate send syscalls and .12 removes 59% of receiver
+channel submissions in this sample, without changing delivery. The C-Rust
+sender goes from 83,220 to 39,719 `sendmmsg` calls; Rust receiver `recvmmsg`
+attempts fall from 44,211 to 38,207. Tracing adds overhead; do not compare
+these runs' CPU costs with untraced runs.
+
+| macOS | Base | Candidate |
+|---|---|---|
+| 100 Mbit/s C-C CPU | 37.9/35.0, 36.6/31.9 | 32.4/25.4, 44.4/39.3 |
+| 100 Mbit/s C-C delivered | 100.0, 97.7 | 99.1, 99.0 |
+| 100 Mbit/s C-Rust delivered | 99.9, 99.2 | 20.0, 96.5 |
+| 300 Mbit/s C-C delivered | 284.4, 297.4 | 293.4, 288.0 |
+| 300 Mbit/s C-Rust delivered | 55.5, 145.7 | 231.7, 189.3 |
+
+macOS lacks a UDP `send_batch` op and retains copying, single-datagram receive;
+neither optimization changes its UDP syscall behavior. The large C-Rust
+spread occurs on both builds and is not evidence of improvement. No macOS
+performance win is claimed.
+
+The paced maximum-rate recipe (`--paced --paced-seconds 3 --loss-threshold
+.01 --paced-resolution .02 --latency-samples 100 --pairs c-c`) returned
+base/candidate 568.75/406.25 Mbit/s on Linux and 284.37/196.87 on macOS,
+each with less than 1% loss at its selected rate. These single searches are
+**not stable ceiling estimates**: Linux candidate loss rises from 14.9% at
+500 to 31.7% at 450 and 40.6% at 425 Mbit/s before passing at 406.25.
+Neither a maximum-rate improvement nor absence of a ceiling regression is
+established. The fixed-rate/syscall effects above are supported; the slow-mode
+finding below stays open.
+
+A locked alternating check at fixed 500 Mbit/s (four fresh C-C pairs/build,
+4 seconds/pair) gives base 499.17, 493.74, 490.28, 498.55 Mbit/s versus
+candidate 496.23, 497.60, 437.43, 469.88. Base loss is 0.17–1.94%; candidate
+0.48–12.51%. The two bad candidate runs have normal pre-load p50
+270–295 us, but loaded p99 about 22 ms, 21,867/7,911 sender refusals and
+about 4,030 receiver flow-queue drops. This is not the original millisecond
+pre-load signature, and candidate high-rate nonregression is **not proven**.
+Follow-up **nostrc-u19cz.22** tracks isolation of receive chaining versus
+inline bursts versus scheduler/native/VM behavior, and combined A/C retesting.
+Do not attribute the result to a specific component without that isolation.
+
+### Slow Linux pair finding (nostrc-u19cz.13, not fixed)
+
+Reproduced before changes on the baseline: eight C-C 100 Mbit/s probes
+include pre-load p50 2.820 ms with 17.6% loss and a separate 32.9%-loss run,
+versus 0.227–0.266 ms with no loss in three later runs. A system-wide
+`perf record -g -e cpu-clock -e sched:sched_switch -e sched:sched_wakeup -a`
+repeat captured pre-load p50 3.566 ms and 15.6% loss: 5,008 native sender
+refusals plus 1,502 receiver flow-queue drops out of 41,666 offered datagrams.
+Another captured repeat lost 46.2% with pre-load p50 3.640 ms. Native metrics
+locate admission/delivery loss; no UDP-kernel-drop cause was established.
+
+In the first slow capture, the active scheduler threads' off-CPU wait p99 is
+7.19/9.39 ms versus 0.40–0.63 ms in the clean capture. Runnable scheduling-
+delay p99 is 0.31/0.39 ms (clean: 0.12–0.13 ms). Off-CPU stacks include
+`pthread_cond_timedwait -> worker_main`; poller threads also wait longer in
+`ep_poll`. This suggests a wake/park/VM scheduling problem, **not a proven
+precise cause** or proof that host contention is absent. No causal fix is
+established here. Subsequent passing samples must not be credited as a fix.
+The existing bead remains the follow-up for agent A/coordinator; no libgo
+source was edited, nor was any delay, retry, queue enlargement or timeout
+used to hide the symptom. Profiling itself perturbs timing.
+
+### Darwin private batching finding (nostrc-u19cz.15)
+
+Deferred: a 2.425-second `sample` of the C receiver during fixed 100 Mbit/s
+traffic attributes 50 samples to `fipsd_udp_receive`, including 40 in
+`__recvmsg` (1.65% of one core over that wall interval). This does not justify
+introducing private `recvmsg_x`/`sendmsg_x` APIs and compatibility risk in this
+pass while wake/park behavior and native delivery make measured rates
+unstable. No Darwin implementation or speedup is claimed. Reconsider with a
+stable profile demonstrating syscall cost at the intended operating rate.
+
+### Qualification
+
+Exact broad test commands:
+
+```sh
+ctest --test-dir /Users/bizarro/Documents/Projects/nostrc-wt/w26-udp/build-asan -R '^Fips' --output-on-failure -j2
+ctest --test-dir /Users/bizarro/Documents/Projects/nostrc-wt/w26-udp/build-tsan -R '^Fips' --output-on-failure -j2
+ssh bizarro@192.168.64.3 'ctest --test-dir /home/bizarro/w26-udp/build-new -R "^Fips" --output-on-failure -j2'
+```
+
+| Platform/configuration | Passed | Skipped | Disabled | Failed | Wall seconds |
+|---|---:|---:|---:|---:|---:|
+| macOS Apple clang, ASan + UBSan | 218 | 8 | 2 | 0 | 325.43 |
+| macOS Apple clang, TSan + vendored/instrumented nsync | 218 | 8 | 2 | 0 | 445.67 |
+| Linux VM gcc 13 Release | 217 | 11 | 2 | 0 | 292.77 |
+
+Both macOS builds use `GO_ENABLE_*SAN`; TSan sets
+`NOSTR_USE_SYSTEM_NSYNC=OFF`. UDP IPv4/IPv6 Rust interop, multi-node interop,
+and both saturated-rekey Rust directions passed on all three configurations.
+The eight shared skips are control/fipsctl upstream interop, privileged
+TUN/IPv6/Ethernet, BPF, Tor and advert-Tor. Linux additionally skips the
+kqueue-only native probe, privileged gateway and BlueZ smoke. Soak and the
+CTest perf wrapper are opt-in disabled tests; performance was run explicitly.
+These skips are not claimed as passes.
+
+The final shutdown-chain guard was also exercised on Linux after the broad
+run. Clang 18 ASan+UBSan and TSan (vendored/instrumented nsync) each passed
+all six focused cases with no skips; final Release passed 6/6 too:
+
+```sh
+ctest --test-dir /home/bizarro/w26-udp/build-asan -R '^Fipsd(UdpTest|NodeWorkersTest|NodeContextTest|NodeTransportBatchTest|NodeHandlerFailureTest|DataplaneTest)$' --output-on-failure
+ctest --test-dir /home/bizarro/w26-udp/build-tsan -R '^Fipsd(UdpTest|NodeWorkersTest|NodeContextTest|NodeTransportBatchTest|NodeHandlerFailureTest|DataplaneTest)$' --output-on-failure
+ctest --test-dir /home/bizarro/w26-udp/build-new -R '^Fipsd(NodeContextTest|NodeTransportBatchTest|NodeHandlerFailureTest|NodeWorkersTest|UdpTest|DataplaneTest)$' --output-on-failure
+```
+
+The two repository static checkers (`check-unsequenced-args.py --root` and
+`check-errno-after-park.py --root`, each with the absolute worktree path) and
+`git diff --check` pass. No CI files changed. No Nostr relay/protocol code is
+touched, so no Nostr protocol audit applies.
+Version decision: fipsd stays **0.1.0 Unreleased**; PATCH-class internal
+performance/lifecycle changes fold into the initial unreleased daemon. No
+public API/ABI, wire, CLI, control-output or configuration change. Other
+components are unchanged.
+
+## Wave 26 UDP isolation (nostrc-u19cz.22)
+
+The rejected `ad6085d72` was split into independent production changes:
+
+- `47a8d4df8`: receive chains and event pool only (.12).
+- `d98a489a5`: inline send bursts only (.20), on top of .12.
+- `58f257fc7`: the .20 commit cherry-picked onto `96409f73c`, resolving only
+  its version-note context. The standalone poll-flush test does not require
+  receive chains. This is the send-only experimental source.
+
+The combined `fipsd/src` tree is byte-identical to rejected `ad6085d72`.
+No A/C changes were mixed into this factorial comparison.
+
+### Protocol and complete factorial results
+
+Four counterbalanced rounds used orders `base,rx,tx,both`,
+`rx,both,base,tx`, `both,tx,rx,base`, `tx,base,both,rx` on each platform.
+Each variant/round starts two fresh C-C daemon pairs at 500 Mbit/s
+(1200 bytes, 4 seconds, 300 pre-load latency samples) and one fresh pair
+for a paced search (3-second probes, 100 samples, strict loss <1%, relative
+resolution 2%). Fixed/search order reverses in alternate rounds. Thus every
+cell below includes **8 fixed-rate pairs and 4 complete searches**; no bad
+pair, failed initial search probe or millisecond-latency outlier is excluded.
+A search reuses its daemon pair across probes, as in the original protocol.
+
+All builds are Release with `FIPS_ENABLE_BENCH=ON`; every variant uses the
+same base native driver. Host runs use `lockf /tmp/w26-mac-perf.lock`, VM
+runs `flock /tmp/w26-perf.lock`, and VM builds `/tmp/w26-build.lock -j4`.
+The host and VM share physical hardware and ran their independently locked
+matrices concurrently; the counterbalanced base controls capture substantial
+remaining load/scheduling variability. Absolute capacities are not portable.
+The scratch C-C harness changes only the unused Rust-binary preflight and
+path resolution, not `run_pair`, `probe`, `sustainable_search` or the native
+driver. No Rust process is selected or launched by these timing runs.
+
+| Linux VM | Base | Receive only | Send only | Both |
+|---|---:|---:|---:|---:|
+| 500 Mbit/s median delivered | 498.03 | 492.84 | 483.87 | 494.76 |
+| 500 Mbit/s median loss | 0.394% | 1.433% | 3.208% | 1.049% |
+| 500 Mbit/s worst loss | 1.684% | 13.260% | 20.401% | 3.598% |
+| 500 Mbit/s pairs failing <1% | 2/8 | 5/8 | 6/8 | 4/8 |
+| Paced median offered Mbit/s at <1% loss | 525.00 | 534.37 | 487.50 | 509.37 |
+| All four selected paced rates | 575, 337.5, 475, 675 | 356.25, 712.5, 98.44, 800 | 375, 343.75, 600, 712.5 | 475, 98.44, 650, 543.75 |
+
+| macOS | Base | Receive only | Send only | Both |
+|---|---:|---:|---:|---:|
+| 500 Mbit/s median delivered | 499.50 | 495.62 | 499.74 | 499.43 |
+| 500 Mbit/s median loss | 0.101% | 0.875% | 0.052% | 0.114% |
+| 500 Mbit/s worst loss | 0.697% | 7.463% | 0.747% | 1.823% |
+| 500 Mbit/s pairs failing <1% | 0/8 | 4/8 | 0/8 | 2/8 |
+| Paced median offered Mbit/s at <1% loss | 1025.00 | 818.75 | 659.37 | 856.25 |
+| All four selected paced rates | 1475, 1000, 937.5, 1050 | 1475, 368.75, 900, 737.5 | 925, 606.25, 712.5, 368.75 | 737.5, 975, 368.75, 1212.5 |
+
+Both isolated changes are unsafe to retain as-is. The send-only Linux tail
+is worse than base in six of eight fixed-rate pairs; receive-only also
+reproduces bad tails independently. Thus a large send flush is **not the
+sole demonstrated explanation**. The receive-only paced median on Linux
+alone is not acceptance: it conceals a 98.44 Mbit/s selected search and a
+13.26%-loss fixed probe. macOS has no UDP after-batch hook, so its send-only
+paced decline cannot be explained by a larger UDP send burst on that OS.
+These observations reject retention, but do not prove a precise scheduler,
+allocation, cache-layout or host-load mechanism. The .13 finding above is
+unchanged and is not claimed fixed by this investigation.
+
+### Bounded send experiment
+
+`59be06957` caps retained dispatcher-inline jobs at **two**, without receive
+changes; worker-thread batches remain 32. The tests still exercise capacity
+refusal without execution, same-shard order, handoff, retained shutdown
+completions and post-poll flush before wait. Static review found no blocker.
+Qualification uses fresh, alternating base/cap pairs with the same per-cell
+counts and timing protocol, not the earlier base's best result. The cap
+comparison runs Linux and macOS timing sequentially, rather than timing the
+two platforms concurrently.
+
+| Two-job cap comparison | Linux base | Linux cap | macOS base | macOS cap |
+|---|---:|---:|---:|---:|
+| Mean delivered at fixed 500 Mbit/s | 491.65 | 492.01 | 499.34 | 498.87 |
+| Median delivered at fixed 500 Mbit/s | 498.49 | 496.71 | 499.90 | 499.89 |
+| Median fixed loss | 0.302% | 0.658% | 0.021% | 0.022% |
+| Worst fixed loss | 6.507% | 5.620% | 0.506% | 1.371% |
+| Fixed pairs failing <1% loss | 2/8 | 3/8 | 0/8 | 1/8 |
+| Median selected paced Mbit/s | 787.50 | 837.50 | 1412.50 | 1168.75 |
+| All four selected paced rates | 775, 800, 637.5, 800 | 850, 800, 850, 825 | 1475, 1087.5, 1350, 1500 | 975, 1500, 1162.5, 1175 |
+
+The cap improves the paired Linux paced median by 6.3%, and fixed-rate
+mean delivery is essentially unchanged. That is not sufficient acceptance:
+macOS's paced median is still 17.3% lower, with an additional >1% fixed-rate
+loss event. Three of four paired macOS search rates are lower than base.
+The two-job bound is therefore rejected too; no safe bounded fix has been
+established. This is not a claim that burst size alone caused the original
+regression, or that all possible bounded fixes are impossible.
+
+### Delivery decision and qualification receipts
+
+**No UDP runtime change survives on `wave26/udp`.** The branch's production,
+headers, build/test definitions and version manifest are restored to
+`96409f73c`; only these historical measurements and isolation findings are
+retained. `.12` and `.20` remain open with the rejection findings. `.13`
+is unchanged. No numeric component version changes for this documentation-
+only delivery. The experimental commit IDs above are not merge candidates.
+
+A's `33a0e20d4` combination was **not run**: no UDP change survived to combine.
+Do not infer any result for A's targeted/round-robin wake changes from this
+comparison, and do not describe the rejected changes as qualified on A.
+
+Exact Release unit commands used for the combined experiment (four passed
+on each platform, no skips):
+
+```sh
+ctest --test-dir /Users/bizarro/Documents/Projects/nostrc-wt/w26-udp/.udp22/build-both -R '^Fipsd(NodeInlineFlushTest|NodeTransportBatchTest|NodeWorkersTest|UdpTest)$' --output-on-failure
+ctest --test-dir /home/bizarro/w26-udp/build-both -R '^Fipsd(NodeInlineFlushTest|NodeTransportBatchTest|NodeWorkersTest|UdpTest)$' --output-on-failure
+```
+
+The cap experiment used the respective `build-cap` directories and regex
+`^Fipsd(NodeInlineFlushTest|NodeWorkersTest)$`: 2/2 passed on each platform.
+The restored base used `build-base` and
+`^Fipsd(NodeContextTest|NodeWorkersTest|UdpTest)$`: 3/3 passed on each platform.
+Linux commands ran over SSH as `bizarro@192.168.64.3`. These are Release
+checks, not sanitizer or Rust-interop qualification.
+
+For reproducibility, the per-cell harness arguments were:
+
+```text
+python3 <base-source>/fipsd/tests/perf_loopback.py
+  --fipsd <variant-build>/fipsd/fipsd
+  --native-tool <base-build>/fipsd/tests/fipsd_perf_native
+  --pairs c-c --runs 2 --paced-rate 500 --paced-seconds 4 --latency-samples 300
+python3 <base-source>/fipsd/tests/perf_loopback.py
+  --fipsd <variant-build>/fipsd/fipsd
+  --native-tool <base-build>/fipsd/tests/fipsd_perf_native
+  --pairs c-c --runs 1 --paced --paced-seconds 3 --loss-threshold .01
+  --paced-resolution .02 --latency-samples 100
+```
+
+Each call also supplied its own absolute `--work-dir`/`--output`; macOS
+supplied the existing `/tmp/fips-rust-target-perffix/release/fips` to satisfy
+the original preflight, while the scratch C-C-only preflight on Linux did
+not require Rust. All source/build/work paths were inside the assigned
+worktree (`.udp22`) or `/home/bizarro/w26-udp` on the VM. The original
+ASan/UBSan, TSan and interop receipts above describe rejected round 1;
+those broad suites were not rerun for this documentation-only final tree.
+No skipped interop is counted as a pass. No Nostr protocol code or CI
+workflow changed. Static unsequenced-argument, errno-after-park and whitespace
+checks pass. Task-owned snapshots, builds, timing scripts/results, VM directory
+and temporary worktree/branches are removed after recording these results.
