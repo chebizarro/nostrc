@@ -2772,13 +2772,135 @@ owner has started. No connection holds a capped slot or an inbound deadline.
 Every SOCKS5 failure, a REP `0x05` refusal included, counts `socks5_errors`,
 and `show_transports` reports the 10 `NymStatsSnapshot` counters.
 
-Local integration (not exercised here; no mixnet was used): run Nym's
-`nym-socks5-client init --id fips --provider <network-requester address>`,
-then `nym-socks5-client run --id fips` (it listens on `127.0.0.1:1080`), and
-configure `transports.nym: {socks5_addr: "127.0.0.1:1080"}` with peers at
-`{transport: nym, addr: "<host-or-ip>:<port>"}`, a FIPS TCP listener reachable
-from the network requester. Mixnet connects can take minutes, which the
-300-second default allows for.
+Live integration uses two ordinary outbound mixnet clients: `nym-socks5-client`
+and your own standalone `nym-network-requester`. The requester need not register
+or expose a public node. It can exit to a private FIPS TCP listener when configured
+with `allow_local_ips = true` **and an exit policy permitting only that listener**.
+Do not use open-proxy mode or a broad private-network allow-list.
+
+`FipsdNymInteropTest` (`tests/nym_interop.py`) is opt-in. Start/configure the Nym
+clients yourself; the test does not own or modify their credentials. Set:
+
+- `FIPSD_NYM_BINARY`: executable `nym-socks5-client` (queried with `--version`;
+  an SSH wrapper is supported for a remote client).
+- `FIPSD_NYM_SOCKS5_ADDR`: its SOCKS5 endpoint, possibly an SSH local forward.
+- `FIPSD_UDP_INTEROP_RUST_BINARY`: the daemon built from the current upstream pin.
+- `FIPSD_NYM_RUST_LISTEN`: address reachable **from the requester** on which the
+  test starts Rust's TCP listener (default `127.0.0.1:18443`).
+
+Without the client executable, Rust daemon or explicit SOCKS5 endpoint it returns
+SKIP (77). With them it requires a C-initiated IK link over `nym`, tree/bloom
+convergence, a Rust-initiated XK session with proven identities on both daemons,
+and byte-exact native application datagrams in both directions. It checks Nym
+error counters and clean daemon shutdown, prints timings and dumps logs on failure.
+It never substitutes a fixture; provisioning a genuinely live proxy/requester is
+the operator's responsibility. Build with `-DFIPSD_ENABLE_NYM=ON` and run:
+
+```sh
+ctest --test-dir <build> -R '^FipsdNymInteropTest$' -V
+```
+
+#### Recorded live run (2026-11-21)
+
+The official `nym-binaries-v2026.22-istanbul` release's `nym-socks5-client` asset
+is a 29,870,048-byte Linux x86-64 ELF, not arm64. Both standalone clients were
+therefore built on the Ubuntu 24.04 arm64 VM from release source
+`1abb0cf1b92f135e71c84b738bcd19b97916a3eb` using installed Rust 1.94.1:
+
+```sh
+# VM: all source, caches, binaries and HOME under /home/bizarro/w26-nym.
+work=/home/bizarro/w26-nym
+mkdir -p "$work/bin" "$work/home"
+git clone --depth 1 --branch nym-binaries-v2026.22-istanbul \
+  https://github.com/nymtech/nym.git "$work/source"
+CARGO_HOME="$work/cargo" CARGO_TARGET_DIR="$work/target" RUSTUP_TOOLCHAIN=1.94.1 \
+  flock /tmp/w26-build.lock cargo build --manifest-path "$work/source/Cargo.toml" \
+    --release --locked -j2 -p nym-socks5-client -p nym-network-requester
+cp "$work/target/release/nym-socks5-client" \
+   "$work/target/release/nym-network-requester" "$work/bin/"
+python3 -c 'import shutil,sys; shutil.rmtree(sys.argv[1])' "$work/target"
+HOME="$work/home" "$work/bin/nym-network-requester" init \
+  --id wave26-requester --open-proxy false
+```
+
+The build passed in **11m15.29s wall time**, maximum compiler RSS **850 MiB**;
+initial VM free disk was 8.5 GiB. The requester was version **1.1.90**, the SOCKS5
+client **1.1.89**. Requester init took **2.21 s**; SOCKS5 init **2.64 s**.
+macOS source builds had failed loading SQLx proc-macro dylibs (`LINKEDIT`
+alignment); this Linux build needed no source or dependency changes.
+
+The requester config was
+`$work/home/.nym/service-providers/network-requester/wave26-requester/config/config.toml`.
+Its `[network_requester]` kept `open_proxy = false`, set `allow_local_ips = true`,
+and set `upstream_exit_policy_url = 'http://127.0.0.1:18765/exit-policy.txt'`.
+A VM-loopback-only HTTP server served exactly this policy:
+
+```text
+ExitPolicy accept 192.168.64.1:18443
+ExitPolicy reject *:*
+```
+
+Serve that file from a dedicated directory with
+`python3 -m http.server 18765 --bind 127.0.0.1 --directory "$work/policy"`;
+verify it with `curl --fail http://127.0.0.1:18765/exit-policy.txt` before launching
+the requester. The requester and SOCKS5 client were launched as:
+
+```sh
+HOME="$work/home" "$work/bin/nym-network-requester" run --id wave26-requester
+# In another terminal; use the address printed by requester init:
+HOME="$work/home" "$work/bin/nym-socks5-client" init \
+  --id wave26-socks --provider '<requester-mix-address>'
+HOME="$work/home" "$work/bin/nym-socks5-client" run --id wave26-socks --port 18480
+```
+
+Both connected to live gateways discovered through
+`https://validator.nymtech.net/api/`; logs confirmed real mix traffic and loop
+cover traffic. No fastmode/custom topology was used. An SSH forward on the Mac,
+`ssh -N -L 127.0.0.1:18480:127.0.0.1:18480 bizarro@192.168.64.3`, carried only
+the local SOCKS5 connection. The test's `FIPSD_NYM_BINARY` was an executable
+wrapper running `ssh bizarro@192.168.64.3 /home/bizarro/w26-nym/bin/nym-socks5-client "$@"`.
+The FIPS daemons both ran on the Mac: fipsd under ASan/UBSan with Nym enabled,
+Rust from `~/.cache/nostrc/fips/64f5b4d482cfe14abad108ffc2d92128f7658311/Darwin-arm64/release/fips`.
+The test used `FIPSD_NYM_SOCKS5_ADDR=127.0.0.1:18480` and
+`FIPSD_NYM_RUST_LISTEN=192.168.64.1:18443`. The path was therefore
+C → SSH/SOCKS5 → live mixnet → requester → private Rust TCP, not direct loopback
+or a fake proxy. Only the private VM interface was bound; nothing was exposed
+publicly. Mac timing runs held `/tmp/w26-mac-perf.lock`; the final runs also held
+the VM's `/tmp/w26-perf.lock`.
+
+One complete run recorded:
+
+| Observation | Seconds |
+| --- | ---: |
+| C start → IK established | 9.089 |
+| C start → tree/bloom ready | 15.524 |
+| First native write → XK proven on both daemons | 7.912 |
+| First native write → 91-byte Rust→C application delivery | 7.912 |
+| First native write → 27-byte C→Rust reply received | 13.097 |
+| FIPS daemon startup through application roundtrip | 28.709 |
+
+The final registered CTest also passed (**37.76 s**, including shutdown): IK
+**7.810 s**, routing ready **18.452 s**, XK/first delivery **9.018 s**, first
+application roundtrip including XK **16.720 s**, FIPS startup through roundtrip
+**35.246 s**. Final Nym counters were 1 connection, 42 packets received / 48 sent,
+5,731 bytes received / 6,814 sent, with all five error/timeout/MTU counters zero.
+
+The application roundtrip includes cold XK setup, **not steady-state RTT or a
+throughput benchmark**. Nym reported one connection, zero SOCKS5 errors/timeouts;
+C's native counters confirmed exactly 1 received datagram/91 bytes and 1 sent
+reply/27 bytes. Both daemons exited 0, without sanitizer reports or surviving
+control/native sockets. An initial harness attempt sent before tree/bloom
+convergence and timed out with no XK session; the test now waits for that
+protocol state, as the UDP interop gate does, rather than sleeping or retrying
+the application write. All client configs/data, downloaded source, caches,
+binaries and task-owned VM processes were removed after verification.
+
+The macOS ASan/UBSan gate (`ctest --test-dir build-nym-asan -R '^Fips'
+--no-tests=error --output-on-failure`) completed in **248.35 s**: **211 passed,
+15 skipped, 1 disabled, 0 failed**. Nym returned SKIP (77) without its opt-in
+configuration; the other skips require external daemons or privileged devices,
+and the existing soak test remains disabled. Both pre-push C static checkers
+and `git diff --check` passed. These are local/live results, not hosted CI.
 
 ### Verification and limits
 

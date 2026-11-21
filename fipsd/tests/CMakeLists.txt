@@ -855,6 +855,15 @@ add_dependencies(fipsd_tests fipsd_nym_test)
 add_test(NAME FipsdNymTest COMMAND fipsd_nym_test)
 set_tests_properties(FipsdNymTest PROPERTIES TIMEOUT 60 LABELS "fips;transport" ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdNymTest OWNER fipsd TARGETS fipsd_nym_test)
+# Operator-started live Nym client/requester; absent prerequisites return 77.
+add_test(NAME FipsdNymInteropTest COMMAND fipsd_test_tmpdir_run "/control.sock"
+  "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/nym_interop.py"
+  --fipsd "$<TARGET_FILE:fipsd>" --rust "${FIPSD_UDP_INTEROP_RUST_BINARY}"
+  --native-tool "$<TARGET_FILE:fipsd_native_client_tool>")
+set_tests_properties(FipsdNymInteropTest PROPERTIES TIMEOUT 1200 SKIP_RETURN_CODE 77
+  LABELS "fips;transport;interop;nym" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdNymInteropTest OWNER fipsd TARGETS fipsd fipsd_test_tmpdir_run fipsd_native_client_tool
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/nym_interop.py" "${CMAKE_CURRENT_SOURCE_DIR}/udp_interop.py")
 # Opt-in C<->Rust link over real onion services through a local tor
 # (docs/how-to/deploy-tor-onion.md); SKIP 77 without both binaries.
 set(FIPSD_TOR_BINARY "$ENV{FIPSD_TOR_BINARY}" CACHE FILEPATH "Optional tor daemon for the C<->Rust onion interop")
