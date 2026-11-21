@@ -15,8 +15,7 @@
  * daemon created, or a canonical runtime directory a service manager
  * pre-created (/run/fips, /var/run/fips, $XDG_RUNTIME_DIR/fips), is group
  * `fips`, mode 0750. Shared or custom parents such as /tmp are left alone;
- * deciding which directory qualifies is the control-socket owner's job
- * (nostrc-9keoz.3), these helpers only apply the ownership and mode.
+ * the socket-parent helper below owns this policy for every Unix socket.
  *
  * Capability expectations (docs/how-to/run-as-unprivileged-user.md): the
  * daemon runs as root by default. Unprivileged operation needs
@@ -68,6 +67,12 @@ int fipsd_privilege_secure_socket(const char *path, gid_t gid, char *err, size_t
  * operating on an opened descriptor (O_DIRECTORY | O_NOFOLLOW) so a swapped
  * path cannot redirect the change. Returns 0 or -1 with a message. */
 int fipsd_privilege_secure_private_dir(const char *path, gid_t gid, char *err, size_t errlen);
+
+/* Startup-thread mkdir -p for a socket's parent. Secure newly created and
+ * canonical runtime parents; leave existing shared/custom directories alone.
+ * Ancestor symlinks are allowed; a symlink at the socket directory is refused.
+ * Returns 0 or -1 with errno and a diagnostic. */
+int fipsd_privilege_socket_parent(const char *path, gid_t gid, char *err, size_t errlen);
 
 typedef struct fipsd_privilege_drop_config {
     const char *user;  /* NULL: keep the current user */

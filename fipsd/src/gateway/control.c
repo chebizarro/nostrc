@@ -198,34 +198,6 @@ static int stream_socket(void)
 #endif
     return fd;
 }
-static bool is_dir(const char *path) { struct stat st; return stat(path, &st) == 0 && S_ISDIR(st.st_mode); }
-/* Create the parent if missing and give it the policy's group and mode when
- * this service created it or it is a canonical runtime directory. */
-static int secure_parent(const char *path, gid_t gid, char *err, size_t cap)
-{
-    char parent[PATH_MAX];
-    snprintf(parent, sizeof parent, "%s", path);
-    char *slash = strrchr(parent, '/');
-    if (!slash || slash == parent) return 0;
-    *slash = 0;
-    bool created = !is_dir(parent);
-    if (created) {
-        for (char *p = parent + (parent[0] == '/');; ++p) {
-            if (*p != '/' && *p) continue;
-            char saved = *p; *p = 0;
-            if (mkdir(parent, FIPSD_SOCKET_DIR_MODE) != 0 && errno != EEXIST) { snprintf(err, cap, "cannot create %s: %s", parent, strerror(errno)); return -1; }
-            struct stat st;
-            /* Ancestors may be symlinks (macOS /var -> private/var), as with upstream's
-             * create_dir_all; the socket directory itself must be a real directory. */
-            if ((saved ? stat(parent, &st) : lstat(parent, &st)) != 0 || !S_ISDIR(st.st_mode)) { snprintf(err, cap, "%s is not a directory", parent); errno = ENOTDIR; return -1; }
-            *p = saved;
-            if (!saved) break;
-        }
-    }
-    bool canonical = !strcmp(parent, "/run/fips") || !strcmp(parent, "/var/run/fips");
-    if (created || canonical) return fipsd_privilege_secure_private_dir(parent, gid, err, cap);
-    return 0;
-}
 int fipsd_gw_control_bind(fipsd_gw_control *c, const char *path, fipsd_gw_snapshot_slot *slot, char *err, size_t cap)
 {
     memset(c, 0, sizeof *c);
@@ -240,7 +212,7 @@ int fipsd_gw_control_bind(fipsd_gw_control *c, const char *path, fipsd_gw_snapsh
     if (group < 0) { FIPSD_WARN(MODULE, "%s; the gateway control socket keeps effective group %u", err, (unsigned)getegid()); gid = getegid(); }
     else if (!group) FIPSD_WARN(MODULE, "fips group absent; the gateway control socket keeps effective group %u", (unsigned)gid);
     if (cap) err[0] = 0;
-    if (secure_parent(path, gid, err, cap) != 0) return -1;
+    if (fipsd_privilege_socket_parent(path, gid, err, cap) != 0) return -1;
     struct sockaddr_un a;
     memset(&a, 0, sizeof a); a.sun_family = AF_UNIX;
     if (strlen(path) >= sizeof a.sun_path) { snprintf(err, cap, "socket path too long"); errno = ENAMETOOLONG; return -1; }

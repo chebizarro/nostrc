@@ -592,31 +592,6 @@ static int unix_socket(void)
     if (fd >= 0 && configure_fd(fd)) { int e = errno; close(fd); errno = e; return -1; }
     return fd;
 }
-/* The control socket's directory policy: a parent this creates, or a
- * canonical runtime directory, is group `gid`, mode 0750; a shared or custom
- * existing one is left alone. */
-static int secure_parent(const char *path, gid_t gid, char *err, size_t cap)
-{
-    char parent[PATH_MAX];
-    snprintf(parent, sizeof parent, "%s", path);
-    char *slash = strrchr(parent, '/');
-    if (!slash || slash == parent) return 0;
-    *slash = 0;
-    struct stat st;
-    bool created = stat(parent, &st) != 0 || !S_ISDIR(st.st_mode);
-    for (char *p = parent + (parent[0] == '/'); created; ++p) {
-        if (*p != '/' && *p) continue;
-        char saved = *p; *p = 0;
-        if (mkdir(parent, FIPSD_SOCKET_DIR_MODE) != 0 && errno != EEXIST) return -1;
-        /* Ancestors may be symlinks (macOS /var -> private/var), as with upstream's
-         * create_dir_all; the socket directory itself must be a real directory. */
-        if ((saved ? stat(parent, &st) : lstat(parent, &st)) != 0 || !S_ISDIR(st.st_mode)) { errno = ENOTDIR; return -1; }
-        *p = saved;
-        if (!saved) break;
-    }
-    bool canonical = !strcmp(parent, "/run/fips") || !strcmp(parent, "/var/run/fips");
-    return created || canonical ? fipsd_privilege_secure_private_dir(parent, gid, err, cap) : 0;
-}
 typedef struct bind_job { agent *a; int fd, err; char msg[256]; struct stat st; } bind_job;
 static void *bind_listener(void *arg)
 {
@@ -624,7 +599,7 @@ static void *bind_listener(void *arg)
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof addr); addr.sun_family = AF_UNIX;
     memcpy(addr.sun_path, a->path, strlen(a->path) + 1);
-    if (secure_parent(a->path, a->gid, j->msg, sizeof j->msg)) { j->err = errno; return NULL; }
+    if (fipsd_privilege_socket_parent(a->path, a->gid, j->msg, sizeof j->msg)) { j->err = errno; return NULL; }
     struct stat st;
     if (lstat(a->path, &st) == 0) {
         /* Never steal a live daemon's socket, nor remove what is not a stale one of ours. */

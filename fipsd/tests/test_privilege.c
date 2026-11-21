@@ -134,10 +134,62 @@ static int test_resolver(void)
     return 0;
 }
 
+static int test_socket_parent(void)
+{
+    const char *dir = fipsd_test_tmpdir("/link/made/fips/control.sock");
+    char real[PATH_MAX], link[PATH_MAX], path[PATH_MAX], made[PATH_MAX];
+    char err[512];
+    snprintf(real, sizeof real, "%s/real", dir);
+    snprintf(link, sizeof link, "%s/link", dir);
+    CHECK(mkdir(real, 0700) == 0 && symlink(real, link) == 0);
+    snprintf(path, sizeof path, "%s/link/made/fips/control.sock", dir);
+    mode_t mask = umask(0077);
+    int rc = fipsd_privilege_socket_parent(path, getegid(), err, sizeof err);
+    umask(mask);
+    CHECK(rc == 0 && !err[0]);
+    snprintf(made, sizeof made, "%s/real/made/fips", dir);
+    mode_t mode; gid_t gid;
+    CHECK(mode_of(made, &mode, &gid) == 0 && S_ISDIR(mode) &&
+          (mode & 0777) == FIPSD_SOCKET_DIR_MODE && gid == getegid());
+    /* Existing custom parents stay untouched, including shared directories. */
+    CHECK(chmod(made, 0711) == 0);
+    CHECK(fipsd_privilege_socket_parent(path, getegid(), err, sizeof err) == 0);
+    CHECK(mode_of(made, &mode, &gid) == 0 && (mode & 0777) == 0711);
+    char *old_xdg = getenv("XDG_RUNTIME_DIR") ? strdup(getenv("XDG_RUNTIME_DIR")) : NULL;
+    char runtime[PATH_MAX]; snprintf(runtime, sizeof runtime, "%s/real/made", dir);
+    CHECK(setenv("XDG_RUNTIME_DIR", runtime, 1) == 0);
+    snprintf(path, sizeof path, "%s/real/made/fips/api.sock", dir);
+    CHECK(fipsd_privilege_socket_parent(path, getegid(), err, sizeof err) == 0);
+    CHECK(mode_of(made, &mode, &gid) == 0 && (mode & 0777) == FIPSD_SOCKET_DIR_MODE);
+    if (old_xdg) { CHECK(setenv("XDG_RUNTIME_DIR", old_xdg, 1) == 0); free(old_xdg); }
+    else CHECK(unsetenv("XDG_RUNTIME_DIR") == 0);
+    /* Ancestors may be links; the socket directory itself may not. */
+    snprintf(path, sizeof path, "%s/link/control.sock", dir);
+    CHECK(fipsd_privilege_socket_parent(path, getegid(), err, sizeof err) == -1 && errno == ENOTDIR && err[0]);
+    CHECK(fipsd_privilege_socket_parent("control.sock", getegid(), err, sizeof err) == 0 && !err[0]);
+    CHECK(fipsd_privilege_socket_parent("/control.sock", getegid(), err, sizeof err) == 0);
+    CHECK(fipsd_privilege_socket_parent(NULL, getegid(), err, sizeof err) == -1 && errno == EINVAL);
+    char too_long[PATH_MAX + 1]; memset(too_long, 'x', sizeof too_long); too_long[PATH_MAX] = 0;
+    CHECK(fipsd_privilege_socket_parent(too_long, getegid(), err, sizeof err) == -1 && errno == ENAMETOOLONG);
+    CHECK(rmdir(made) == 0);
+    snprintf(made, sizeof made, "%s/real/made", dir);
+    CHECK(mode_of(made, &mode, &gid) == 0 && (mode & 0777) == FIPSD_SOCKET_DIR_MODE && gid == getegid());
+    CHECK(rmdir(made) == 0);
+    CHECK(mode_of(real, &mode, &gid) == 0 && (mode & 0777) == 0700);
+    CHECK(unlink(link) == 0);
+    /* A non-directory ancestor must fail with a useful diagnostic. */
+    int fd = open(link, O_CREAT | O_EXCL | O_WRONLY, 0600); CHECK(fd >= 0); close(fd);
+    snprintf(path, sizeof path, "%s/link/missing/api.sock", dir);
+    CHECK(fipsd_privilege_socket_parent(path, getegid(), err, sizeof err) == -1 && errno == ENOTDIR && err[0]);
+    CHECK(unlink(link) == 0 && rmdir(real) == 0 && rmdir(dir) == 0);
+    return 0;
+}
+
 int main(void)
 {
     char err[512];
     CHECK(test_resolver() == 0);
+    CHECK(test_socket_parent() == 0);
 
     /* umask: applied and reported. */
     mode_t before = umask(0022);

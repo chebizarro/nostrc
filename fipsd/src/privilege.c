@@ -156,6 +156,68 @@ int fipsd_privilege_secure_private_dir(const char *path, gid_t gid, char *err, s
     return rc;
 }
 
+int fipsd_privilege_socket_parent(const char *path, gid_t gid, char *err, size_t errlen)
+{
+    if (err && errlen) err[0] = '\0';
+    char parent[PATH_MAX];
+    if (!path || !*path) {
+        errno = EINVAL;
+        set_err(err, errlen, "invalid socket path", path ? path : "(null)", errno);
+        return -1;
+    }
+    if (strlen(path) >= sizeof parent) {
+        errno = ENAMETOOLONG;
+        set_err(err, errlen, "socket path too long", path, errno);
+        return -1;
+    }
+    memcpy(parent, path, strlen(path) + 1);
+    char *slash = strrchr(parent, '/');
+    if (!slash || slash == parent) return 0;
+    *slash = 0;
+    struct stat st;
+    int rc = lstat(parent, &st);
+    if (rc == 0 && !S_ISDIR(st.st_mode)) {
+        errno = ENOTDIR;
+        set_err(err, errlen, "not a socket directory", parent, errno);
+        return -1;
+    }
+    int created = rc != 0;
+    if (created) {
+        for (char *p = parent + (parent[0] == '/');; ++p) {
+            if (*p != '/' && *p) continue;
+            char saved = *p; *p = 0;
+            int made = mkdir(parent, FIPSD_SOCKET_DIR_MODE);
+            if (made != 0 && errno != EEXIST) {
+                set_err(err, errlen, "cannot create directory", parent, errno);
+                return -1;
+            }
+            /* Ancestors may be symlinks (macOS /var -> private/var), but
+             * the private socket directory itself must be a real directory. */
+            if ((saved ? stat(parent, &st) : lstat(parent, &st)) != 0) {
+                set_err(err, errlen, "cannot stat directory", parent, errno);
+                return -1;
+            }
+            if (!S_ISDIR(st.st_mode)) {
+                errno = ENOTDIR;
+                set_err(err, errlen, "not a directory", parent, errno);
+                return -1;
+            }
+            /* A new intermediate directory also needs group traversal, even
+             * under a restrictive caller umask. Never change existing ancestors. */
+            if (made == 0 && saved && fipsd_privilege_secure_private_dir(parent, gid, err, errlen) != 0)
+                return -1;
+            *p = saved;
+            if (!saved) break;
+        }
+    }
+    char xdg[PATH_MAX] = "";
+    const char *env = getenv("XDG_RUNTIME_DIR");
+    if (env && *env) snprintf(xdg, sizeof xdg, "%s/fips", env);
+    int canonical = !strcmp(parent, "/run/fips") || !strcmp(parent, "/var/run/fips") ||
+        (*xdg && !strcmp(parent, xdg));
+    return created || canonical ? fipsd_privilege_secure_private_dir(parent, gid, err, errlen) : 0;
+}
+
 int fipsd_privilege_drop(const fipsd_privilege_drop_config *cfg, char *err, size_t errlen)
 {
     if (err && errlen)
