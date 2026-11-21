@@ -264,7 +264,8 @@ static const fips_settle_leg *stored(context *c,const fips_settle_pair *from,fip
 static fips_status answer_stored(context *c,const fips_settle_leg *leg)
 {
     OUT(o,FIPS_SETTLE_OUT_ANSWER); o->link=leg->link; o->stored=true; o->length=leg->msg2_len;
-    if (o->length) memcpy(o->bytes,leg->msg2,o->length); return FIPS_OK;
+    if (o->length) memcpy(o->bytes,leg->msg2,o->length);
+    return FIPS_OK;
 }
 static fips_status dialed(context *c,fips_node_addr peer,uint64_t link,const uint8_t epoch[8],const fips_settle_pair *from,fips_settle_transition transition)
 {

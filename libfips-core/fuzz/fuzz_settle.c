@@ -77,7 +77,26 @@ static void fuzz_join(const uint8_t *data,size_t size)
         } else if (data[i]%3==1) {
             e.kind=FIPS_SETTLE_JOIN_PATHS; e.path_out=&p; e.read=join_read;
             e.has_link=(data[i+1]&1)!=0; e.link=data[i+2]; e.has_released=(data[i+1]&2)!=0; e.released=data[i+3];
-            for (unsigned k=0;k<2;++k) { paths[k].kind=(fips_path_output_kind)((data[i+1]+k)%11); fips_settle_pair to=pair(data[i+2]); paths[k].to=(fips_path_ref){to.transport,to.addr}; paths[k].as.state.next=(fips_path_state)(data[i+3]%6); }
+            for (unsigned k=0;k<2;++k) {
+                paths[k].kind=(fips_path_output_kind)((data[i+1]+k)%11);
+                fips_settle_pair to=pair(data[i+2]),from=pair(data[i+3]);
+                paths[k].to=(fips_path_ref){to.transport,to.addr};
+                /* These are typed host outputs, not wire bytes. Populate only
+                 * the member selected by kind: State.next overlaps Released.keep. */
+                switch (paths[k].kind) {
+                case FIPS_PATH_OUTPUT_Send: paths[k].as.send.type=FIPS_LINK_PathProbe; break;
+                case FIPS_PATH_OUTPUT_Moved: paths[k].as.moved.from=(fips_path_ref){from.transport,from.addr}; break;
+                case FIPS_PATH_OUTPUT_Released: paths[k].as.released.keep=(data[i+3]&1)!=0; break;
+                case FIPS_PATH_OUTPUT_State: paths[k].as.state.next=(fips_path_state)((int)(data[i+3]%5)-1); break;
+                case FIPS_PATH_OUTPUT_Switched:
+                    paths[k].as.switched.has_from=(data[i+3]&1)!=0;
+                    paths[k].as.switched.from=(fips_path_ref){from.transport,from.addr}; break;
+                case FIPS_PATH_OUTPUT_Proven: paths[k].as.mtu=1280; break;
+                case FIPS_PATH_OUTPUT_Refused: case FIPS_PATH_OUTPUT_Capable:
+                case FIPS_PATH_OUTPUT_NotCapable: case FIPS_PATH_OUTPUT_Orphaned:
+                case FIPS_PATH_OUTPUT_Connect: break;
+                }
+            }
         } else {
             e.kind=FIPS_SETTLE_JOIN_ROAM; e.link=data[i+1]; e.has_from=(data[i+2]&1)!=0; e.standby=(data[i+2]&2)!=0; e.from=pair(data[i+2]); e.to=pair(data[i+3]);
         }

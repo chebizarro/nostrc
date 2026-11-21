@@ -23,7 +23,8 @@ static inline fips_settle_faults *fips_test_settle_fault_args(int argc,char **ar
     if(prctl(PR_SET_DUMPABLE,0L,0L,0L,0L)!=0){perror("disable mutation core dump");exit(2);}
 #endif
     fips_settle_faults *scope=calloc(1,sizeof(*scope));if(!scope || fips_settle_fault_select(scope,f,true)!=FIPS_OK || fips_settle_fault_enter(scope,NULL)!=FIPS_OK)abort();
-    if(argc==4)*fixture=argv[3];return scope;
+    if(argc==4)*fixture=argv[3];
+    return scope;
 }
 static inline void fips_test_settle_fault_done(fips_settle_faults *scope)
 { if(fips_settle_fault_enter(NULL,NULL)!=FIPS_OK)abort();free(scope); }

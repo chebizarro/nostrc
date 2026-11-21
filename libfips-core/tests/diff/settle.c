@@ -406,7 +406,8 @@ static size_t check_table(json_t *trace)
             /* Pinned upstream test plants one silent-session record through a
              * private writer. This fixture operation is not a production input. */
             fixture=true; fips_node_addr peer=full_node(json_array_get(op,1)); uint8_t epoch[8],e[32]; bool ep=optional(json_array_get(op,2)), setup=optional(json_array_get(op,3)), started; fips_duration length;
-            if (ep) fixed(json_array_get(op,2),epoch,8); if (setup) fixed(json_array_get(op,3),e,32);
+            if (ep) fixed(json_array_get(op,2),epoch,8);
+            if (setup) fixed(json_array_get(op,3),e,32);
             fips_instant memory=optional(json_array_get(op,4)) ? fips_test_instant(at(op,4)) : now;
             status=fips_settle_gate_ended(&t->states[t->active].gates,peer,ep ? epoch : NULL,setup ? e : NULL,now,&memory,&t->params,&started,&length);
         }
@@ -547,7 +548,8 @@ static size_t check_model(json_t *trace,bool with_gates)
         }
         equal(model_snapshot(judges[id]),field(row,"state"));
     }
-    for (size_t i=0;i<1024;++i) REQUIRE(!judges[i]); return json_array_size(rows);
+    for (size_t i=0;i<1024;++i) REQUIRE(!judges[i]);
+    return json_array_size(rows);
 }
 #include "settle_join.h"
 #include "settle_parity.h"

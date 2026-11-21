@@ -1,0 +1,4 @@
+script sample off on
+1 n0 none
+1 n1 held peer in udp-home tcp-accepted unheard
+core 1 n1 heard=heard cause=late-dial-split
