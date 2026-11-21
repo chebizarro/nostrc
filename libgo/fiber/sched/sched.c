@@ -24,7 +24,7 @@ static void* poller_main(void* arg);
 #define LOGF(...) do{}while(0)
 #endif
 
-/* Private scheduler state (supports multiple scheduler threads + 1 poller thread) */
+/* Private scheduler state (supports multiple scheduler threads + pollers) */
 typedef struct gof_node { struct gof_node *next; gof_fiber *f; } gof_node;
 typedef struct gof_sleep {
   uint64_t deadline_ns;
@@ -55,9 +55,11 @@ typedef struct gof_worker {
   _Atomic int running;     /* set to 1 while executing a fiber; written under rq_mu, read lock-free */
   int        index;        /* worker index in S.workers */
   int        last_victim;  /* rotating start for victim selection */
-  /* S.mu: while idle-waiting on S.cv, the gof_now_ns deadline it will wake
+  /* S.mu: while idle-waiting on its cv, the gof_now_ns deadline it will wake
    * at by itself (UINT64_MAX: untimed); 0 when not waiting. */
   uint64_t   idle_until;
+  pthread_cond_t cv; /* one waiter: this worker; guarded by S.mu */
+  int wake_pending; /* S.mu: notification claimed for this idle wait */
 } gof_worker;
 static struct {
   size_t      default_stack;
@@ -74,8 +76,7 @@ static struct {
   gof_node   *inj_head;
   gof_node   *inj_tail;
   pthread_mutex_t mu;
-  pthread_cond_t  cv;
-  int             cv_monotonic; /* S.cv uses CLOCK_MONOTONIC abstime */
+  int             cv_monotonic; /* worker cvs use CLOCK_MONOTONIC abstime */
   /* One or more poller threads */
   pthread_t *poller_threads;
   int        npollers;
@@ -102,6 +103,31 @@ static struct {
  * is a zero key that may alias another library's, whose value is no worker,
  * so a thread asking gof_in_fiber() before any scheduler exists gets NULL. */
 static _Atomic int tls_keys_ready;
+
+/* S.mu serializes the final idle predicate check and each notification.
+ * Targeted work signals only the worker that can consume it (nostrc-y1y8n).
+ * Untargeted work may wake any idle worker, except before worker0 has drained
+ * the bootstrap queue. Claim the wait when signaling: repeated untargeted
+ * notifications must not pick a worker already removed from its cv wait but
+ * still waiting to reacquire S.mu. Global exit/stop still reaches all. */
+static void wake_worker_locked(gof_worker *w) {
+  if (!w->idle_until || w->wake_pending) return;
+  w->wake_pending = 1;
+  pthread_cond_signal(&w->cv);
+}
+
+static void wake_one_locked(void) {
+  if (!S.bootstrapped) { wake_worker_locked(&S.workers[0]); return; }
+  for (int i = 0; i < S.nworkers; ++i) {
+    if (S.workers[i].idle_until && !S.workers[i].wake_pending) {
+      wake_worker_locked(&S.workers[i]); return;
+    }
+  }
+}
+
+static void wake_all_locked(void) {
+  for (int i = 0; i < S.nworkers; ++i) wake_worker_locked(&S.workers[i]);
+}
 
 static inline gof_worker* cur_worker(void) {
   if (!atomic_load_explicit(&tls_keys_ready, memory_order_acquire)) return NULL;
@@ -190,10 +216,9 @@ static void maybe_rebalance(void) {
   /* Migrate a single task using the same safe stealing primitive */
   if (rq_steal_one(&S.workers[max_i], &S.workers[min_i])) {
     atomic_fetch_add(&S.rebalances_migrated, 1);
-    /* nostrc-y1y8n: the move targets min_i's queue; wake idle workers so the
-     * target (or a stealer) actually notices it. */
+    /* Only the destination needs to observe this targeted migration. */
     pthread_mutex_lock(&S.mu);
-    pthread_cond_broadcast(&S.cv);
+    wake_worker_locked(&S.workers[min_i]);
     pthread_mutex_unlock(&S.mu);
   }
 }
@@ -449,7 +474,7 @@ static void sleepers_add(gof_fiber *f, uint64_t deadline_ns) {
     uint64_t until = S.workers[i].idle_until;
     if (until == UINT64_MAX || until > deadline_ns) redundant = 0;
   }
-  if (!redundant) pthread_cond_signal(&S.cv);
+  if (!redundant) wake_one_locked();
   pthread_mutex_unlock(&S.mu);
 }
 
@@ -512,18 +537,13 @@ void gof_sched_init(size_t default_stack_bytes) {
    * same clock; converting a monotonic remaining duration to a REALTIME
    * abstime is skewed by wall-clock adjustments (nostrc-val0v B7). */
   pthread_mutex_init(&S.mu, NULL);
-  {
-    pthread_condattr_t cvattr;
-    pthread_condattr_init(&cvattr);
+  pthread_condattr_t cvattr;
+  pthread_condattr_init(&cvattr);
 #if defined(CLOCK_MONOTONIC) && !defined(__APPLE__)
-    /* macOS has no pthread_condattr_setclock; there we keep the REALTIME
-     * condvar and the idle loop falls back to a duration conversion. */
-    if (pthread_condattr_setclock(&cvattr, CLOCK_MONOTONIC) == 0)
-      S.cv_monotonic = 1;
+  /* macOS uses the REALTIME duration-conversion fallback below. */
+  if (pthread_condattr_setclock(&cvattr, CLOCK_MONOTONIC) == 0)
+    S.cv_monotonic = 1;
 #endif
-    pthread_cond_init(&S.cv, &cvattr);
-    pthread_condattr_destroy(&cvattr);
-  }
   pthread_key_create(&S.worker_key, NULL);
   pthread_key_create(&S.poller_key, NULL);
   atomic_store_explicit(&tls_keys_ready, 1, memory_order_release);
@@ -566,10 +586,12 @@ void gof_sched_init(size_t default_stack_bytes) {
   S.workers = (gof_worker*)calloc((size_t)S.nworkers, sizeof(gof_worker));
   for (int i = 0; i < S.nworkers; ++i) {
     pthread_mutex_init(&S.workers[i].rq_mu, NULL);
+    pthread_cond_init(&S.workers[i].cv, &cvattr);
     S.workers[i].running = 0;
     S.workers[i].index = i;
     S.workers[i].last_victim = i;
   }
+  pthread_condattr_destroy(&cvattr);
   /* Determine number of pollers (default 1, <= nworkers). If pre-set via API, honor it. */
   int np;
   if (S.npollers > 0) {
@@ -641,9 +663,8 @@ void gof_sched_enqueue(gof_fiber *f) {
     gof_worker *WA = &S.workers[f->w_affinity];
     rq_push_to(WA, f);
     pthread_mutex_lock(&S.mu);
-    /* nostrc-y1y8n: targeted push, so broadcast — signal may wake a worker
-     * that cannot drain WA's queue, leaving the target asleep. */
-    pthread_cond_broadcast(&S.cv);
+    /* Only WA can drain its queue when stealing is disabled. */
+    wake_worker_locked(WA);
     pthread_mutex_unlock(&S.mu);
     return;
   }
@@ -653,7 +674,7 @@ void gof_sched_enqueue(gof_fiber *f) {
   pthread_mutex_lock(&S.mu);
   if (!S.inj_tail) { S.inj_head = S.inj_tail = n; }
   else { S.inj_tail->next = n; S.inj_tail = n; }
-  pthread_cond_signal(&S.cv);
+  wake_one_locked();
   pthread_mutex_unlock(&S.mu);
   atomic_fetch_add(&S.inject_enqueues, 1);
 }
@@ -765,8 +786,9 @@ static void* worker_main(void *arg) {
           if (!gof_bg_running() && !gof_io_have_waiters() && !have_live) { exit_sched = 1; break; }
           /* Otherwise, wait indefinitely for injected work */
           W->idle_until = UINT64_MAX;
-          pthread_cond_wait(&S.cv, &S.mu);
+          pthread_cond_wait(&W->cv, &S.mu);
           W->idle_until = 0;
+          W->wake_pending = 0;
           continue;
         }
         uint64_t now = gof_now_ns();
@@ -791,8 +813,9 @@ static void* worker_main(void *arg) {
           abstime.tv_nsec = (long)(abs_ns % 1000000000ull);
         }
         W->idle_until = next_deadline;
-        pthread_cond_timedwait(&S.cv, &S.mu, &abstime);
+        pthread_cond_timedwait(&W->cv, &S.mu, &abstime);
         W->idle_until = 0;
+        W->wake_pending = 0;
         /* loop and re-check predicate */
       }
       pthread_mutex_unlock(&S.mu);
@@ -862,7 +885,7 @@ static void* worker_main(void *arg) {
          * nothing else wakes them once the last fiber exits, so
          * gof_sched_run()'s join hung forever with >1 workers. */
         pthread_mutex_lock(&S.mu);
-        pthread_cond_broadcast(&S.cv);
+        wake_all_locked();
         pthread_mutex_unlock(&S.mu);
       }
     } else {
@@ -979,8 +1002,7 @@ void gof_sched_make_runnable(gof_fiber *f) {
     gof_worker *WA = &S.workers[f->w_affinity];
     rq_push_to(WA, f);
     pthread_mutex_lock(&S.mu);
-    /* Targeted push: broadcast, not signal (nostrc-y1y8n). */
-    pthread_cond_broadcast(&S.cv);
+    wake_worker_locked(WA);
     pthread_mutex_unlock(&S.mu);
     return;
   }
@@ -991,7 +1013,7 @@ void gof_sched_make_runnable(gof_fiber *f) {
   pthread_mutex_lock(&S.mu);
   if (!S.inj_tail) { S.inj_head = S.inj_tail = n; }
   else { S.inj_tail->next = n; S.inj_tail = n; }
-  pthread_cond_signal(&S.cv);
+  wake_one_locked();
   pthread_mutex_unlock(&S.mu);
 }
 
@@ -1028,8 +1050,7 @@ void gof_sched_make_runnable_from_poller(gof_fiber *f, int poller_index) {
     gof_worker *WT = &S.workers[target];
     rq_push_to(WT, f);
     pthread_mutex_lock(&S.mu);
-    /* Targeted push: broadcast, not signal (nostrc-y1y8n). */
-    pthread_cond_broadcast(&S.cv);
+    wake_worker_locked(WT);
     pthread_mutex_unlock(&S.mu);
     return;
   }
@@ -1092,7 +1113,7 @@ void *gof_worker_main_external(void *arg) {
 void gof_sched_wake_all(void) {
   if (!S.initialized) return;
   pthread_mutex_lock(&S.mu);
-  pthread_cond_broadcast(&S.cv);
+  wake_all_locked();
   pthread_mutex_unlock(&S.mu);
 }
 
