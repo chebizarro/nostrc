@@ -14,7 +14,7 @@ static fips_transport_addr alternative;
 static int seed_command;
 static struct { unsigned transport; bool seed_old_clamp; } check_command;
 static fipsd_dp_packet held;
-static bool capture;
+static bool capture, interface_present = true;
 static int capture_command, release_command;
 static int probe_command;
 static bool large_probe, await_proof;
@@ -23,6 +23,12 @@ static bool (*crypto_result)(void *, const fipsd_crypto_job *);
 static bool on_crypto(void *user, const fipsd_crypto_job *job)
 {
     const fipsd_dp_packet *p = job->owner;
+    /* The injected interface exists only in the netmon fixture: loopback
+     * keeps delivering even while test-X is absent. Model the missing medium
+     * here, including decrypts queued before the presence event, rather than
+     * letting a late probe legitimately re-admit a path on that fake link. */
+    if (job->operation == FIPSD_CRYPTO_OPEN && p->transport.value == 1 && !interface_present)
+        return true;
     if (capture && job->operation == FIPSD_CRYPTO_SEAL && !p->session && !p->path_message && !p->prompt) {
         capture = false;
         held = *p; held.job.owner = &held; go_refptr_retain(&held.snapshot);
@@ -64,6 +70,8 @@ static fipsd_network_snapshot *sample(bool exists, bool up, bool carrier, uint32
 static void on_network(void *user, const fipsd_netmon_event *e)
 {
     static unsigned kinds;
+    if ((e->kind == FIPSD_INTERFACE_UP || e->kind == FIPSD_INTERFACE_DOWN) && !strcmp(e->interface_name, "test-X"))
+        interface_present = e->kind == FIPSD_INTERFACE_UP;
     network_event(user, e);
     kinds |= 1u << e->kind;
     if (e->kind == FIPSD_NETWORK_REFRESH) {
@@ -138,6 +146,7 @@ static bool on_command(void *user, void *message)
         assert(!hs_link_send(h, rec, ordinary, sizeof ordinary));
         size_t size = 1000 - FIPS_FRAMING_FMP_FRAME_OVERHEAD;
         uint32_t id = fips_path_liveness_seek_send(&path->live, hs_now(h), size, h->entropy);
+        hs_timers_fold_path(h, rec);
         fips_path_probe probe = fips_path_probe_new(id, path->path_id, FIPS_PATH_ACTIVE, 0);
         probe.len = size;
         uint8_t bytes[1100]; fips_writer w; fips_writer_init(&w, bytes, sizeof bytes);
@@ -209,6 +218,8 @@ static bool on_command(void *user, void *message)
     fips_path_output storage[FIPS_PATH_OUTPUTS_MAX];
     fips_path_outputs out = {storage, FIPS_PATH_OUTPUTS_MAX, 0};
     assert(fips_path_bundle_step(rec->path, hs_now(h), &in, &env, &out) == FIPS_OK);
+    /* Direct fixture mutations must fold deadlines just like path.c's step. */
+    hs_timers_fold_path(h, rec);
     for (size_t i = 0; i < out.len; ++i) if (out.items[i].kind == FIPS_PATH_OUTPUT_Send) {
         uint8_t bytes[1280]; fips_writer w; fips_writer_init(&w, bytes, sizeof bytes);
         assert(fips_path_output_encode(&out.items[i], &w, NULL) == FIPS_OK);
