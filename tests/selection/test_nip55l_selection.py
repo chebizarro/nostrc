@@ -137,6 +137,14 @@ class SignerSelectionTests(unittest.TestCase):
         self.assertIn('selection_artifact: ${{ needs.select.outputs.selection_artifact }}',
                       (ROOT / '.github/workflows/ci-selective.yml').read_text())
 
+    def test_subset_builds_exclude_unrelated_fips(self):
+        for profile in ('nostr_seal.linux', 'desktop.signer.linux'):
+            with self.subTest(profile=profile):
+                self.assertIn('-DBUILD_FIPS=OFF', self.p['profiles'][profile]['configure_args'])
+        script = (ROOT / 'scripts/run-nip55l-libsecret-ci.sh').read_text()
+        configure = script.split('cmake -S /src', 1)[1].split('cmake --build', 1)[0]
+        self.assertIn('-DBUILD_FIPS=OFF', configure)
+
     def test_signer_consumer_job_installs_its_display_stack(self):
         # Broad runs execute each profile's configured display tests under
         # xvfb-run; GTK aborts on the missing a11y bus without at-spi2-core.
