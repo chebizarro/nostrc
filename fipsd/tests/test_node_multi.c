@@ -11,15 +11,39 @@ static test_node nodes[NT_MAX_NODES];
 static bool edges[NT_MAX_NODES][NT_MAX_NODES];
 static char addresses[NT_MAX_NODES][33];
 static size_t count;
+typedef struct bloom_edge_view {
+    bool present, tree, child, received, sent;
+    uint64_t received_sequence, sent_sequence;
+    fips_bloom_filter inbound, outbound;
+} bloom_edge_view;
+typedef struct bloom_view { bloom_edge_view peers[NT_MAX_NODES]; } bloom_view;
+static bloom_view bloom_views[NT_MAX_NODES];
+static struct { bloom_view *view; } read_bloom;
+static GoChannel *bloom_done;
 /* Test actions execute on the production dispatcher, never by borrowing its
  * mutable cache from the test thread. The completion channel orders results. */
 static bool (*real_command)(void *, void *);
 static int prepare_return_route, flood_return_route;
 static GoChannel *return_route_done;
-static bool return_route_command(void *user, void *message)
+static bool multi_command(void *user, void *message)
 {
-    if (message != &prepare_return_route && message != &flood_return_route) return real_command(user, message);
     handlers *h = user;
+    if (message == &read_bloom) {
+        memset(read_bloom.view, 0, sizeof *read_bloom.view);
+        for (size_t i = 0; i < count; ++i) {
+            const fips_bloom_peer *p = fips_bloom_state_peer(&h->bloom, &nodes[i].identity.node_addr);
+            if (!p) continue;
+            bloom_edge_view *v = &read_bloom.view->peers[i];
+            v->present = true; v->tree = p->tree; v->child = p->child;
+            v->received = p->has_inbound; v->received_sequence = p->inbound_sequence;
+            v->sent = p->has_sequence && p->sent_len; v->sent_sequence = p->sequence;
+            if (v->received) v->inbound = p->inbound;
+            if (v->sent) v->outbound = p->sent[0];
+        }
+        assert(!go_channel_send(bloom_done, message));
+        return true;
+    }
+    if (message != &prepare_return_route && message != &flood_return_route) return real_command(user, message);
     const fips_node_addr *initiator = &nodes[0].identity.node_addr;
     peer_rec *carrier = hs_rec_find(h, &nodes[1].identity.node_addr); assert(carrier);
     if (message == &prepare_return_route) {
@@ -54,8 +78,19 @@ static bool return_route_command(void *user, void *message)
     assert(!go_channel_send(return_route_done, message));
     return true;
 }
-static void return_route_options(fipsd_node_options *options)
-{ real_command = options->command; options->command = return_route_command; }
+static void multi_options(fipsd_node_options *options)
+{ real_command = options->command; options->command = multi_command; }
+static void observe_bloom(void)
+{
+    for (size_t i = 0; i < count; ++i) {
+        read_bloom.view = &bloom_views[i];
+        assert(!go_channel_send(nodes[i].h->commands, &read_bloom));
+        void *done = NULL;
+        GoSelectCase c = {GO_SELECT_RECEIVE, bloom_done, NULL, &done};
+        GoSelectResult r = go_select_timeout(&c, 1, NT_WAIT_MS);
+        assert(r.selected_case == 0 && done == &read_bloom);
+    }
+}
 static void return_route_action(int *action)
 {
     assert(!go_channel_send(nodes[2].h->commands, action));
@@ -131,8 +166,8 @@ static bool converged(void)
                     if (index_of(json_string_value(json_array_get(kc, x))) == (!strcmp(role, "child") ? peer : i)) below = true;
                 if (below == !strcmp(role, "child")) ++expected;
             }
-            /* Counts only gate readiness; successful signed coordinate
-             * resolution + authenticated payloads below prove reachability. */
+            /* Counts gate topology readiness, not membership: a stale
+             * filter can have enough entries but still miss a target. */
             if (json_number_value(json_object_get(f, "estimated_count")) + 0.25 < (double)expected) ok = false;
         }
         json_decref(bloom);
@@ -150,42 +185,43 @@ static void await_tree(const char *phase, uint64_t start)
     printf("%s: tree + adjacent filters %llu ms (bound %u ms)\n", phase, (unsigned long long)(nt_ms() - start), TREE_BOUND_MS);
     fflush(stdout);
 }
-/* Exact membership, not an estimated-count proxy: read only the published
- * refcounted dataplane filters, never dispatcher-owned mutable bloom state. */
+/* Read immutable copies on each dispatcher. Published control/dataplane views
+ * can describe different dispatch batches; even canonical filters can be from
+ * before a newer announcement was sent. Match both ends' latest sequences as
+ * well as the directional aggregate, so no older in-flight update can undo
+ * readiness. The reply channels order the copies; notices drive the wait. */
 static bool bloom_reachability(void)
 {
     bool ok = true;
+    observe_bloom();
     json_t *trees[NT_MAX_NODES];
     for (size_t i = 0; i < count; ++i) trees[i] = nt_query(&nodes[i], "show_tree");
     for (size_t i = 0; i < count; ++i) {
-        GoRefPtr ref = go_swap_load(nodes[i].h->dataplane->tables);
-        const fipsd_dp_snapshot *snapshot = ref.ptr; assert(snapshot);
         bool covered[NT_MAX_NODES] = {false}; covered[i] = true;
-        for (size_t k = 0; k < snapshot->peer_count; ++k) {
-            const fipsd_dp_peer *peer = &snapshot->peers[k];
-            size_t p = count;
-            for (size_t x = 0; x < count; ++x)
-                if (!memcmp(peer->addr.bytes, nodes[x].identity.node_addr.bytes, 16)) p = x;
-            assert(p < count);
+        for (size_t p = 0; p < count; ++p) {
+            if (!edges[i][p]) continue;
             bool child = index_of(str(data(trees[p]), "parent")) == i;
             bool parent = index_of(str(data(trees[i]), "parent")) == p;
             if (!child && !parent) continue;
-            if (!peer->filter.ptr) { ok = false; continue; }
+            const bloom_edge_view *peer = &bloom_views[i].peers[p], *sender = &bloom_views[p].peers[i];
+            if (!peer->present || !peer->tree || peer->child != child || !peer->received || !sender->sent ||
+                peer->received_sequence != sender->sent_sequence || !fips_bloom_equal(&peer->inbound, &sender->outbound)) {
+                ok = false;
+            }
+            fips_bloom_filter expected; fips_bloom_init(&expected);
             for (size_t j = 0; j < count; ++j) if (j != i) {
                 json_t *coords = json_object_get(data(trees[j]), "my_coords");
                 bool below = false;
                 for (size_t x = 0; x < json_array_size(coords); ++x)
                     if (index_of(json_string_value(json_array_get(coords, x))) == (child ? p : i)) below = true;
                 if (below == child) {
-                    /* Require the correct edge's entire reachable set, not
-                     * just membership somewhere in the union of filters. */
-                    if (!fips_bloom_contains(peer->filter.ptr, &nodes[j].identity.node_addr)) ok = false;
+                    fips_bloom_insert(&expected, &nodes[j].identity.node_addr);
                     covered[j] = true;
                 }
             }
+            if (!peer->received || !fips_bloom_equal(&peer->inbound, &expected)) ok = false;
         }
         for (size_t j = 0; j < count; ++j) assert(covered[j]);
-        go_refptr_release(&ref);
     }
     for (size_t i = 0; i < count; ++i) json_decref(trees[i]);
     return ok;
@@ -232,7 +268,12 @@ static void prepare_session(size_t from, size_t to, bool require_lookup)
         params = json_pack("{s:I}", "probe_id", id);
         json_t *r = provider.command(provider.user, "probe_poll", params, &rc); json_decref(params);
         json_t *report = json_object_get(data(r), "report"), *bloom = json_object_get(report, "bloom"), *discovery = json_object_get(report, "discovery");
-        assert(strcmp(str(bloom, "verdict"), "failed"));
+        if (!strcmp(str(bloom, "verdict"), "failed")) {
+            json_dumpf(report, stderr, JSON_INDENT(2));
+            fprintf(stderr, "\nprobe %zu -> %zu; exact bloom ready: %d\n", from, to, bloom_reachability());
+            nt_print_trace("probe bloom failed");
+            abort();
+        }
         json_t *session = json_object_get(report, "session");
         bool observed = json_is_true(json_object_get(session, "established")) &&
             (!strcmp(str(session, "verdict"), "ok") || !strcmp(str(session, "verdict"), "skipped"));
@@ -300,6 +341,7 @@ int main(int argc, char **argv)
     assert(!strcmp(shape, "Line") || !strcmp(shape, "Star") || !strcmp(shape, "Ring") || !strcmp(shape, "FullMesh"));
     count = !strcmp(shape, "Line") ? 3 : !strcmp(shape, "Star") ? 4 : 5;
     nt_topology(edges, count, shape);
+    bloom_done = go_channel_create(1); assert(bloom_done);
     (void)fipsd_test_tmpdir(NULL);
     /* Header helpers used by other tests; this test selects all owners. */
     (void)nt_await;
@@ -313,9 +355,7 @@ int main(int argc, char **argv)
         char yaml[256], key[65]; memset(key, '1' + (int)i, 64); key[64] = 0;
         snprintf(yaml, sizeof yaml, "node: {identity: {nsec: '%s', persistent: false}, control: {enabled: false}}", key);
         snprintf(names[i], sizeof names[i], "n%zu", i);
-        if (return_route && i == 2)
-            assert(nt_init_with_options(&nodes[i], NULL, names[i], NULL, yaml, &hc, 1, return_route_options));
-        else assert(nt_init(&nodes[i], NULL, names[i], NULL, yaml, &hc, 1));
+        assert(nt_init_with_options(&nodes[i], NULL, names[i], NULL, yaml, &hc, 1, multi_options));
         assert(fipsd_runtime_register(runtime, fipsd_node_subsystem(nodes[i].node)) == 0);
     }
     assert(fipsd_runtime_start(runtime) == 0);
@@ -332,6 +372,9 @@ int main(int argc, char **argv)
     for (size_t i = 0; i < count; ++i) for (size_t j = i + 1; j < count; ++j) if (edges[i][j])
         assert(fipsd_node_handlers_connect(nodes[i].h, &nodes[j].identity, (fips_transport_id){1}, nodes[j].addr) == 0);
     await_tree(shape, start);
+    /* Cold lookups require the directional filters, not just their counts.
+     * Keep the original convergence deadline and wait on filter notices. */
+    await_bloom(start);
     if (return_route) {
         return_route_action(&prepare_return_route);
         prepare_session(0, 2, true);
@@ -360,6 +403,7 @@ int main(int argc, char **argv)
     if (!strcmp(shape, "FullMesh")) {
         /* No sessions before the cut: verify cold lookup/routing, not stale
          * session-cache recovery (a separate routing-error contract). */
+        await_bloom(start);
         prove_lookup();
         for (size_t i = 0; i < count; ++i) for (size_t j = 0; j < count; ++j) if (i != j) deliver(i, j);
         await_bloom(start);
@@ -374,6 +418,7 @@ int main(int argc, char **argv)
     fipsd_runtime_destroy(runtime);
     for (size_t i = 0; i < count; ++i) nt_destroy(&nodes[i]);
     if (return_route) go_channel_free(return_route_done);
+    go_channel_free(bloom_done);
     puts("multi-node UDP: ok");
     return 0;
 }

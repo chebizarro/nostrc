@@ -40,7 +40,7 @@ struct fipsd_worker_set {
     worker *workers;
     size_t count, capacity, next;
     GoChannel *results;
-    _Atomic size_t remaining;
+    _Atomic size_t remaining; /* workers plus start/inline producers holding results open */
     bool started;
 };
 void fipsd_crypto_job_destroy(fipsd_crypto_job *j)
@@ -221,12 +221,24 @@ int fipsd_worker_set_run_inline(fipsd_worker_set *s, fipsd_crypto_job *j)
         claimed += atomic_load_explicit(&s->workers[i].flight, memory_order_acquire);
     claimed += go_channel_get_depth(s->results);
     if (claimed >= s->capacity || go_channel_is_closed(s->results)) return -1;
+    /* stop can retire the last worker while this dispatcher runs the AEAD or
+     * after-step. Pin results open under the same lock that closes this
+     * worker's input: either stop wins and we refuse untouched, or our
+     * completion is queued before the last producer closes results. */
+    pthread_mutex_lock(&w->mu);
+    if (w->closed || !atomic_load(&w->live) || atomic_load_explicit(&w->flight, memory_order_acquire)) {
+        pthread_mutex_unlock(&w->mu);
+        return -1;
+    }
+    atomic_fetch_add(&s->remaining, 1);
+    pthread_mutex_unlock(&w->mu);
     FIPSD_PERF_JOB_QUEUE(j);
     run_job(w, j);
     if (j->after_batch) j->after_batch(&j, 1);
     int sent = go_channel_try_send(s->results, j);
     assert(sent == 0); /* the slot was reserved above */
     if (sent != 0) fipsd_crypto_job_destroy(j);
+    if (atomic_fetch_sub(&s->remaining, 1) == 1) go_channel_close(s->results);
     return 0;
 }
 void fipsd_worker_set_stop(fipsd_worker_set *s)
