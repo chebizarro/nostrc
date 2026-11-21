@@ -39,7 +39,9 @@ typedef enum fips_rekey_output_kind {
     FIPS_REKEY_OUT_ReplaceRequested,
     FIPS_REKEY_OUT_Reject,
     FIPS_REKEY_OUT_Abandoned,
-    FIPS_REKEY_OUT_Teardown
+    FIPS_REKEY_OUT_Teardown,
+    /* Host arms a pending redial, then calls note_redial; no state recorded yet. */
+    FIPS_REKEY_OUT_RedialRequested
 } fips_rekey_output_kind;
 typedef struct fips_rekey_output {
     fips_rekey_output_kind kind;
@@ -97,7 +99,7 @@ typedef enum fips_rekey_intent {
 } fips_rekey_intent;
 /* Fields selected by kind: Reply/Final/Setup bytes+len, Setup carrier+route;
  * Frame buf+len+hint (buf is plaintext-modified only after authentication);
- * PeerMsg1 tok+on_link+reachable; PeerDone leg+intent (consumed); reports tag/k/
+ * Reply additionally on_link (FMP only); PeerMsg1 tok+on_link+reachable+heard; PeerDone leg+intent (consumed); reports tag/k/
  * counter; Open peer; PathFacts reachable/has_srtt/srtt. Other fields ignored. */
 typedef struct fips_rekey_input {
     fips_rekey_input_kind kind;
@@ -112,6 +114,8 @@ typedef struct fips_rekey_input {
     fips_rekey_frame_hint hint;
     fips_rekey_epoch_tag tag;
     bool k, on_link, reachable, has_srtt;
+    /* Held peering has authenticated a frame or was dialled by this node. */
+    bool heard;
     uint64_t counter;
     fips_duration srtt;
     fips_peer_key peer;
@@ -236,6 +240,8 @@ FIPS_CORE_API fips_status fips_rekey_opening_inbound(fips_rekey *m,
                                                      fips_node_addr claimed, fips_node_addr me,
                                                      fips_instant now, fips_rekey_input setup,
                                                      fips_rekey_env *env, fips_rekey_outputs *out);
+/* Record only after the host has armed a RedialRequested output. */
+FIPS_CORE_API void fips_rekey_note_redial(fips_rekey *m, fips_rekey_digest ephemeral);
 FIPS_CORE_API fips_status fips_rekey_step(fips_rekey *m, fips_instant now, fips_rekey_input input,
                                           fips_rekey_env *env, fips_rekey_outputs *out);
 FIPS_CORE_API bool fips_rekey_grows(const fips_rekey *m, fips_instant now, const uint8_t *msg1,

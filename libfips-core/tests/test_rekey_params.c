@@ -275,7 +275,7 @@ static void vector_defaults(void) {
     APP(", resends: %u, soft: %llu, hard: %llu", x.resends, (unsigned long long)x.soft,
         (unsigned long long)x.hard);
     D(delay);
-    APP(", arrival: %s }", x.arrival ? "true" : "false");
+    APP(", arrival: %s, reads: %u }", x.arrival ? "true" : "false", (unsigned)x.reads);
     assert(!strcmp(actual, expected));
     json_decref(root);
     x = fips_rekey_config_fmp();

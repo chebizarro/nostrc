@@ -79,5 +79,5 @@ bool fips_onlink_share_link(const fips_onlink_prefixes *set, fips_ip_addr a, fip
 }
 bool fips_onlink_read_suspect(size_t considered, const fips_onlink_prefixes *set)
 {
-    return set->discarded > 0 || (considered > 0 && set->count == 0);
+    return set->failed || (considered > 0 && set->count == 0);
 }

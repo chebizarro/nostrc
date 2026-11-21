@@ -198,7 +198,17 @@ static void link_rekey(void)
      * cycle stays. */
     uint8_t bad[FIPS_REKEY_WIRE_MAX];
     size_t bad_len = forged(&msg2, bad);
-    for (int i = 0; i < 3; ++i) refused(&f, bad, bad_len, FIPSD_METRIC_handshake_bad_state);
+    for (int i = 0; i < 8; ++i) refused(&f, bad, bad_len, FIPSD_METRIC_handshake_bad_state);
+    /* A different address can name the cleartext index, but after eight
+     * refused reads it is counted off_link without reading the msg2. */
+    tally budget = read_counters(&f);
+    hf_send(&f, f.alternate, bad, bad_len);
+    untouched(&f, &budget, FIPSD_METRIC_handshake_off_link);
+    /* Even a genuine reply from that address is unread; the peer's established
+     * link remains admissible and the genuine msg2 below still completes. */
+    budget = read_counters(&f);
+    hf_send(&f, f.alternate, msg2.bytes, msg2.len);
+    untouched(&f, &budget, FIPSD_METRIC_handshake_off_link);
     /* A reply under an index nothing holds. */
     uint8_t stray[FIPS_REKEY_WIRE_MAX];
     size_t stray_len = strayed(&msg2, stray);
@@ -231,10 +241,10 @@ static void link_rekey(void)
     hf_state end; hf_snapshot(&f, &end);
     assert(end.peers == 1 && end.legs == 0 && end.promoted == live.promoted && same_recv_key(&cut, &end));
     assert(end.info.link.value == live.info.link.value && end.indices == cut.indices && end.bindings == cut.bindings);
-    control_reports(&f, 3, 5);
+    control_reports(&f, 8, 5);
     fips_rekey_completed_clear(&done);
     hf_destroy(&f);
-    puts("link rekey: unauthenticated x3 = bad_state 3; stray, duplicate x2 before cutover, late x2 after = unknown_connection 5; nothing else moved");
+    puts("link rekey: unauthenticated x8 = bad_state 8; off-link x2 unread; stray, duplicate x2 before cutover, late x2 after = unknown_connection 5; nothing else moved");
 }
 int main(void)
 {

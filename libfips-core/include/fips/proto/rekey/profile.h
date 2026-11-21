@@ -99,6 +99,8 @@ typedef struct fips_rekey_profile {
     fips_rekey_dampen_at dampen_at;
     fips_rekey_select select;
     bool silence, setup_rtt, indexed;
+    /* Profile::arrived: replies carry input.on_link when true, uncapped otherwise. */
+    bool cap_replies;
     size_t floor, aad;
     const fips_rekey_session_keys *keys;
     bool (*initiate)(void *local, const fips_peer_key *, fips_rekey_index, fips_rekey_hs *,

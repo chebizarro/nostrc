@@ -23,7 +23,8 @@ fips_rekey_config fips_rekey_config_fmp(void) {
                                .soft = UINT64_C(1) << 62,
                                .hard = UINT64_MAX - (UINT64_C(1) << 20) + 1,
                                .delay = {2, 0},
-                               .arrival = false};
+                               .arrival = false,
+                               .reads = 8};
 }
 fips_rekey_config fips_rekey_config_fsp(void) {
     fips_rekey_config c = fips_rekey_config_fmp();

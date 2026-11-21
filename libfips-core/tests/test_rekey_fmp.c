@@ -177,16 +177,96 @@ static void forged_reply_unchanged(void) {
     rk_test_poll(&a, T);
     rk_test_packet s = rk_test_pop(&a, true, FIPS_REKEY_MSG_Msg1),
                    ack = rk_test_answer(&b.local, &s, 101);
-    uint8_t before[sizeof a.machine];
-    memcpy(before, &a.machine, sizeof before);
+    fips_rekey before = a.machine;
     ack.bytes[100] ^= 1;
     rk_test_recv(&a, T + 10, &ack);
+    ++before.cycle.attempt.misreads;
     assert(rk_test_rejected(&a, FIPS_REKEY_REASON_ReplyUnauthenticated) &&
-           !memcmp(before, &a.machine, sizeof before));
+           !memcmp(&before, &a.machine, sizeof before));
     ack.bytes[100] ^= 1;
     ack.bytes[5] ^= 4;
     rk_test_recv(&a, T + 11, &ack);
     assert(rk_test_rejected(&a, FIPS_REKEY_REASON_UnknownIndex));
+}
+/* A call counter proves off-link refusals bypass the DH/profile read. */
+static unsigned reply_reads;
+static bool (*uncapped_reply)(const fips_rekey_hs *, void *, const uint8_t *, size_t, fips_rekey_read *);
+static bool counted_reply(const fips_rekey_hs *hs, void *local, const uint8_t *bytes, size_t len,
+                          fips_rekey_read *out) {
+    ++reply_reads;
+    return uncapped_reply(hs, local, bytes, len, out);
+}
+static void forged_reply_budget(void) {
+    for (unsigned cap = 0; cap <= 8; cap += 8) {
+        pair(&rk_test_ik);
+        a.machine.params.cfg.reads = (uint8_t)cap;
+        uncapped_reply = a.profile.reply; a.profile.reply = counted_reply; reply_reads = 0;
+        rk_test_poll(&a, T);
+        rk_test_packet m1 = rk_test_pop(&a, true, FIPS_REKEY_MSG_Msg1);
+        rk_test_packet ack = rk_test_answer(&b.local, &m1, 101);
+        ack.bytes[100] ^= 1;
+        for (unsigned i = 0; i < cap + 3; ++i) {
+            rk_test_recv_on(&a, T + 10 + i, &ack, false, true, 2);
+            assert(rk_test_rejected(&a, i < cap ? FIPS_REKEY_REASON_ReplyUnauthenticated
+                                                : FIPS_REKEY_REASON_ReplyUnread));
+            assert(reply_reads == (i < cap ? i + 1 : cap));
+            assert(a.machine.cycle.attempt.misreads == (i < cap ? i + 1 : cap));
+            assert(VIEW(&a).cycle == FIPS_REKEY_Init && !VIEW(&a).pending.present);
+        }
+        /* On-link forgeries still count, saturating rather than wrapping. */
+        a.machine.cycle.attempt.misreads = UINT8_MAX;
+        rk_test_recv(&a, T + 30, &ack);
+        assert(reply_reads == cap + 1 && a.machine.cycle.attempt.misreads == UINT8_MAX);
+        ack.bytes[100] ^= 1;
+        rk_test_recv(&a, T + 31, &ack);
+        assert(reply_reads == cap + 2 && VIEW(&a).cycle == FIPS_REKEY_PendI);
+        rk_test_poll(&a, T + 32); flush(&a, &b, T + 40);
+        /* A new attempt has a new budget. */
+        rk_test_clear(&a);
+        fips_rekey_start_now(&a.machine, fips_test_instant(T * 2), &a.env, &a.out);
+        assert(VIEW(&a).cycle == FIPS_REKEY_Init && !a.machine.cycle.attempt.misreads);
+    }
+    /* Session acks are neither counted nor capped, even off-link at reads=0. */
+    pair(&rk_test_xk);
+    a.machine.params.cfg.reads = 0;
+    uncapped_reply = a.profile.reply; a.profile.reply = counted_reply; reply_reads = 0;
+    rk_test_poll(&a, T);
+    rk_test_packet setup = rk_test_pop(&a, true, FIPS_REKEY_MSG_Setup);
+    rk_test_recv(&b, T + 10, &setup);
+    rk_test_packet ack = rk_test_pop(&b, true, FIPS_REKEY_MSG_Ack);
+    ack.bytes[100] ^= 1;
+    for (unsigned i = 0; i < 10; ++i) {
+        rk_test_recv_on(&a, T + 20 + i, &ack, false, true, 2);
+        assert(rk_test_rejected(&a, FIPS_REKEY_REASON_ReplyUnauthenticated));
+    }
+    assert(reply_reads == 10 && !a.machine.cycle.attempt.misreads);
+    ack.bytes[100] ^= 1; rk_test_recv_on(&a, T + 40, &ack, false, true, 2);
+    assert(reply_reads == 11 && VIEW(&a).cycle == FIPS_REKEY_PendI);
+}
+static void redial_is_deferred_until_host_arms(void) {
+    for (unsigned young = 0; young < 2; ++young) {
+        pair(&rk_test_ik);
+        rk_test_packet msg = rk_test_fresh(&a.local, &b.local, 900 + young);
+        fips_rekey_msg1_read tok; assert(rk_test_token(&msg, &tok));
+        fips_rekey before = b.machine;
+        uint64_t at = young ? 5000 : T;
+        fips_rekey_input in = {.kind = FIPS_REKEY_IN_PeerMsg1, .tok = &tok,
+            .on_link = false, .reachable = true, .heard = true};
+        rk_test_step(&b, at, in);
+        assert(rk_test_count(&b, FIPS_REKEY_OUT_RedialRequested) == 1);
+        assert(!memcmp(&before, &b.machine, sizeof before));
+        assert(!memcmp(b.out.items[0].data.tok.ephemeral, tok.ephemeral, 32));
+        /* Refused admission leaves it fresh; only an armed redial records it. */
+        rk_test_step(&b, at + 1, in);
+        assert(rk_test_count(&b, FIPS_REKEY_OUT_RedialRequested) == 1);
+        fips_rekey_digest ephemeral; memcpy(ephemeral.bytes, tok.ephemeral, 32);
+        fips_rekey_note_redial(&b.machine, ephemeral);
+        rk_test_step(&b, at + 2, in);
+        assert(!rk_test_count(&b, FIPS_REKEY_OUT_RedialRequested));
+        in.on_link = true;
+        rk_test_step(&b, at + 3, in);
+        assert(rk_test_rejected(&b, FIPS_REKEY_REASON_AnsweredBefore));
+    }
 }
 static void frame_replay_and_short(void) {
     pair(&rk_test_ik);
@@ -420,6 +500,8 @@ void rekey_fmp_tests(void) {
     RUN(peer_k_not_own_k);
     RUN(restart_order);
     RUN(forged_reply_unchanged);
+    RUN(forged_reply_budget);
+    RUN(redial_is_deferred_until_host_arms);
     RUN(frame_replay_and_short);
     RUN(counter_floors_soft_hard);
     RUN(carry_preserves_anchors);

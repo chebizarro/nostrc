@@ -3,7 +3,7 @@
 Test-only, standalone binary crate for `nostrc-s50dj.2`. It calls the real
 `fips-core` protocol/identity/crypto implementations from
 <https://github.com/jmcorgan/fips> at
-`6aa80504baa0fa312b392009eea0e3e59fb6fe4c`, with **`test-hooks` and `ring`**.
+`64f5b4d482cfe14abad108ffc2d92128f7658311`, with **`test-hooks` and `ring`**.
 It is not part of nostrc's shipped build and is not a C implementation or FFI.
 All keys, signatures, epochs and entropy here are public **test fixtures**;
 never use them in a deployment.

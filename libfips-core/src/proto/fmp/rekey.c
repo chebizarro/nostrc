@@ -119,7 +119,7 @@ static bool is_probe(const uint8_t *p, size_t len) { (void)p; (void)len; return 
 const fips_rekey_profile fips_fmp_rekey_profile = {
     .layer = FIPS_REKEY_LAYER_Fmp, .messages = 2, .commit = FIPS_REKEY_COMMIT_AtAnswer,
     .initiator_cutover = FIPS_REKEY_OnProof, .responder_cutover = FIPS_REKEY_OnFrame,
-    .dampen_at = FIPS_REKEY_DAMPEN_Answer, .select = FIPS_REKEY_ByIndex, .indexed = true,
+    .dampen_at = FIPS_REKEY_DAMPEN_Answer, .select = FIPS_REKEY_ByIndex, .indexed = true, .cap_replies = true,
     .floor = FIPS_FRAMING_FMP_INNER_HEADER_SIZE, .aad = FIPS_FRAMING_FMP_ESTABLISHED_HEADER_SIZE,
     .keys = &fips_rekey_noise_keys, .initiate = initiate, .valid = valid, .answer = answer,
     .index = index_reply, .reply = reply, .complete = complete, .prompt = prompt,

@@ -221,7 +221,14 @@ nostrc_describe_test(FipsdControlTest OWNER fipsd TARGETS fipsd_control_test
 # read-only. No source checkout download or lockfile update is performed.
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(FIPSD_UPSTREAM_CONTROL_DIR "" CACHE PATH "Read-only pinned Rust FIPS checkout for fipsctl interop")
-set(FIPSD_FIPSCTL_EXECUTABLE "" CACHE FILEPATH "Already-built pinned Rust fipsctl (optional)")
+include("${CMAKE_CURRENT_SOURCE_DIR}/PinnedRustInterop.cmake")
+add_test(NAME FipsdPinnedRustDiscoveryTest COMMAND "${Python3_EXECUTABLE}" -B
+  "${CMAKE_CURRENT_SOURCE_DIR}/test_pinned_rust_interop.py")
+set_tests_properties(FipsdPinnedRustDiscoveryTest PROPERTIES TIMEOUT 30 LABELS "fips;unit;interop")
+nostrc_describe_test(FipsdPinnedRustDiscoveryTest OWNER fipsd
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/PinnedRustInterop.cmake"
+         "${CMAKE_CURRENT_SOURCE_DIR}/test_pinned_rust_interop.py"
+         "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/UPSTREAM.md")
 fipsd_unit_test(fipsd_test_tmpdir_run test_tmpdir_run.c)
 add_dependencies(fipsd_tests fipsd_test_tmpdir_run)
 add_test(NAME FipsdControlInteropTest COMMAND fipsd_test_tmpdir_run "/control.sock"
@@ -457,7 +464,7 @@ nostrc_describe_test(FipsdInteropUdpHarnessTest OWNER fipsd
 # Rust daemon. No Rust source is built or changed here: supply a binary built
 # with `cargo build --locked --release --bin fips` in a scratch CARGO_TARGET_DIR.
 # The longest socket the harness binds is Rust's `-ipv6tun` status sibling.
-set(FIPSD_UDP_INTEROP_RUST_BINARY "$ENV{FIPSD_UDP_INTEROP_RUST_BINARY}" CACHE FILEPATH "fips daemon built from the pinned Rust source (libfips-core/UPSTREAM.md)")
+
 foreach(family IN ITEMS 4 6)
   if(family EQUAL 4)
     set(_interop_test FipsdInteropUdpTest)
@@ -550,7 +557,7 @@ add_dependencies(fipsd_tests fipsd_tcp_test)
 add_test(NAME FipsdTcpTest COMMAND fipsd_tcp_test)
 set_tests_properties(FipsdTcpTest PROPERTIES TIMEOUT 90 LABELS "fips;transport" ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdTcpTest OWNER fipsd TARGETS fipsd_tcp_test)
-set(FIPSD_TCP_INTEROP_RUST_BINARY "$ENV{FIPSD_TCP_INTEROP_RUST_BINARY}" CACHE FILEPATH "Optional pinned Rust fips daemon for TCP interop")
+
 add_test(NAME FipsdTcpInteropTest COMMAND fipsd_test_tmpdir_run "/control.sock"
   "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tcp_interop.py"
   --fipsd "$<TARGET_FILE:fipsd>" --rust "${FIPSD_TCP_INTEROP_RUST_BINARY}")
@@ -688,7 +695,7 @@ add_dependencies(fipsd_tests fipsd_native_client_tool)
 # drives fipsd_native_client_tool at fipsd's native API and reads its answer
 # off the Rust daemon's flow. FIPSD_UDP_INTEROP_RUST_ECHO may name upstream's
 # native-echo client built from the pinned tree (Rust client -> fipsd).
-set(FIPSD_UDP_INTEROP_RUST_ECHO "$ENV{FIPSD_UDP_INTEROP_RUST_ECHO}" CACHE FILEPATH "Optional native-echo client built from the pinned Rust tree")
+
 foreach(_interop_test FipsdInteropUdpTest FipsdInteropUdpV6Test)
   set_tests_properties(${_interop_test} PROPERTIES ENVIRONMENT
     "FIPSD_WORKERS=2;FIPSD_NATIVE_CLIENT_TOOL=${CMAKE_CURRENT_BINARY_DIR}/fipsd_native_client_tool;FIPSD_UDP_INTEROP_RUST_ECHO=${FIPSD_UDP_INTEROP_RUST_ECHO}")

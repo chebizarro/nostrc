@@ -110,4 +110,26 @@ static void lifecycle(void)
     bool keep=false; for(size_t i=0;i<x.out.len;++i) if(x.actions[i].kind==FIPS_PATH_OUTPUT_Released) keep=x.actions[i].as.released.keep; CHECK(keep);
     in.as.present=true; step(&x,15,in); CHECK(x.b.set.len==2&&count(&x,FIPS_PATH_OUTPUT_Connect)==1);
 }
-void test_path_machine(void) { exchange(); disabled_and_rules(); switching(); lifecycle(); }
+static void timeout_diagnostic(void)
+{
+    fixture x; init(&x,true); capable(&x);
+    fips_path_liveness *l=&x.b.set.paths[0].live;
+    fips_path_liveness_new(l);
+    x.b.params.cfg.suspect=1;
+    uint32_t id;
+    CHECK(fips_path_liveness_send(l,AT(1),AT(401),27,x.b.entropy,&id));
+    /* A later RTT changes future timeouts, not this probe's diagnostic. */
+    fips_path_liveness_sample(l,AT(2),MS(1000),MS(30000),MS(60000));
+    l->data_at=AT(3);
+    step(&x,401,input(FIPS_PATH_INPUT_Poll,0,0));
+    CHECK(count(&x,FIPS_PATH_OUTPUT_State)==0);
+    step(&x,3001,input(FIPS_PATH_INPUT_Poll,0,0));
+    bool saw=false;
+    for(size_t i=0;i<x.out.len;++i) if(x.actions[i].kind==FIPS_PATH_OUTPUT_State) {
+        CHECK(x.actions[i].as.state.why==FIPS_PATH_WHY_Timeout);
+        CHECK(x.actions[i].as.state.has_timeout&&duration_eq(x.actions[i].as.state.timeout,MS(400)));
+        saw=true;
+    }
+    CHECK(saw);
+}
+void test_path_machine(void) { exchange(); disabled_and_rules(); switching(); lifecycle(); timeout_diagnostic(); }

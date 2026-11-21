@@ -6,7 +6,7 @@ extern "C" {
 #endif
 /* All value fields are read-only to callers. ops==NULL is an absent instant;
  * it is never passed to a host clock operation. Fixed storage; no allocation. */
-typedef struct fips_path_sent { uint32_t probe_id; fips_instant at, due; size_t len; } fips_path_sent;
+typedef struct fips_path_sent { uint32_t probe_id; fips_instant at, due; size_t len; fips_duration wait; } fips_path_sent;
 typedef enum fips_path_answer_kind { FIPS_PATH_AnswerNone, FIPS_PATH_InTime, FIPS_PATH_Late } fips_path_answer_kind;
 typedef struct fips_path_answer { fips_path_answer_kind kind; fips_path_sent sent; } fips_path_answer;
 typedef struct fips_path_sample { fips_instant at; fips_duration rtt; } fips_path_sample;
@@ -51,7 +51,8 @@ FIPS_CORE_API uint32_t fips_path_liveness_take_id(fips_path_liveness *l,fips_ent
 FIPS_CORE_API bool fips_path_liveness_send(fips_path_liveness *l,fips_instant at,fips_instant due,size_t len,fips_entropy entropy,uint32_t *id);
 FIPS_CORE_API void fips_path_liveness_lapse(fips_path_liveness *l,fips_path_sent sent);
 FIPS_CORE_API fips_path_answer fips_path_liveness_answer(fips_path_liveness *l,uint32_t id);
-FIPS_CORE_API bool fips_path_liveness_expire(fips_path_liveness *l,fips_instant now,bool overdue,fips_duration cap,bool *counted);
+/* wait, when non-NULL, receives the original sent timeout, not a deferred due. */
+FIPS_CORE_API bool fips_path_liveness_expire(fips_path_liveness *l,fips_instant now,bool overdue,fips_duration cap,bool *counted,fips_duration *wait);
 FIPS_CORE_API void fips_path_liveness_fresh(fips_path_liveness *l);
 FIPS_CORE_API void fips_path_liveness_thaw(fips_path_liveness *l);
 FIPS_CORE_API size_t fips_path_liveness_size(const fips_path_liveness *l,size_t full);

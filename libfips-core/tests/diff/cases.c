@@ -785,7 +785,7 @@ static bool rk_params(diff_context *ctx, const rekey_case *c) {
     if (x.floor_link.secs) { RD(floor_link); } else { RAPP(", floor_link: 0ns"); }
     if (x.floor_session.secs) { RD(floor_session); } else { RAPP(", floor_session: 0ns"); } RD(floor_cutover); RD(silence);
     RAPP(", resends: %u, soft: %" PRIu64 ", hard: %" PRIu64, x.resends, x.soft, x.hard);
-    RD(delay); RAPP(", arrival: %s }", x.arrival ? "true" : "false");
+    RD(delay); RAPP(", arrival: %s, reads: %u }", x.arrival ? "true" : "false", (unsigned)x.reads);
 #undef RD
 #undef RAPP
     return !strcmp(c->params_debug, actual) || diff_error(ctx, "rekey config mismatch");
