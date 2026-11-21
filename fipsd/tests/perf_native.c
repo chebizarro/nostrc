@@ -86,20 +86,25 @@ static void *drain(void *arg)
     while (!r->started) CHECK(!pthread_cond_wait(&r->cv, &r->mu));
     CHECK(!pthread_mutex_unlock(&r->mu));
     size_t cap = 65536; uint8_t *seen = calloc(cap, 1); CHECK(seen);
+    uint8_t expected[PAYLOAD]; memset(expected, 0xa5, sizeof expected);
     for (;;) {
         uint64_t current = now();
         if (current >= r->deadline) break;
-        uint64_t remaining = r->deadline - current;
-        struct pollfd fd = {.fd=r->fd, .events=POLLIN};
-        int ms = (int)((remaining + 999999) / 1000000);
-        int rc = poll(&fd, 1, ms);
-        if (rc < 0 && errno == EINTR) continue;
-        CHECK(rc >= 0);
-        if (!rc || now() >= r->deadline) break;
         uint8_t bytes[PAYLOAD + 1];
-        /* Non-blocking: readable may mean only part of a framed datagram. */
+        /* Drain first: poll only after EAGAIN, not once per queued datagram.
+         * The non-blocking public API retains partial frames across EAGAIN. */
         ssize_t len = fips_native_recv(r->stream, bytes, sizeof(bytes));
-        if (len == -EAGAIN || len == -EINTR) continue;
+        if (len == -EAGAIN) {
+            uint64_t remaining = r->deadline - current;
+            struct pollfd fd = {.fd=r->fd, .events=POLLIN};
+            int ms = (int)((remaining + 999999) / 1000000);
+            int rc = poll(&fd, 1, ms);
+            if (rc < 0 && errno == EINTR) continue;
+            CHECK(rc >= 0);
+            if (!rc) break;
+            continue;
+        }
+        if (len == -EINTR) continue;
         CHECK(len == PAYLOAD);
         uint64_t seq; memcpy(&seq, bytes, sizeof(seq));
         CHECK(seq < UINT64_C(1000000000));
@@ -115,8 +120,8 @@ static void *drain(void *arg)
             uint64_t timestamp; memcpy(&timestamp, bytes + sizeof(seq), sizeof(timestamp));
             r->samples[r->sample_count++] = now() - timestamp;
         }
-        for (size_t i = sizeof(seq) + (r->paced ? sizeof(uint64_t) : 0); i < PAYLOAD; ++i)
-            CHECK(bytes[i] == 0xa5);
+        size_t checked = sizeof(seq) + (r->paced ? sizeof(uint64_t) : 0);
+        CHECK(memcmp(bytes + checked, expected + checked, PAYLOAD - checked) == 0);
         ++r->received;
         if (seq > r->highest) r->highest = seq;
     }

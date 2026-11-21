@@ -1196,43 +1196,13 @@ static int unix_addr(const char *path, struct sockaddr_un *addr)
     memcpy(addr->sun_path, path, strlen(path) + 1);
     return 0;
 }
-/* The control socket's parent policy: a parent the daemon created or a
- * canonical runtime directory is secured; shared or custom parents are left alone. */
-static int private_parent(const char *path, gid_t gid, char *err, size_t cap)
-{
-    char parent[PATH_MAX];
-    snprintf(parent, sizeof parent, "%s", path);
-    char *slash = strrchr(parent, '/');
-    if (!slash || slash == parent) return 0;
-    *slash = 0;
-    bool created = !is_dir(parent);
-    if (created) {
-        for (char *p = parent + (parent[0] == '/'); ; ++p) {
-            if (*p != '/' && *p) continue;
-            char saved = *p; *p = 0;
-            if (mkdir(parent, FIPSD_SOCKET_DIR_MODE) != 0 && errno != EEXIST) return -1;
-            struct stat st;
-            /* Ancestors may be symlinks (macOS /var -> private/var), as with upstream's
-             * create_dir_all; the socket directory itself must be a real directory. */
-            if ((saved ? stat(parent, &st) : lstat(parent, &st)) != 0 || !S_ISDIR(st.st_mode)) { errno = ENOTDIR; return -1; }
-            *p = saved;
-            if (!saved) break;
-        }
-    }
-    char xdg[PATH_MAX] = "";
-    const char *env = getenv("XDG_RUNTIME_DIR");
-    if (env && *env) snprintf(xdg, sizeof xdg, "%s/fips", env);
-    bool canonical = !strcmp(parent, "/run/fips") || !strcmp(parent, "/var/run/fips") || (*xdg && !strcmp(parent, xdg));
-    if (created || canonical) return fipsd_privilege_secure_private_dir(parent, gid, err, cap);
-    return 0;
-}
 static int bind_listener(fipsd_native_api *a)
 {
     char err[512] = "";
     gid_t gid = getegid();
     int group = fipsd_privilege_resolve_group(FIPSD_SOCKET_GROUP, &gid, err, sizeof err);
     if (group < 0) { FIPSD_ERROR(MODULE, "%s", err); return -1; }
-    if (private_parent(a->path, gid, err, sizeof err) != 0) {
+    if (fipsd_privilege_socket_parent(a->path, gid, err, sizeof err) != 0) {
         FIPSD_ERROR(MODULE, "cannot secure socket parent: %s %s", err, strerror(errno)); return -1;
     }
     struct sockaddr_un address;
