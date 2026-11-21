@@ -57,26 +57,28 @@ static void stop_and_answers(void)
     }
     fips_path_liveness_new(&l); CHECK(fips_path_liveness_send(&l,AT(0),AT(400),27,e,&id));
     CHECK(fips_path_liveness_send(&l,AT(1),AT(401),27,e,&second)); CHECK(instant_eq(l.quiet,0));
-    CHECK(!fips_path_liveness_expire(&l,AT(400),true,MS(3000),&counted));
-    CHECK(fips_path_liveness_expire(&l,AT(400),false,MS(3000),&counted)&&counted);
+    CHECK(!fips_path_liveness_expire(&l,AT(400),true,MS(3000),&counted,NULL));
+    CHECK(fips_path_liveness_expire(&l,AT(400),false,MS(3000),&counted,NULL)&&counted);
     CHECK(fips_path_liveness_answer(&l,id).kind==FIPS_PATH_Late); CHECK(fips_path_liveness_answer(&l,second).kind==FIPS_PATH_InTime&&l.misses==0);
     /* Old probes after leaving Dead are not misses, but can still match. */
     fips_path_liveness_new(&l); CHECK(fips_path_liveness_send(&l,AT(0),AT(400),27,e,&id)); CHECK(fips_path_liveness_send(&l,AT(1),AT(401),27,e,&second));
     fips_path_liveness_fresh(&l); fips_path_liveness_thaw(&l); CHECK(l.has_since);
-    CHECK(fips_path_liveness_expire(&l,AT(400),false,MS(3000),&counted)&&!counted&&l.misses==0);
+    CHECK(fips_path_liveness_expire(&l,AT(400),false,MS(3000),&counted,NULL)&&!counted&&l.misses==0);
     CHECK(fips_path_liveness_answer(&l,second).kind==FIPS_PATH_InTime); CHECK(fips_path_liveness_answer(&l,id).kind==FIPS_PATH_Late);
     CHECK(fips_path_liveness_send(&l,AT(500),AT(900),27,e,&id)&&!l.has_since);
-    CHECK(fips_path_liveness_expire(&l,AT(900),false,MS(3000),&counted)&&counted&&l.misses==1);
+    CHECK(fips_path_liveness_expire(&l,AT(900),false,MS(3000),&counted,NULL)&&counted&&l.misses==1);
     /* Out-of-order timely answers prevent older misses, including wrap. */
     fips_path_liveness_new(&l); l.has_next_id=true; l.next_id=UINT32_MAX;
     CHECK(fips_path_liveness_send(&l,AT(0),AT(400),27,e,&id)&&id==UINT32_MAX);
     CHECK(fips_path_liveness_send(&l,AT(1),AT(401),27,e,&second)&&second==0);
     CHECK(fips_path_liveness_answer(&l,second).kind==FIPS_PATH_InTime);
-    CHECK(fips_path_liveness_expire(&l,AT(400),false,MS(3000),&counted)&&!counted);
+    CHECK(fips_path_liveness_expire(&l,AT(400),false,MS(3000),&counted,NULL)&&!counted);
     /* Only data after sending defers; boundary is the original send + cap. */
     fips_path_liveness_new(&l); CHECK(fips_path_liveness_send(&l,AT(0),AT(400),27,e,&id)); l.data_at=AT(1);
-    CHECK(!fips_path_liveness_expire(&l,AT(400),false,MS(3000),&counted)&&instant_eq(l.ring[0].due,3000));
-    l.data_at=AT(2999); CHECK(fips_path_liveness_expire(&l,AT(3000),false,MS(3000),&counted)&&counted);
+    CHECK(!fips_path_liveness_expire(&l,AT(400),false,MS(3000),&counted,NULL)&&instant_eq(l.ring[0].due,3000));
+    fips_duration wait={0};
+    l.data_at=AT(2999); CHECK(fips_path_liveness_expire(&l,AT(3000),false,MS(3000),&counted,&wait)&&counted);
+    CHECK(duration_eq(wait,MS(400))); /* Held verdict does not change sent timeout. */
 }
 static void mtu(void)
 {
@@ -85,7 +87,7 @@ static void mtu(void)
     for(unsigned i=0;i<5;++i) {
         CHECK(fips_path_liveness_size(&l,1200)==lengths[i]);
         CHECK(fips_path_liveness_send(&l,AT(i*1000),AT(i*1000+400),lengths[i],e,&id));
-        CHECK(fips_path_liveness_expire(&l,AT(i*1000+400),false,MS(3000),&counted));
+        CHECK(fips_path_liveness_expire(&l,AT(i*1000+400),false,MS(3000),&counted,NULL));
     }
     fips_path_liveness_fresh(&l); CHECK(fips_path_liveness_size(&l,1200)==1200);
     CHECK(fips_path_liveness_prove(&l,600)); size_t n; CHECK(fips_path_liveness_seek_size(&l,1200,AT(0),&n)&&n==1200);

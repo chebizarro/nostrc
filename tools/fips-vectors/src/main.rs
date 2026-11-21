@@ -15,7 +15,7 @@ use std::{
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
-const PIN: &str = "6aa80504baa0fa312b392009eea0e3e59fb6fe4c";
+const PIN: &str = "64f5b4d482cfe14abad108ffc2d92128f7658311";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const SEEDS: [u64; 3] = [0, 0x0123_4567_89ab_cdef, u64::MAX];
 const EPOCH: [u8; 8] = [0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef];

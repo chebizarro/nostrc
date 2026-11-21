@@ -49,13 +49,15 @@ static fips_instant stopped(fips_path_bundle *b,size_t i,fips_instant now)
     }
     return l->stop.free;
 }
-static void note(const fips_path_bundle *b,size_t i,fips_path_state from,fips_path_why why,fips_path_outputs *o)
+static void note(const fips_path_bundle *b,size_t i,fips_path_state from,fips_path_why why,const fips_duration *timeout,fips_path_outputs *o)
 {
     const fips_peer_path *p=&b->set.paths[i];
     fips_path_output v={.kind=FIPS_PATH_OUTPUT_State,.to=pair(p)};
-    v.as.state.path_id=p->path_id; v.as.state.from=from; v.as.state.next=p->state; v.as.state.why=why; push(o,v);
+    v.as.state.path_id=p->path_id; v.as.state.from=from; v.as.state.next=p->state; v.as.state.why=why;
+    if(timeout) { v.as.state.has_timeout=true; v.as.state.timeout=*timeout; }
+    push(o,v);
 }
-static void shift(fips_path_bundle *b,size_t i,fips_path_state next,fips_instant now,fips_path_why why,fips_path_outputs *o)
+static void shift(fips_path_bundle *b,size_t i,fips_path_state next,fips_instant now,fips_path_why why,const fips_duration *timeout,fips_path_outputs *o)
 {
     fips_path_state from=state(b,i); bool active=b->set.active==i;
     if(next==FIPS_PATH_Dead) stopped(b,i,now);
@@ -68,11 +70,11 @@ static void shift(fips_path_bundle *b,size_t i,fips_path_state next,fips_instant
         fips_path_liveness_clear(l); l->next_at=fips_deadline(now,b->params.cfg.standby_interval);
         fips_path_liveness_halt(l,now,active);
     }
-    note(b,i,from,why,o);
+    note(b,i,from,why,timeout,o);
 }
 static void revive(fips_path_bundle *b,size_t i,fips_instant now,fips_path_why why,fips_path_outputs *o)
 {
-    shift(b,i,FIPS_PATH_Probing,now,why,o); fips_path_liveness *l=&b->set.paths[i].live;
+    shift(b,i,FIPS_PATH_Probing,now,why,NULL,o); fips_path_liveness *l=&b->set.paths[i].live;
     if(why==FIPS_PATH_WHY_Probed) { fips_path_liveness_resume(l); l->urgent=true; }
     else l->next_at=(fips_instant){0};
 }
@@ -117,7 +119,7 @@ static void enlist(fips_path_bundle *b,size_t slot,bool retry,const fips_path_en
     size_t i=admit(b,to,env,o); fips_path_candidates_mark(&b->table,slot,FIPS_PATH_RuleNone);
     if(i==FIPS_PATH_NONE) return;
     if(env->facts->oriented(env->facts->ctx,to.transport)) b->set.paths[i].live.connect=FIPS_PATH_Down;
-    note(b,i,FIPS_PATH_NoState,FIPS_PATH_WHY_Candidate,o);
+    note(b,i,FIPS_PATH_NoState,FIPS_PATH_WHY_Candidate,NULL,o);
 }
 static void enlists(fips_path_bundle *b,uint8_t mask,const fips_path_env *env,fips_path_outputs *o)
 {
@@ -182,7 +184,7 @@ static void probe(fips_path_bundle *b,fips_instant now,fips_path_ref from,fips_p
             i=admit(b,from,env,o); if(i==FIPS_PATH_NONE) return; added=true;
         }
         fips_path_set_learn_peer(&b->set,i,msg.path_id);
-        if(added) note(b,i,FIPS_PATH_NoState,FIPS_PATH_WHY_Probed,o);
+        if(added) note(b,i,FIPS_PATH_NoState,FIPS_PATH_WHY_Probed,NULL,o);
     }
     if(!added&&state(b,i)==FIPS_PATH_Dead&&revives(b,i,env)==FIPS_PATH_RuleNone) revive(b,i,now,FIPS_PATH_WHY_Probed,o);
     attribute(b,i,frame,fp,fl,now); flag(b,i,(msg.flags&FIPS_PATH_ACTIVE)!=0);
@@ -225,13 +227,13 @@ static void ack(fips_path_bundle *b,fips_instant now,fips_path_ref from,fips_pat
     }
     if(changed) proven(b,i,o);
     fips_path_set_mark_acked(&b->set,i); flag(b,i,(msg.flags&FIPS_PATH_ACTIVE)!=0); follow(b,i,from,env,o);
-    if(from_state!=FIPS_PATH_Live) shift(b,i,FIPS_PATH_Live,now,FIPS_PATH_WHY_Answered,o);
+    if(from_state!=FIPS_PATH_Live) shift(b,i,FIPS_PATH_Live,now,FIPS_PATH_WHY_Answered,NULL,o);
 }
 static void closed(fips_path_bundle *b,fips_instant now,fips_path_ref from,fips_path_close msg,fips_path_outputs *o)
 {
     size_t i=ours(b,msg.path_id);
     if(i==FIPS_PATH_NONE) { refuse(o,from,FIPS_PATH_REFUSAL_Unknown,FIPS_PATH_RuleNone); return; }
-    if(state(b,i)==FIPS_PATH_Live||state(b,i)==FIPS_PATH_Suspect) shift(b,i,FIPS_PATH_Dead,now,FIPS_PATH_WHY_Closed,o);
+    if(state(b,i)==FIPS_PATH_Live||state(b,i)==FIPS_PATH_Suspect) shift(b,i,FIPS_PATH_Dead,now,FIPS_PATH_WHY_Closed,NULL,o);
 }
 static void farewell(const fips_path_bundle *b,fips_transport_id t,fips_path_close_reason reason,fips_path_outputs *o)
 {
@@ -253,7 +255,7 @@ static void carrier(fips_path_bundle *b,fips_instant now,fips_transport_id t,boo
 {
     if(!up) farewell(b,t,FIPS_PATH_CarrierLost,o);
     for(size_t i=0;i<b->set.len;++i) if(b->set.paths[i].transport_id.value==t.value) {
-        if(state(b,i)==FIPS_PATH_Live&&!up) shift(b,i,FIPS_PATH_Suspect,now,FIPS_PATH_WHY_Carrier,o);
+        if(state(b,i)==FIPS_PATH_Live&&!up) shift(b,i,FIPS_PATH_Suspect,now,FIPS_PATH_WHY_Carrier,NULL,o);
         else if(state(b,i)==FIPS_PATH_Dead&&up&&again(b,i,env)==FIPS_PATH_RuleNone) revive(b,i,now,FIPS_PATH_WHY_Returned,o);
     }
     if(up) { uint8_t mask=fips_path_candidates_release(&b->table,t); enlists(b,mask,env,o); }
@@ -278,7 +280,7 @@ static void connected(fips_path_bundle *b,fips_instant now,fips_path_ref to,bool
     if(!fips_path_liveness_settle(l,ok)) return;
     fips_path_liveness_rebase(l,now,ok);
     if(ok) { l->urgent=true; return; }
-    if(state(b,i)==FIPS_PATH_Probing&&l->misses>=b->params.cfg.discovery) { shift(b,i,FIPS_PATH_Dead,now,FIPS_PATH_WHY_Connect,o); return; }
+    if(state(b,i)==FIPS_PATH_Probing&&l->misses>=b->params.cfg.discovery) { shift(b,i,FIPS_PATH_Dead,now,FIPS_PATH_WHY_Connect,NULL,o); return; }
     l->next_at=fips_deadline(now,interval(b,i));
 }
 static void rivals(const fips_path_bundle *b,const fips_path_env *env,fips_path_rival field[8])
@@ -388,7 +390,7 @@ static void trips(fips_path_bundle *b,fips_path_outputs *o)
 {
     for(size_t i=0;i<b->set.len;++i) {
         fips_instant at=b->set.paths[i].live.trip; b->set.paths[i].live.trip=(fips_instant){0};
-        if(pt_has(at)&&trippable(b,i)) shift(b,i,FIPS_PATH_Dead,at,FIPS_PATH_WHY_AuthLimit,o);
+        if(pt_has(at)&&trippable(b,i)) shift(b,i,FIPS_PATH_Dead,at,FIPS_PATH_WHY_AuthLimit,NULL,o);
     }
 }
 static void lapse(fips_path_bundle *b,fips_path_sent sent)
@@ -397,14 +399,14 @@ static void expire(fips_path_bundle *b,fips_instant now,bool overdue,fips_path_o
 {
     const fips_path_config *cfg=&b->params.cfg;
     for(size_t i=0;i<b->set.len;++i) {
-        bool counted;
-        while(fips_path_liveness_expire(&b->set.paths[i].live,now,overdue,cfg->verdict_cap,&counted)) {
+        bool counted; fips_duration wait;
+        while(fips_path_liveness_expire(&b->set.paths[i].live,now,overdue,cfg->verdict_cap,&counted,&wait)) {
             if(!counted) continue;
             fips_path_state st=state(b,i); fips_path_liveness *l=&b->set.paths[i].live;
             if(st==FIPS_PATH_Live) fips_path_liveness_fold(l,false);
-            if(st==FIPS_PATH_Live&&l->misses>=cfg->suspect) shift(b,i,FIPS_PATH_Suspect,now,FIPS_PATH_WHY_Timeout,o);
-            else if(st==FIPS_PATH_Suspect&&l->misses>=cfg->retire) shift(b,i,FIPS_PATH_Dead,now,FIPS_PATH_WHY_Retired,o);
-            else if(st==FIPS_PATH_Probing&&l->misses>=cfg->discovery) shift(b,i,FIPS_PATH_Dead,now,FIPS_PATH_WHY_Exhausted,o);
+            if(st==FIPS_PATH_Live&&l->misses>=cfg->suspect) shift(b,i,FIPS_PATH_Suspect,now,FIPS_PATH_WHY_Timeout,&wait,o);
+            else if(st==FIPS_PATH_Suspect&&l->misses>=cfg->retire) shift(b,i,FIPS_PATH_Dead,now,FIPS_PATH_WHY_Retired,&wait,o);
+            else if(st==FIPS_PATH_Probing&&l->misses>=cfg->discovery) shift(b,i,FIPS_PATH_Dead,now,FIPS_PATH_WHY_Exhausted,&wait,o);
         }
     }
     fips_path_sent sent; bool round;
@@ -544,7 +546,7 @@ fips_status fips_path_bundle_step(fips_path_bundle *b,fips_instant now,const fip
     case FIPS_PATH_INPUT_Carrier: carrier(b,now,to.transport,input->as.up,env,o); break;
     case FIPS_PATH_INPUT_SendFailed: {
         size_t i=fips_path_set_find(&b->set,to.transport,&to.addr);
-        if(state(b,i)==FIPS_PATH_Live) shift(b,i,FIPS_PATH_Suspect,now,FIPS_PATH_WHY_Unreachable,o);
+        if(state(b,i)==FIPS_PATH_Live) shift(b,i,FIPS_PATH_Suspect,now,FIPS_PATH_WHY_Unreachable,NULL,o);
         break;
     }
     case FIPS_PATH_INPUT_Present:
@@ -628,7 +630,7 @@ fips_status fips_path_bundle_renew(fips_path_bundle *b,fips_instant now,const fi
     stays.path_id=id; stays.peer_id=0; stays.state=FIPS_PATH_Live; stays.acked=true; stays.dead_since=(fips_instant){0};
     b->scope=fips_path_rules_link(env->facts,stays.transport_id,&stays.addr);
     fips_path_set_new(&b->set); b->set.paths[0]=stays; b->set.len=1; b->set.active=0;
-    note(b,0,FIPS_PATH_NoState,FIPS_PATH_WHY_Renewed,o);
+    note(b,0,FIPS_PATH_NoState,FIPS_PATH_WHY_Renewed,NULL,o);
     b->capable=false; b->origin=now; b->peer_active=0; b->original=id;
     fips_path_candidates_new(&b->table); fips_path_capability_new(&b->record);
     b->eligible=false; b->has_frame=false; b->orphaned=false; b->dwell_at=(fips_instant){0}; b->left=0; return FIPS_OK;

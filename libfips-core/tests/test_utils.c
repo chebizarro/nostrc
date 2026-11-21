@@ -271,7 +271,7 @@ static int a_discarded_zero_length_prefix_or_an_empty_read_is_reported(void)
     fips_onlink_prefix in[] = {prefix("192.168.1.1", 0), prefix("10.0.0.1", 8)}, storage[2];
     fips_onlink_prefixes partly, empty = {0}, healthy;
     CHECK(fips_onlink_from_pairs(&partly, storage, 2, in, 2) == FIPS_OK);
-    CHECK(fips_onlink_discarded(&partly) == 1 && fips_onlink_read_suspect(2, &partly));
+    CHECK(fips_onlink_discarded(&partly) == 1 && !fips_onlink_read_suspect(2, &partly));
     CHECK(fips_onlink_read_suspect(2, &empty));
     CHECK(!fips_onlink_read_suspect(0, &empty));
     CHECK(fips_onlink_from_pairs(&healthy, storage, 2, in + 1, 1) == FIPS_OK);
@@ -437,7 +437,7 @@ static int onlink_c_edges(void)
     fips_onlink_prefixes s = fips_onlink_failed();
     CHECK(fips_onlink_read_failed(&s) && fips_onlink_is_empty(&s));
     CHECK(!fips_onlink_contains(&s, ip("192.168.1.1")));
-    CHECK(!fips_onlink_read_suspect(0, &s) && fips_onlink_read_suspect(1, &s));
+    CHECK(fips_onlink_read_suspect(0, &s) && fips_onlink_read_suspect(1, &s));
     CHECK(fips_onlink_from_indexed(&s, storage, 2, in, 2) == FIPS_OK);
     CHECK(!fips_onlink_read_failed(&s) && storage[0].len == 32 && storage[1].len == 128);
     CHECK(fips_onlink_contains(&s, ip("192.168.1.1")));

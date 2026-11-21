@@ -1,8 +1,10 @@
 # Configuration reference snapshots
 
 Oracle: the supplied upstream `docs/reference/configuration.md` and
-`src/config/{node,transport,peer,gateway,floors}.rs` at the compatibility pin
-`6aa80504baa0fa312b392009eea0e3e59fb6fe4c` (see libfips-core/UPSTREAM.md).
+`src/config/{node,transport,peer,gateway,floors}.rs` at the original compatibility pin
+`6aa80504baa0fa312b392009eea0e3e59fb6fe4c`. The current pin is in
+libfips-core/UPSTREAM.md; wave26 deliberately retains the C default-off
+multipath goldens until host/default adoption (`nostrc-qtpj9.6`).
 **No Rust binary dump was used.** `cli-fips.md` exposes neither a check-config
 nor effective-config dump flag. Goldens were assembled independently from the
 reference's tables and Ruby/Psych-parsed fixture overrides, not captured from

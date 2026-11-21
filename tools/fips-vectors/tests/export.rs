@@ -69,7 +69,7 @@ fn check_descriptors(v: &Value, all: &BTreeMap<String, Vec<u8>>, refs: &mut Vec<
                 let name = file.as_str().unwrap();
                 let bytes = &all[name];
                 refs.push(name.into());
-                assert_eq!(o["pin"], "6aa80504baa0fa312b392009eea0e3e59fb6fe4c");
+                assert_eq!(o["pin"], "64f5b4d482cfe14abad108ffc2d92128f7658311");
                 assert_eq!(o["generator_version"], env!("CARGO_PKG_VERSION"));
                 assert_eq!(o["length"], bytes.len());
                 assert_eq!(o["hex"], hex::encode(bytes));
@@ -99,7 +99,7 @@ fn real_cli_is_deterministic_and_matches_checked_in_oracle() {
     ] {
         let v: Value = serde_json::from_slice(&a[&format!("{family}.json")]).unwrap();
         assert_eq!(v["family"], family);
-        assert_eq!(v["pin"], "6aa80504baa0fa312b392009eea0e3e59fb6fe4c");
+        assert_eq!(v["pin"], "64f5b4d482cfe14abad108ffc2d92128f7658311");
         assert_eq!(v["generator_version"], env!("CARGO_PKG_VERSION"));
         check_descriptors(&v, &a, &mut refs);
     }
@@ -187,7 +187,7 @@ fn legacy_model_fixture_matrix_is_complete_and_provenance_checked() {
                 let name = format!("{release}-{profile}-{role}.json");
                 let d: Value = serde_json::from_slice(&all[&name]).unwrap();
                 assert_eq!(d["schema_version"], 1);
-                assert_eq!(d["pin"], "6aa80504baa0fa312b392009eea0e3e59fb6fe4c");
+                assert_eq!(d["pin"], "64f5b4d482cfe14abad108ffc2d92128f7658311");
                 assert_eq!(d["generator"], "fips-vectors");
                 assert_eq!(d["generator_version"], "0.1.0");
                 assert_eq!(d["family"], "rekey-legacy");

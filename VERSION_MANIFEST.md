@@ -70,6 +70,16 @@ nostrc-8hvs6.2: fipsd stays 0.1.0 Unreleased; relay-backed rendezvous, private d
 
 # Component Version Manifest
 
+nostrc-f66sr.11 / nostrc-u19cz.5/.6: libfips-core stays **0.1.0 Unreleased**;
+fipsd stays at its already-declared **0.1.1 Unreleased** (latest release 0.1.0).
+Rekey cap/config/arrival/redial and path-timeout metadata APIs fold into the
+initial unreleased MINOR-class core port (including the path-expire signature
+extension; no binary ABI compatibility claim); refused-read cap is security/PATCH-class,
+selective scratch wiping is PATCH-class performance, and the host comment is
+internal-only. Existing FMP/peer APIs remain until settlement-host adoption.
+Exporter pin/fixtures, durable pinned Rust interop discovery and interop CI are test-only. No published version/tag or
+libgo/libfipsnative change. See libfips-core/UPSTREAM.md for triage and limits.
+
 nostrc-vxvqx (metadesk md-uzf): fipsd 0.1.0 -> 0.1.1, PATCH-class packaging correction after the published `fipsd-v0.1.0`. The shipped example configuration (`packaging/common/fips.yaml`, installed as `fips.yaml.example` and seeded to `/etc/fips/fips.yaml`; `packaging/windows/fips.yaml`, copied by `install-service.ps1`) showed a commented peer with peer-level `address`/`transport`, which the daemon rejects; it now shows `addresses: [{transport, addr}]` (`src/config/peer.c`). Comment-only change to the shipped file; the parser, schema, CLI, wire format and control output are unchanged. `PKGBUILD`, `fipsd.spec` and `debian/changelog` follow the declared version; no release or tag (Latest release stays 0.1.0). `FipsdConfigExample_{common,windows}` are test-only. libfipsnative, fipsctl, fipstop, fips-gateway, fips-ble-agent, libfips-core and libgo unchanged.
 nostrc-wah4a (metadesk md-ebm): nip5f stays Unversioned (no authoritative version); PATCH-class client correction. `sock_client.c` decodes every response with the JSON parser (id echo, `error` null, typed `result`) and returns string results unescaped, so plaintexts containing quotes (every NIP-17 seal), backslashes, controls or `\uXXXX` round-trip; peer/pubkey request parameters are JSON-escaped. Public header, function signatures and wire protocol are unchanged; `sign_event`/`list_public_keys` results are returned as compact re-serialized JSON and must be an object/array. The loopback test case is test-only.
 

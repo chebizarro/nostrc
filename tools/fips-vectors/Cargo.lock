@@ -1088,7 +1088,7 @@ checksum = "09ded33109e99472f809cb7495544506eea45e366725dacf2a383e184f660456"
 [[package]]
 name = "fips-core"
 version = "0.0.0"
-source = "git+https://github.com/jmcorgan/fips?rev=64f5b4d482cf#64f5b4d482cfe14abad108ffc2d92128f7658311"
+source = "git+https://github.com/jmcorgan/fips?rev=64f5b4d482cfe14abad108ffc2d92128f7658311#64f5b4d482cfe14abad108ffc2d92128f7658311"
 dependencies = [
  "bech32 0.12.0",
  "chacha20poly1305",
@@ -1110,7 +1110,7 @@ dependencies = [
 [[package]]
 name = "fips-mesh"
 version = "0.6.0-dev"
-source = "git+https://github.com/jmcorgan/fips?rev=64f5b4d482cf#64f5b4d482cfe14abad108ffc2d92128f7658311"
+source = "git+https://github.com/jmcorgan/fips?rev=64f5b4d482cfe14abad108ffc2d92128f7658311#64f5b4d482cfe14abad108ffc2d92128f7658311"
 dependencies = [
  "arc-swap",
  "bluer",

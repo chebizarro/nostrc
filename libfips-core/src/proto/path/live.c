@@ -82,7 +82,7 @@ bool fips_path_liveness_send(fips_path_liveness *l,fips_instant at,fips_instant 
     uint32_t probe=fips_path_liveness_take_id(l,e);
     if(!pt_has(l->quiet)) l->quiet=at;
     l->has_last=true; l->last=len;
-    l->ring[slot]=(fips_path_sent){probe,at,due,len}; *id=probe; return true;
+    l->ring[slot]=(fips_path_sent){probe,at,due,len,pt_since(due,at)}; *id=probe; return true;
 }
 void fips_path_liveness_lapse(fips_path_liveness *l,fips_path_sent sent)
 { memmove(l->late,l->late+1,3*sizeof(l->late[0])); l->late[3]=sent; }
@@ -106,7 +106,7 @@ fips_path_answer fips_path_liveness_answer(fips_path_liveness *l,uint32_t id)
     return (fips_path_answer){0};
 }
 static bool passed(fips_instant due,fips_instant now,bool overdue) { int c=pt_cmp(due,now); return c<0||(!overdue&&c==0); }
-bool fips_path_liveness_expire(fips_path_liveness *l,fips_instant now,bool overdue,fips_duration cap,bool *counted)
+bool fips_path_liveness_expire(fips_path_liveness *l,fips_instant now,bool overdue,fips_duration cap,bool *counted,fips_duration *wait)
 {
     for(size_t i=0;i<8;++i) {
         fips_path_sent sent=l->ring[i];
@@ -119,7 +119,7 @@ bool fips_path_liveness_expire(fips_path_liveness *l,fips_instant now,bool overd
         if((!l->has_epoch||!p_after(l->epoch,sent.probe_id))&&sent.len>27) l->fallen=true;
         bool c=counts(l,sent.probe_id)&&(!l->has_answered||!p_after(l->answered,sent.probe_id));
         if(c) l->misses=p_inc(l->misses);
-        *counted=c; return true;
+        *counted=c; if(wait) *wait=sent.wait; return true;
     }
     return false;
 }

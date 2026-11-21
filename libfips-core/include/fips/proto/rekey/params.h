@@ -17,6 +17,8 @@ typedef struct fips_rekey_config {
     uint64_t soft, hard;
     fips_duration delay;
     bool arrival;
+    /* Refused IK reply reads per attempt before off-link replies are unread. */
+    uint8_t reads;
 } fips_rekey_config;
 typedef enum fips_rekey_params_error {
     FIPS_REKEY_PARAMS_OK,

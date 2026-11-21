@@ -41,7 +41,8 @@ typedef struct fips_path_output {
         struct { fips_link_message_type type; union { fips_path_probe probe; fips_path_ack ack; fips_path_close close; } as; } send;
         struct { fips_path_ref from; void *driver_slot; } moved;
         struct { void *driver_slot; bool keep; } released;
-        struct { uint32_t path_id; fips_path_state from,next; fips_path_why why; } state;
+        /* Timeout metadata is diagnostic only, absent for non-expiry changes. */
+        struct { uint32_t path_id; fips_path_state from,next; fips_path_why why; bool has_timeout; fips_duration timeout; } state;
         struct { fips_path_refusal why; fips_path_rule rule; } refused;
         struct { bool has_from; fips_path_ref from; fips_path_switch why; } switched;
         size_t mtu;
