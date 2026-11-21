@@ -738,6 +738,14 @@ sys.exit(int(os.environ['OUTER_STATUS']))
         self.assertNotIn("continue-on-error", text)
         self.assertIn("if: always()", job_block(text, "broad_gate"))
 
+    def test_windows_installer_configures_only_its_component_closure(self):
+        text = workflow('windows-validation')
+        configure = step_script(text, 'Configure CMake')
+        self.assertIn('-DBUILD_FIPS=OFF', configure)
+        self.assertIn('-DBUILD_WINDOWS_INSTALLER=ON', configure)
+        self.assertIn('-DBUILD_NATIVE_HOST=ON', configure)
+        self.assertIn('"${MAKENSIS}"', step_script(text, 'Create NSIS installer'))
+
     def test_operational_root_replaces_legacy_automatic_triggers(self):
         for family in (*ci.FAMILIES, 'static-checks', 'dependency-tests'):
             text = workflow(family)

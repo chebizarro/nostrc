@@ -164,6 +164,7 @@ jobs:
             -DBUILD_GNOSTR_APP=OFF \
             -DBUILD_GROUNDHOG=OFF \
             -DBUILD_RELAYD=OFF \
+            -DBUILD_FIPS=OFF \
             -DSIGNET_ENABLE=OFF \
             -DENABLE_NIP55L=OFF \
             -DENABLE_NIP5F=OFF \
