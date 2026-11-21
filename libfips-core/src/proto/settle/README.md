@@ -1,10 +1,10 @@
-# Settlement core (port in progress)
+# Settlement core
 
 Source: `core/src/proto/settle/` in jmcorgan/fips at
 `64f5b4d482cfe14abad108ffc2d92128f7658311`.
 
 This directory ports **params, links, legs, gates, table arbitration and join**.
-Public headers are under `fips/proto/settle/`: `settle.h`, `gates.h`,
+Public headers are `fips/proto/settle.h` and, under `fips/proto/settle/`, `gates.h`,
 `input.h`, `output.h`, `table.h` and `join.h`. The independent test-only history/judge
 is under `model/`; it uses no production settlement types or algorithms. Test mapping and qualification:
 [`tests/SETTLE.md`](../../../tests/SETTLE.md).
@@ -18,7 +18,7 @@ is under `model/`; it uses no production settlement types or algorithms. Test ma
   retained answers, deadlines, ordered poll/close, and explicit index-lease moves.
 
 The caller supplies storage, time and synchronization. No allocator, clock read,
-IO or global mutable state is used. Storage and arguments/outputs must not alias;
+IO or global mutable state is used by the production core. Storage and arguments/outputs must not alias;
 initialized owning collections must be drained before reinitialization. Owning
 leg/lease values must not be copied or modified by callers. Supplied durations
 must be normalized (`nanos < 1000000000`) and instants must share a compatible
@@ -72,10 +72,14 @@ The D1 rekey dependency is included by the approved normal merge.
 Test-only Rust replant/naming/drive helpers are not exposed. The production
 shell adapters `reap_leg`, `open_link`, `drop_leg`, `unadopt` and refused-count
 writers are provided. The test-only helpers/explorers are **not** claimed as covered simply because
-the production table and independent model have differential tests. Remaining core work: `nostrc-f12v2.8`.
+the production table and independent model have differential tests. Remaining
+world/explorer qualification is tracked in `nostrc-f12v2.8`; the production
+settlement modules and independent history/judge are implemented.
 No fipsd node/peer wiring is included.
 
 `upstream/` contains byte-for-byte snapshots of the upstream README and three
 spec files at the pin above. They describe the **whole upstream implementation**,
 not a claim that those rules are implemented here. Upstream source and specs
-remain authoritative; the C subset boundary above is deliberate.
+remain authoritative. C-local resource/text bounds and the unported simulator
+boundary above are explicit; runtime differential tests are not a node-convergence
+or live-compatibility claim.

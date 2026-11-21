@@ -207,6 +207,7 @@ void fips_test_settle_gates(void);
 void fips_test_settle_table_boundaries(void);
 void fips_test_settle_model(void);
 void fips_test_settle_join(void);
+void fips_test_settle_composed(void);
 void fips_test_settle_parity(void);
 void fips_test_settle_faults_api(void);
 #include "fakes/settle_faults.h"
@@ -217,7 +218,7 @@ int main(int argc,char **argv)
     if (!faults) fips_test_settle_faults_api();
     fips_test_settle_gates();
     fips_test_settle_table_boundaries();
-    fips_test_settle_model(); fips_test_settle_join(); fips_test_settle_parity();
+    fips_test_settle_model(); fips_test_settle_join(); fips_test_settle_composed(); fips_test_settle_parity();
     links_test(); legs_test(); timing_test(); short_clock_test();
     pthread_t threads[4];
     for (unsigned i=0; i<4; ++i) CHECK(pthread_create(&threads[i],NULL,independent,NULL)==0);

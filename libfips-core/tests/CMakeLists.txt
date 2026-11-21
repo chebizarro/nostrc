@@ -547,7 +547,7 @@ add_dependencies(fips_core_host_test fips_core_path_test fips_core_path_vectors_
 # Compile the actual settlement sources here too: GO_ENABLE_TSAN deliberately
 # leaves fips_core uninstrumented, but these sans-IO primitives need TSan proof.
 set(settle_test_sources ../src/proto/settle/params.c ../src/proto/settle/links.c ../src/proto/settle/legs.c ../src/proto/settle/gates.c ../src/proto/settle/table.c ../src/proto/settle/join.c ../src/proto/settle/model/history.c ../src/proto/settle/model/judge.c ../src/proto/settle/parity.c ../src/proto/settle/faults.c)
-add_executable(fips_core_settle_test test_settle.c test_settle_gates.c test_settle_table.c test_settle_model.c test_settle_join.c test_settle_parity.c test_settle_faults.c fakes/host.c fakes/rekey.c ${settle_test_sources})
+add_executable(fips_core_settle_test test_settle.c test_settle_gates.c test_settle_table.c test_settle_model.c test_settle_join.c test_settle_composed.c test_settle_parity.c test_settle_faults.c fakes/host.c fakes/rekey.c ${settle_test_sources})
 # Join invokes real rekey and bundle code; instrument those dependencies too,
 # including private rekey fixture hooks, rather than relying on the TSan-excluded archive.
 get_target_property(settle_rekey_sources fips_core_rekey_test SOURCES)
