@@ -79,9 +79,38 @@ static void inline_reserves_completion(void)
     assert(go_channel_receive(results, &value) != 0); /* EOF */
     fips_aead_key_destroy(&key); fipsd_worker_set_destroy(s);
 }
+static fipsd_worker_set *stopping;
+static void stop_after_inline(fipsd_crypto_job *j)
+{
+    (void)j;
+    fipsd_worker_set_stop(stopping);
+}
+/* Shutdown may stop the last OS worker while the dispatcher is still running
+ * an inline after-step. The inline completion must precede results EOF. */
+static void inline_shutdown(void)
+{
+    uint8_t bytes[32] = {9}; fips_aead_key key;
+    assert(fips_aead_key_init(&key, bytes) == FIPS_AEAD_OK);
+    for (size_t i = 0; i < 128; ++i) {
+        stopping = fipsd_worker_set_create(1, 1); assert(stopping);
+        assert(fipsd_worker_set_start(stopping, NULL) == 1);
+        fipsd_crypto_job *j = seal_job(&key, i, FIPSD_JOB_SHARD(0));
+        j->after = stop_after_inline;
+        assert(fipsd_worker_set_run_inline(stopping, j) == 0);
+        void *value;
+        assert(go_channel_receive(fipsd_worker_set_results(stopping), &value) == 0 && value == j);
+        fipsd_crypto_job_destroy(j);
+        fipsd_crypto_job refused = {.operation = FIPSD_CRYPTO_SEAL};
+        assert(fipsd_worker_set_run_inline(stopping, &refused) == -1);
+        assert(go_channel_receive(fipsd_worker_set_results(stopping), &value) != 0);
+        fipsd_worker_set_destroy(stopping);
+    }
+    stopping = NULL;
+    fips_aead_key_destroy(&key);
+}
 int main(void)
 {
-    inline_order(); inline_reserves_completion();
+    inline_order(); inline_reserves_completion(); inline_shutdown();
     fipsd_runtime_config cfg; fipsd_runtime_config_default(&cfg); cfg.workers = 2; cfg.handle_signals = false;
     fipsd_runtime *rt = fipsd_runtime_create(&cfg); assert(rt && fipsd_runtime_start(rt) == 0);
     fipsd_worker_set *s = fipsd_worker_set_create(2, 64); assert(s);
