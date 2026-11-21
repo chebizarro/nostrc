@@ -1288,7 +1288,7 @@ the largely unchanged timings support the dispatcher root cause.
 ## Baseline/comparer policy
 
 [`perf_baseline.json`](../tests/perf_baseline.json) now pins the measured shipped
-C source `ffca1748e48b87267105189e515619a600a686fd` and unchanged Rust revision,
+C source `ffca1748e48b87267105189e515619a600a686fd`, the accepted Rust revision,
 workload, machine/build metadata and 66 aggregated metrics. The tolerance stays
 10% in local mode. It requires at least three complete runs,
 all 39 micro workloads and all three loopback pairings, exact run counts,
@@ -1296,6 +1296,21 @@ durations/sample counts and Rust pin. Locally (the default comparer mode) the
 gates are micro medians, delivered goodput, forward/reverse one-way and RTT
 p50/p99 and both daemon CPU costs per delivered datagram. Loss, micro p95 and
 lifetime CPU remain reported, not gates.
+
+**Rust pin bumps.** `rust_commit` identifies the binary used to measure the
+absolute metrics; it is not a free-standing guard override. On an accepted Rust
+pin change, remeasure the **unchanged `reference_commit` C source** with the new
+locked Release Rust daemon, current test-only workloads/harness and the existing
+configuration (at least three complete runs). Refresh `rust_commit`, all metrics
+and measured machine/build metadata together; retain the C revision, workload,
+metric set and 10% tolerance. Keep the raw measurements and provenance. Do not
+relabel old Rust timings or move the C reference to the candidate to remove a
+regression. The [refresh recipe below](#refreshing-for-a-new-rust-pin) implements
+this step. The absolute numbers still gate matching-machine local comparisons;
+they are not informational-only there. A Linux VM run must not be labelled with
+the Apple machine metadata. The hosted acceptance measurement remains the two
+builds on the **same hosted runner**, with the same new Rust binary; a local
+baseline refresh is not hosted performance qualification.
 
 **Hosted vs local policy.** On shared GitHub runners the CI bench job runs
 `perf_compare.py --hosted`: it compares only against the reference built and
@@ -1466,6 +1481,92 @@ rm -rf "$ROOT/build-perf" "$ROOT/build-perffix-asan" "$ROOT/build-perffix-tsan" 
   "$ROOT/p" /tmp/fips-rust-target-perffix2
 git -C "$ROOT" submodule deinit -f --all
 ```
+
+### Refreshing for a new Rust pin
+
+The wave26 refresh (`nostrc-s46kr`) measured immutable C
+`ffca1748e48b87267105189e515619a600a686fd` against Rust
+`64f5b4d482cfe14abad108ffc2d92128f7658311` on the matching Darwin 27.0.0,
+arm64 Apple M4 Max (14 logical CPUs). Release/Werror, `-O3 -DNDEBUG`, no
+sanitizers; three micro runs (39 workloads) and three rotated real-daemon
+loopback runs (all three pairings), 5 s/1000 latency samples. Median delivered
+goodput was C↔C **683.933**, C→Rust **651.276**, Rust↔Rust **887.359 Mbit/s**.
+All 66 absolute metric entries were regenerated from that raw dataset (55
+values changed); the C pin, workload and tolerance did not change. This is a
+new-reference measurement, not evidence of candidate C performance or a hosted
+pass. Comparing the dataset to its refreshed JSON passes 66/66 as an
+aggregation/serialization check only.
+
+Raw JSON SHA-256:
+`4823f32bf8e20006aa1835fc2978cc17ab464a38a7d686c93197229ec76c9dd9`.
+Raw/loopback JSON, logs, workload diffs/hashes and binary provenance are retained
+outside the removable worktree under
+`~/.cache/nostrc/fips/64f5b4d482cfe14abad108ffc2d92128f7658311/Darwin-arm64/qualification/perf-baseline/`.
+The hosted Rust guard was reproduced failing before the refresh and passing
+afterward. Hosted-mode CLI checks with the refreshed policy accept an identical
+reference fixture and reject an injected 11% C↔C goodput loss; those fixtures
+are logic tests, not an independently measured candidate or a hosted rerun.
+
+Use a disposable checkout of the JSON's immutable C revision, **not HEAD**.
+As in CI, copy only the current test workloads, never shipped sources. Keep the
+existing baseline config/metric set/tolerance. For the current Apple baseline,
+use the matching macOS host and `lockf /tmp/w26-mac-perf.lock`; on the Linux VM
+use the plan's directory, build lock/parallel limit and `flock /tmp/w26-perf.lock`.
+The resulting machine metadata must describe where the run actually occurred.
+For example (all paths derived from the assigned absolute worktree):
+
+```sh
+ROOT=/absolute/assigned/nostrc-worktree
+SCRATCH="$ROOT/build-perf-pin"
+REFERENCE=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["reference_commit"])' "$ROOT/fipsd/tests/perf_baseline.json")
+PIN=$(sed -n 's/^Pinned commit: `\([0-9a-f]\{40\}\)`.*/\1/p' "$ROOT/libfips-core/UPSTREAM.md")
+RUST_TARGET="${XDG_CACHE_HOME:-$HOME/.cache}/nostrc/fips/$PIN/$(uname -s)-$(uname -m)"
+mkdir -p "$SCRATCH"
+git -C "$ROOT" clone --shared --no-checkout "$ROOT" "$SCRATCH/reference"
+git -C "$SCRATCH/reference" checkout --detach "$REFERENCE"
+git -C "$SCRATCH/reference" submodule update --init --depth 1 third_party/nostrdb
+cp "$ROOT"/libfips-core/bench/* "$SCRATCH/reference/libfips-core/bench/"
+cp "$ROOT/fipsd/tests/perf_native.c" "$SCRATCH/reference/fipsd/tests/"
+# Configure/build with the Release/Werror switches above (or the CI bench step):
+# source=$SCRATCH/reference, build=$SCRATCH/reference-build,
+# targets=fipsd fips_benches fipsd_perf_native. Verify the Rust binary's --version
+# against PIN and its retained build provenance before measuring.
+lockf /tmp/w26-mac-perf.lock caffeinate -i python3 "$ROOT/fipsd/tests/perf_run.py" \
+  --build "$SCRATCH/reference-build" --rust "$RUST_TARGET/release/fips" \
+  --source-commit "$REFERENCE" --rust-commit "$PIN" \
+  --runs 3 --iterations 1000 --seconds 5 --latency-samples 1000 \
+  --output "$SCRATCH/reference.json" --work-dir "$SCRATCH/p"
+python3 - "$ROOT" "$SCRATCH/reference.json" "$PIN" <<'PYBASE'
+import json, sys
+from pathlib import Path
+root, raw, pin = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+sys.path.insert(0, str(root / 'fipsd/tests'))
+from perf_compare import aggregate, validate
+path = root / 'fipsd/tests/perf_baseline.json'
+policy = json.loads(path.read_text())
+data = json.loads(raw.read_text())
+assert data['source_commit'] == policy['reference_commit']
+assert data['rust_commit'] == pin and data['config'] == policy['config']
+metrics = aggregate(data)  # Refuses missing, partial or invalid measurements.
+assert set(metrics) == set(policy['metrics'])
+policy.update(rust_commit=pin, machine=data['machine'], build=data['build'],
+              metrics={k: {f: v[f] for f in ('value', 'direction')}
+                       for k, v in sorted(metrics.items())})
+validate(data, policy)
+path.write_text(json.dumps(policy, indent=2, allow_nan=False) + '\n')
+PYBASE
+"$ROOT/scripts/fips-upstream-bump.sh" --check-perf-baseline
+python3 "$ROOT/fipsd/tests/perf_compare.py" "$SCRATCH/reference.json" \
+  --baseline "$ROOT/fipsd/tests/perf_baseline.json"
+```
+
+The last command checks serialization/aggregation against the refreshed policy,
+not an independent regression result. Retain the raw JSON, loopback JSON, logs,
+source revisions and Rust binary hash outside the disposable checkout before
+removing it. CI must still execute its Rust guard and same-runner candidate vs
+immutable-reference comparison with `--hosted`; no absolute Apple timings are
+used by that comparison. Comparer tests must still reject an injected 11%
+goodput regression, stale pins, invalid results and a wrong C reference.
 
 ## Tick profiler
 

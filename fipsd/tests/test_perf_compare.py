@@ -374,5 +374,53 @@ class HostedPolicyTest(unittest.TestCase):
         self.assertIn('same-runner --reference', run.stderr)
 
 
+class PinBaselineCheckTest(unittest.TestCase):
+    root = Path(__file__).resolve().parents[2]
+
+    def run_check(self, root):
+        return subprocess.run(['bash', str(root / 'scripts/fips-upstream-bump.sh'),
+                               '--check-perf-baseline'], capture_output=True, text=True)
+
+    def test_checked_in_baseline_matches_accepted_pin(self):
+        run = self.run_check(self.root)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn('immutable C reference', run.stdout)
+
+    def test_preflight_fails_before_rehearsal_on_stale_rust_pin(self):
+        self.check_fixture('stale_rust', 'Do not relabel old timings')
+
+    def test_preflight_rejects_invalid_c_reference(self):
+        self.check_fixture('invalid_reference', 'invalid C reference commit')
+
+    def test_preflight_is_read_only(self):
+        self.check_fixture('valid', None)
+
+    def check_fixture(self, case, error):
+        with tempfile.TemporaryDirectory(dir=self.root) as tmp:
+            root = Path(tmp)
+            for rel in ('scripts/fips-upstream-bump.sh', 'tools/fips-vectors/Cargo.toml',
+                        'tools/fips-vectors/rust-toolchain.toml', 'libfips-core/UPSTREAM.md',
+                        'fipsd/tests/perf_baseline.json'):
+                p = root / rel
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_bytes((self.root / rel).read_bytes())
+            path = root / 'fipsd/tests/perf_baseline.json'
+            baseline = json.loads(path.read_text())
+            if case == 'stale_rust':
+                baseline['rust_commit'] = '0' * 40
+            elif case == 'invalid_reference':
+                baseline['reference_commit'] = 'moving-branch'
+            path.write_text(json.dumps(baseline))
+            before = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+            run = self.run_check(root)
+            if error:
+                self.assertEqual(run.returncode, 2, run.stderr)
+                self.assertIn(error, run.stderr)
+            else:
+                self.assertEqual(run.returncode, 0, run.stderr)
+            after = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+            self.assertEqual(after, before)
+
+
 if __name__ == '__main__':
     unittest.main()
