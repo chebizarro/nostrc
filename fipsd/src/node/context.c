@@ -8,6 +8,7 @@
 #include "log.h"
 #include "blocking_executor.h"
 #include "select.h"
+#include <libgo/fiber.h>
 #include <sodium.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -212,6 +213,9 @@ static void dispatch(void *arg)
         if (!s.failed && !fipsd_peer_dispatcher_service(&c->peers)) s.failed = true;
         FIPSD_INSTR_END(timer_on, timer_start, DRIVE_PEER_TIMERS);
         if (!s.failed && n->options.poll && !n->options.poll(user, c->peers.clock.now(c->peers.clock.ctx))) s.failed = true;
+        /* A ready select does not park this cooperative fiber. Give socket
+         * readers/writers and other nodes a turn even under sustained input. */
+        gof_yield();
         if (s.failed) {
             /* Keep draining owned work until lifecycle closes the inputs and
              * observes result EOF. A failed handler must not strand workers
