@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "reference_commit": "ffca1748e48b87267105189e515619a600a686fd",
-  "rust_commit": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+  "rust_commit": "64f5b4d482cfe14abad108ffc2d92128f7658311",
   "tolerance": 0.1,
   "comparison": "same-runner reference for CI; absolute numbers only on matching machine",
   "machine": {
@@ -22,59 +22,59 @@
   },
   "metrics": {
     "loopback/c-c/cpu0_ns_per_datagram": {
-      "value": 14992.630027374187,
+      "value": 14962.873545471133,
       "direction": "lower"
     },
     "loopback/c-c/cpu1_ns_per_datagram": {
-      "value": 16007.201834217149,
+      "value": 16141.936751680867,
       "direction": "lower"
     },
     "loopback/c-c/one_way/p50_us": {
-      "value": 76.0,
+      "value": 80.0,
       "direction": "lower"
     },
     "loopback/c-c/one_way/p99_us": {
-      "value": 119.0,
+      "value": 138.0,
       "direction": "lower"
     },
     "loopback/c-c/reverse_one_way/p50_us": {
-      "value": 78.0,
+      "value": 82.0,
       "direction": "lower"
     },
     "loopback/c-c/reverse_one_way/p99_us": {
-      "value": 128.0,
+      "value": 142.0,
       "direction": "lower"
     },
     "loopback/c-c/rtt/p50_us": {
-      "value": 155.0,
+      "value": 162.0,
       "direction": "lower"
     },
     "loopback/c-c/rtt/p99_us": {
-      "value": 236.0,
+      "value": 269.0,
       "direction": "lower"
     },
     "loopback/c-c/throughput_mbps": {
-      "value": 683.856,
+      "value": 683.9328,
       "direction": "higher"
     },
     "loopback/c-rust/cpu0_ns_per_datagram": {
-      "value": 15640.048875152732,
+      "value": 15536.281787468382,
       "direction": "lower"
     },
     "loopback/c-rust/cpu1_ns_per_datagram": {
-      "value": 16394.627651115385,
+      "value": 16243.816441926148,
       "direction": "lower"
     },
     "loopback/c-rust/one_way/p50_us": {
-      "value": 69.0,
+      "value": 70.0,
       "direction": "lower"
     },
     "loopback/c-rust/one_way/p99_us": {
-      "value": 120.0,
+      "value": 127.0,
       "direction": "lower"
     },
     "loopback/c-rust/reverse_one_way/p50_us": {
-      "value": 72.0,
+      "value": 73.0,
       "direction": "lower"
     },
     "loopback/c-rust/reverse_one_way/p99_us": {
@@ -82,51 +82,51 @@
       "direction": "lower"
     },
     "loopback/c-rust/rtt/p50_us": {
-      "value": 142.0,
+      "value": 144.0,
       "direction": "lower"
     },
     "loopback/c-rust/rtt/p99_us": {
-      "value": 220.0,
+      "value": 236.0,
       "direction": "lower"
     },
     "loopback/c-rust/throughput_mbps": {
-      "value": 664.34304,
+      "value": 651.27552,
       "direction": "higher"
     },
     "loopback/rust-rust/cpu0_ns_per_datagram": {
-      "value": 14450.840106581938,
+      "value": 16703.954856047396,
       "direction": "lower"
     },
     "loopback/rust-rust/cpu1_ns_per_datagram": {
-      "value": 15308.567390327446,
+      "value": 17764.179969967503,
       "direction": "lower"
     },
     "loopback/rust-rust/one_way/p50_us": {
-      "value": 62.0,
+      "value": 68.0,
       "direction": "lower"
     },
     "loopback/rust-rust/one_way/p99_us": {
-      "value": 112.0,
+      "value": 127.0,
       "direction": "lower"
     },
     "loopback/rust-rust/reverse_one_way/p50_us": {
-      "value": 62.0,
+      "value": 68.0,
       "direction": "lower"
     },
     "loopback/rust-rust/reverse_one_way/p99_us": {
-      "value": 108.0,
+      "value": 128.0,
       "direction": "lower"
     },
     "loopback/rust-rust/rtt/p50_us": {
-      "value": 125.0,
+      "value": 137.0,
       "direction": "lower"
     },
     "loopback/rust-rust/rtt/p99_us": {
-      "value": 201.0,
+      "value": 243.0,
       "direction": "lower"
     },
     "loopback/rust-rust/throughput_mbps": {
-      "value": 1029.69792,
+      "value": 887.35872,
       "direction": "higher"
     },
     "micro/coord_cache/get_hit/1000/median_ns": {
@@ -134,7 +134,7 @@
       "direction": "lower"
     },
     "micro/coord_cache/get_hit/50000/median_ns": {
-      "value": 26.0,
+      "value": 27.0,
       "direction": "lower"
     },
     "micro/coord_cache/get_miss/1000/median_ns": {
@@ -142,39 +142,39 @@
       "direction": "lower"
     },
     "micro/coord_cache/get_miss/50000/median_ns": {
-      "value": 15.0,
+      "value": 16.0,
       "direction": "lower"
     },
     "micro/find_next_hop/current_borrowed/128/median_ns": {
-      "value": 17612.0,
+      "value": 17668.0,
       "direction": "lower"
     },
     "micro/find_next_hop/current_borrowed/256/median_ns": {
-      "value": 35124.0,
+      "value": 35386.0,
       "direction": "lower"
     },
     "micro/find_next_hop/current_borrowed/32/median_ns": {
-      "value": 4380.0,
+      "value": 4393.0,
       "direction": "lower"
     },
     "micro/find_next_hop/current_borrowed/8/median_ns": {
-      "value": 1095.0,
+      "value": 1093.0,
       "direction": "lower"
     },
     "micro/find_next_hop/former_allocating/128/median_ns": {
-      "value": 18557.0,
+      "value": 18666.0,
       "direction": "lower"
     },
     "micro/find_next_hop/former_allocating/256/median_ns": {
-      "value": 38038.0,
+      "value": 38050.0,
       "direction": "lower"
     },
     "micro/find_next_hop/former_allocating/32/median_ns": {
-      "value": 4646.0,
+      "value": 4702.0,
       "direction": "lower"
     },
     "micro/find_next_hop/former_allocating/8/median_ns": {
-      "value": 1175.0,
+      "value": 1192.0,
       "direction": "lower"
     },
     "micro/handout/send_cipher_clone/median_ns": {
@@ -182,27 +182,27 @@
       "direction": "lower"
     },
     "micro/session/open/1400/median_ns": {
-      "value": 2173.0,
+      "value": 2183.0,
       "direction": "lower"
     },
     "micro/session/open/64/median_ns": {
-      "value": 283.0,
+      "value": 286.0,
       "direction": "lower"
     },
     "micro/session/seal/1400/median_ns": {
-      "value": 2080.0,
+      "value": 2102.0,
       "direction": "lower"
     },
     "micro/session/seal/64/median_ns": {
-      "value": 199.0,
+      "value": 205.0,
       "direction": "lower"
     },
     "micro/transport_addr_clone/former_vec/18/median_ns": {
-      "value": 10.0,
+      "value": 9.0,
       "direction": "lower"
     },
     "micro/transport_addr_clone/former_vec/58/median_ns": {
-      "value": 11.0,
+      "value": 12.0,
       "direction": "lower"
     },
     "micro/transport_addr_clone/former_vec/6/median_ns": {
@@ -222,39 +222,39 @@
       "direction": "lower"
     },
     "micro/transport_addr_cross_thread/former_vec/18/median_ns": {
-      "value": 68.0,
+      "value": 66.0,
       "direction": "lower"
     },
     "micro/transport_addr_cross_thread/former_vec/58/median_ns": {
-      "value": 68.0,
+      "value": 73.0,
       "direction": "lower"
     },
     "micro/transport_addr_cross_thread/former_vec/6/median_ns": {
-      "value": 58.0,
+      "value": 60.0,
       "direction": "lower"
     },
     "micro/transport_addr_cross_thread/shared/18/median_ns": {
-      "value": 58.0,
+      "value": 60.0,
       "direction": "lower"
     },
     "micro/transport_addr_cross_thread/shared/58/median_ns": {
-      "value": 56.0,
+      "value": 57.0,
       "direction": "lower"
     },
     "micro/transport_addr_cross_thread/shared/6/median_ns": {
-      "value": 58.0,
+      "value": 57.0,
       "direction": "lower"
     },
     "micro/transport_addr_socket_and_clone/former_vec/ipv4/median_ns": {
-      "value": 174.0,
+      "value": 178.0,
       "direction": "lower"
     },
     "micro/transport_addr_socket_and_clone/former_vec/ipv6/median_ns": {
-      "value": 170.0,
+      "value": 173.0,
       "direction": "lower"
     },
     "micro/transport_addr_socket_and_clone/former_vec/scoped_ipv6/median_ns": {
-      "value": 346.0,
+      "value": 356.0,
       "direction": "lower"
     },
     "micro/transport_addr_socket_and_clone/shared/ipv4/median_ns": {
@@ -270,19 +270,19 @@
       "direction": "lower"
     },
     "micro/worker/open/1400/median_ns": {
-      "value": 2191.0,
+      "value": 2205.0,
       "direction": "lower"
     },
     "micro/worker/open/64/median_ns": {
-      "value": 285.0,
+      "value": 286.0,
       "direction": "lower"
     },
     "micro/worker/seal/1400/median_ns": {
-      "value": 2098.0,
+      "value": 2121.0,
       "direction": "lower"
     },
     "micro/worker/seal/64/median_ns": {
-      "value": 207.0,
+      "value": 209.0,
       "direction": "lower"
     }
   },

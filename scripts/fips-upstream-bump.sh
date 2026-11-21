@@ -5,35 +5,56 @@ trap 'echo "fips-upstream-bump: step failed (not a compatibility pass)" >&2; exi
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 usage() {
   echo "usage: $0 -C absolute-upstream-repo candidate [--legacy-patch absolute-patch] [--keep]" >&2
+  echo "       $0 --check-perf-baseline   # fast, read-only accepted-pin preflight" >&2
   exit 2
 }
-[[ $# -ge 3 && "$1" == -C && "$2" == /* ]] || usage
-repo="$2"; candidate="$3"; shift 3
+perf_check_only=0
 patch=; keep=0
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --legacy-patch) [[ $# -ge 2 && "$2" == /* ]] || usage; patch="$2"; shift 2 ;;
-    --keep) keep=1; shift ;;
-    *) usage ;;
-  esac
-done
+if [[ $# == 1 && "$1" == --check-perf-baseline ]]; then
+  perf_check_only=1
+else
+  [[ $# -ge 3 && "$1" == -C && "$2" == /* ]] || usage
+  repo="$2"; candidate="$3"; shift 3
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --legacy-patch) [[ $# -ge 2 && "$2" == /* ]] || usage; patch="$2"; shift 2 ;;
+      --keep) keep=1; shift ;;
+      *) usage ;;
+    esac
+  done
+fi
+read -r old toolchain perf_reference < <(python3 - "$root" <<'PYBASE'
+from pathlib import Path
+import json, re, sys, tomllib
+r = Path(sys.argv[1])
+c = r / 'tools/fips-vectors'
+pin = tomllib.loads((c / 'Cargo.toml').read_text())['dependencies']['fips-core']['rev']
+assert re.fullmatch(r'[0-9a-f]{40}', pin), 'exporter requires the full upstream pin'
+assert f'Pinned commit: `{pin}`' in (r / 'libfips-core/UPSTREAM.md').read_text()
+baseline = json.loads((r / 'fipsd/tests/perf_baseline.json').read_text())
+if baseline['rust_commit'] != pin:
+    raise SystemExit('UPSTREAM.md differs from the immutable Rust performance baseline; '
+                     'remeasure the immutable C reference with the accepted Rust pin '
+                     '(fipsd/docs/perf.md, Baseline/comparer policy). Do not relabel old timings.')
+assert re.fullmatch(r'[0-9a-f]{40}', baseline['reference_commit']), 'invalid C reference commit'
+print(pin, tomllib.loads((c / 'rust-toolchain.toml').read_text())['toolchain']['channel'],
+      baseline['reference_commit'])
+PYBASE
+)
+[[ -n "$old" && -n "$toolchain" && -n "$perf_reference" ]]
+echo "Performance baseline: Rust $old; immutable C reference $perf_reference"
+if [[ "$perf_check_only" == 1 ]]; then exit 0; fi
 for tool in git python3 cargo rustup diff; do command -v "$tool" >/dev/null; done
 if [[ ${FIPS_NODE_FAULTS+x} || ${FIPS_REKEY_FAULTS+x} ]]; then
   echo 'unset FIPS_NODE_FAULTS and FIPS_REKEY_FAULTS before rehearsal' >&2
   exit 2
 fi
 new="$(git -C "$repo" rev-parse --verify --end-of-options "$candidate^{commit}")"
-read -r old toolchain < <(python3 - "$root" <<'PY'
-from pathlib import Path
-import sys, tomllib
-r = Path(sys.argv[1])
-c = r / 'tools/fips-vectors'
-pin = tomllib.loads((c / 'Cargo.toml').read_text())['dependencies']['fips-core']['rev']
-assert f'Pinned commit: `{pin}`' in (r / 'libfips-core/UPSTREAM.md').read_text()
-print(pin, tomllib.loads((c / 'rust-toolchain.toml').read_text())['toolchain']['channel'])
-PY
-)
-[[ -n "$old" && -n "$toolchain" ]]
+if [[ "$new" != "$old" ]]; then
+  echo "Acceptance requires performance re-baselining with Rust $new and unchanged C $perf_reference."
+  echo 'See fipsd/docs/perf.md; keep workload/tolerance fixed, retain raw measurements, then run --check-perf-baseline.'
+  echo 'Hosted qualification still requires candidate and immutable reference measured on the same runner.'
+fi
 rustup run "$toolchain" rustc --version
 patch="${patch:-$root/tools/fips-vectors/upstream-patches/$new-legacy-rekey-export.patch}"
 mkdir -p "$root/build-fips-upstream-bump"

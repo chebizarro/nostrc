@@ -541,13 +541,28 @@ submodule work files. Never prune unrelated worktrees/caches.
    FMP IK, FSP XK and at least one rekey cycle. Include the legacy rekey models.
    Do not advance to another transport on vector-only evidence. Record actual
    passes, failures, skips and unavailable environments separately.
-5. **Update this file and make the VERSION_MANIFEST decision together.** Change
+5. **Refresh the performance baseline for the accepted Rust pin.** Follow
+   [`fipsd/docs/perf.md`](../fipsd/docs/perf.md#refreshing-for-a-new-rust-pin):
+   rebuild the unchanged `fipsd/tests/perf_baseline.json` **`reference_commit`**
+   with the current test-only workloads, then measure it with the new pinned
+   Release Rust daemon (at least three complete runs). Refresh `rust_commit`,
+   all absolute metrics and actual machine/build metadata together. Keep the C
+   reference, workload, metric set and 10% tolerance unchanged; never relabel old
+   Rust numbers or baseline away candidate C regressions. Retain raw evidence.
+   After the pin files/JSON agree, run
+   `scripts/fips-upstream-bump.sh --check-perf-baseline` and the comparer tests.
+   The non-mutating rehearsal checks the **current** accepted performance pin
+   and prints this required acceptance step for a different candidate; it does
+   not mutate the baseline. Hosted CI must still build and measure candidate
+   and immutable reference on the same runner with the same new Rust daemon;
+   a local refresh is not hosted qualification.
+6. **Update this file and make the VERSION_MANIFEST decision together.** Change
    the machine-readable pin, date/version/rationale, invariant notes and module
    map as needed. Assess `libfips-core` and `fipsd` public API, wire, CLI,
    configuration and storage impacts under `VERSION_MANIFEST.md`; update the
    owning authoritative versions for a bump, or record the explicit no-bump
    rationale. A pin-only documentation change is not itself a shipped feature.
-6. **File a child task under `nostrc-f66sr.6`** for the candidate's tracking and
+7. **File a child task under `nostrc-f66sr.6`** for the candidate's tracking and
    differential/interop evidence. Link the diff/checklist, fixture provenance,
    compatibility decision, version decision and any remaining work. The
    orchestrator owns issue-status changes; do not silently move the baseline
