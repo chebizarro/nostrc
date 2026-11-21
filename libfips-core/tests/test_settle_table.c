@@ -1,5 +1,6 @@
 #include "fakes/settle_table.h"
 #include "fakes/host.h"
+#include <fips/proto/link.h>
 #include <stdio.h>
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"table:%d: %s\n",__LINE__,#x); abort(); } } while (0)
 static fips_node_addr peer(unsigned n) { fips_node_addr p; memset(p.bytes,(int)n,16); return p; }
@@ -27,7 +28,13 @@ void fips_test_settle_table_boundaries(void)
     in=(fips_settle_input){.kind=FIPS_SETTLE_IN_MSG2,.data.msg2={.link=link,.from=pair(1)}}; memset(in.data.msg2.epoch,1,8); step(t,&in,1);
     out=fips_settle_table_outputs(t); CHECK(out.count==2 && out.items[0].kind==FIPS_SETTLE_OUT_INSTALL && out.items[0].lease.live); active=t->active;
     CHECK(fips_settle_table_poll(t,fips_test_instant(2))==FIPS_ERR_RANGE && t->active==active && out.items[0].lease.live);
+    in=(fips_settle_input){.kind=FIPS_SETTLE_IN_HEARD,.data.heard={.peer=peer(2),.from=pair(1),.kind=FIPS_LINK_Heartbeat}};
+    CHECK(fips_settle_table_step(t,&in,fips_test_instant(2))==FIPS_ERR_RANGE);
+    CHECK(!fips_settle_table_held(t,&in.data.heard.peer)->has_last && out.items[0].lease.live);
     CHECK(fips_rekey_index_lease_release(&out.items[0].lease,&index) && index==1);
+    step(t,&in,2);
+    const fips_settle_held *h=fips_settle_table_held(t,&in.data.heard.peer);
+    CHECK(h && h->has_last && h->last.opaque[0]==2 && !fips_settle_table_outputs(t).count);
     CHECK(fips_settle_table_poll(t,fips_test_instant(2))==FIPS_OK);
     lease=(fips_rekey_index_lease){.index=4,.live=true}; in=(fips_settle_input){.kind=FIPS_SETTLE_IN_HELLO,.data.hello={.link=999,.msg2={msg,3},.lease=&lease}}; step(t,&in,3);
     out=fips_settle_table_outputs(t); CHECK(!lease.live && out.count==1 && out.items[0].kind==FIPS_SETTLE_OUT_FREE && out.items[0].lease.index==4); fips_test_settle_drain(t);

@@ -315,6 +315,19 @@ static fips_status swap(context *c,uint64_t link,const fips_settle_pair *from)
     TRY(fips_settle_gate_promoted(&c->s->gates,a.peer,a.ephemeral,c->now,NULL,&c->table->params));
     return install(c,h,FIPS_SETTLE_BUILD_FRESH,false,&leg.lease,existed ? FIPS_SETTLE_TRANSITION_REPLACE : FIPS_SETTLE_TRANSITION_PROMOTE);
 }
+/* In the production rules a heard report cannot fail or emit an action.
+ * Keep it separate so the per-frame path does not checkpoint entire arenas. */
+static void heard_report(context *c,const fips_settle_input *in)
+{
+    fips_settle_table_state *s=c->s; fips_settle_held *h=held(s,&in->data.heard.peer); if (!h) return;
+    uint8_t kind=in->data.heard.kind;
+    if (kind!=FIPS_LINK_SessionDatagram && kind!=FIPS_LINK_PathProbe && kind!=FIPS_LINK_PathAck && kind!=FIPS_LINK_PathClose) {
+        const fips_settle_link *r=fips_settle_link_get(&s->links,h->link); h->has_sending=false;
+        if (r) for (size_t i=0;i<r->path_count;++i) if (pair_eq(&r->paths[i].pair,&in->data.heard.from)) { h->has_sending=true; h->sending=in->data.heard.from; break; }
+    }
+    bool unheard=!h->heard, framed=h->has_last; h->heard=true; h->has_last=true; h->last=c->now;
+    if (unheard) fips_settle_gate_heard(&s->gates,&h->peer); else if (!framed) fips_settle_gate_framed(&s->gates,&h->peer);
+}
 static fips_status run(context *c,const fips_settle_input *in)
 {
     fips_settle_table_state *s=c->s;
@@ -370,17 +383,7 @@ static fips_status run(context *c,const fips_settle_input *in)
         bool was_held=held(s,&in->data.peer)!=NULL; TRY(remove_peer(c,in->data.peer,FIPS_SETTLE_WHY_ADMIN));
         fips_settle_meta *pending=redial(s,&in->data.peer); return was_held && pending ? abandon(c,pending->link) : FIPS_OK;
     }
-    case FIPS_SETTLE_IN_HEARD: {
-        fips_settle_held *h=held(s,&in->data.heard.peer); if (!h) return FIPS_OK;
-        uint8_t kind=in->data.heard.kind;
-        if (kind!=FIPS_LINK_SessionDatagram && kind!=FIPS_LINK_PathProbe && kind!=FIPS_LINK_PathAck && kind!=FIPS_LINK_PathClose) {
-            const fips_settle_link *r=fips_settle_link_get(&s->links,h->link); h->has_sending=false;
-            if (r) for (size_t i=0;i<r->path_count;++i) if (pair_eq(&r->paths[i].pair,&in->data.heard.from)) { h->has_sending=true; h->sending=in->data.heard.from; break; }
-        }
-        bool unheard=!h->heard, framed=h->has_last; h->heard=true; h->has_last=true; h->last=c->now;
-        if (unheard) fips_settle_gate_heard(&s->gates,&h->peer); else if (!framed) fips_settle_gate_framed(&s->gates,&h->peer);
-        return FIPS_OK;
-    }
+    case FIPS_SETTLE_IN_HEARD: heard_report(c,in); return FIPS_OK;
     case FIPS_SETTLE_IN_SENT: return sent(c,in->data.link);
     case FIPS_SETTLE_IN_SEND_FAILED: {
         const fips_settle_leg *leg=fips_settle_leg_get(&s->legs,in->data.link);
@@ -442,10 +445,15 @@ fips_status fips_settle_table_init(fips_settle_table *t,fips_node_addr me,const 
     }
     *t=value; return FIPS_OK;
 }
+static bool owners_drained(const fips_settle_table_state *s)
+{
+    for (size_t i=0;i<s->output_count;++i) if (s->storage.outputs[i].lease.live) return false;
+    return true;
+}
 static fips_status begin(fips_settle_table *t,fips_instant now,context *c)
 {
     fips_settle_table_state *a=current(t), *b=&t->states[t->active^1u];
-    for (size_t i=0;i<a->output_count;++i) if (a->storage.outputs[i].lease.live) return FIPS_ERR_RANGE;
+    if (!owners_drained(a)) return FIPS_ERR_RANGE;
     size_t n=a->storage.capacity;
     if (n) {
         memcpy(b->storage.links,a->storage.links,n*sizeof(*a->storage.links));
@@ -488,6 +496,11 @@ static bool input_valid(const fips_settle_input *i)
 fips_status fips_settle_table_step(fips_settle_table *t,const fips_settle_input *input,fips_instant now)
 {
     if (!input_valid(input)) return FIPS_ERR_RANGE;
+    if (input->kind==FIPS_SETTLE_IN_HEARD) {
+        fips_settle_table_state *s=current(t); if (!owners_drained(s)) return FIPS_ERR_RANGE;
+        context c={.table=t,.s=s,.now=now}; heard_report(&c,input);
+        s->output_count=0; s->close_count=0; return FIPS_OK;
+    }
     context c; TRY(begin(t,now,&c)); fips_settle_input in=*input; fips_rekey_index_lease *owner=NULL, local={0};
     if (in.kind==FIPS_SETTLE_IN_DIAL || in.kind==FIPS_SETTLE_IN_PUNCHED) { owner=in.data.dial.lease; local=*owner; in.data.dial.lease=&local; }
     if (in.kind==FIPS_SETTLE_IN_HELLO) { owner=in.data.hello.lease; local=*owner; in.data.hello.lease=&local; }
