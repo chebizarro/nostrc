@@ -88,12 +88,12 @@ jobs:
       - name: Build FIPS targets
         shell: bash
         run: |
-          targets=(fipsd fipsd_tests)
+          targets=(fipsd fipsd_tests fips_core_settle_test fips_diff_settle)
           if [[ "$RUNNER_OS" == Linux ]]; then targets+=(fips-gateway); fi
           if [[ '${{ matrix.configuration }}' != tsan ]]; then
             targets+=(fips_core_skeleton_test fips_core_host_test)
           fi
-          if [[ '${{ matrix.configuration }}' == asan_ubsan ]]; then targets+=(fips_fuzz_host fips_fuzz_codec fips_fuzz_identity fips_fuzz_aead fips_fuzz_coord fips_fuzz_link fips_fuzz_stp fips_fuzz_bloom fips_fuzz_fmp fips_fuzz_handshake fips_fuzz_routing fips_fuzz_lookup fips_fuzz_fsp fips_fuzz_session fips_fuzz_mmp fips_fuzz_probe fips_fuzz_rekey fips_fuzz_path fips_fuzz_rekey_profile fipsd_fuzz_control fipsd_fuzz_config); fi
+          if [[ '${{ matrix.configuration }}' == asan_ubsan ]]; then targets+=(fips_fuzz_host fips_fuzz_codec fips_fuzz_identity fips_fuzz_aead fips_fuzz_coord fips_fuzz_link fips_fuzz_stp fips_fuzz_bloom fips_fuzz_fmp fips_fuzz_handshake fips_fuzz_routing fips_fuzz_lookup fips_fuzz_fsp fips_fuzz_session fips_fuzz_mmp fips_fuzz_probe fips_fuzz_rekey fips_fuzz_path fips_fuzz_rekey_profile fips_fuzz_settle fipsd_fuzz_control fipsd_fuzz_config); fi
           cmake --build build --parallel 3 --target "${targets[@]}"
       - name: Test FIPS
         shell: bash
@@ -102,11 +102,16 @@ jobs:
           # Core-only tests are intentionally not a threading qualification.
           if [[ '${{ matrix.configuration }}' == tsan ]]; then args+=(-E '^FipsCore'); fi
           ctest --test-dir build -R '^Fips' "${args[@]}" --no-tests=error --output-on-failure
+          # Settlement tests compile the actual sources with TSan and exercise
+          # independent caller-owned states on pthreads; do not blanket-skip them.
+          if [[ '${{ matrix.configuration }}' == tsan ]]; then
+            ctest --test-dir build -R '^FipsCoreSettleTest$' --no-tests=error --output-on-failure
+          fi
       - name: Fuzz smoke (10 seconds per target)
         if: matrix.configuration == 'asan_ubsan'
         run: |
           mkdir -p build/corpus build/fuzz-artifacts
-          for target in fips_fuzz_host fips_fuzz_codec fips_fuzz_identity fips_fuzz_aead fips_fuzz_coord fips_fuzz_link fips_fuzz_stp fips_fuzz_bloom fips_fuzz_fmp fips_fuzz_handshake fips_fuzz_routing fips_fuzz_lookup fips_fuzz_fsp fips_fuzz_session fips_fuzz_mmp fips_fuzz_probe fips_fuzz_rekey fips_fuzz_path fips_fuzz_rekey_profile fipsd_fuzz_control fipsd_fuzz_config; do
+          for target in fips_fuzz_host fips_fuzz_codec fips_fuzz_identity fips_fuzz_aead fips_fuzz_coord fips_fuzz_link fips_fuzz_stp fips_fuzz_bloom fips_fuzz_fmp fips_fuzz_handshake fips_fuzz_routing fips_fuzz_lookup fips_fuzz_fsp fips_fuzz_session fips_fuzz_mmp fips_fuzz_probe fips_fuzz_rekey fips_fuzz_path fips_fuzz_rekey_profile fips_fuzz_settle fipsd_fuzz_control fipsd_fuzz_config; do
             component=libfips-core
             if [[ "$target" == fipsd_* ]]; then component=fipsd; fi
             if [[ -d "$component/fuzz/corpus/$target" ]]; then cp -R "$component/fuzz/corpus/$target" build/corpus/; else mkdir -p "build/corpus/$target"; fi
@@ -462,11 +467,11 @@ jobs:
             -DBUILD_LIBHANAMI=OFF -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF \
             -DBUILD_NOSTR_GOBJECT=OFF -DBUILD_NOSTR_GTK=OFF -DSIGNET_ENABLE=OFF \
             -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF
-      - run: cmake --build build --parallel 3 --target fips_fuzz_host fips_fuzz_codec fips_fuzz_identity fips_fuzz_aead fips_fuzz_coord fips_fuzz_link fips_fuzz_stp fips_fuzz_bloom fips_fuzz_fmp fips_fuzz_handshake fips_fuzz_routing fips_fuzz_lookup fips_fuzz_fsp fips_fuzz_session fips_fuzz_mmp fips_fuzz_probe fips_fuzz_rekey fips_fuzz_path fips_fuzz_rekey_profile fipsd_fuzz_control fipsd_fuzz_config
+      - run: cmake --build build --parallel 3 --target fips_fuzz_host fips_fuzz_codec fips_fuzz_identity fips_fuzz_aead fips_fuzz_coord fips_fuzz_link fips_fuzz_stp fips_fuzz_bloom fips_fuzz_fmp fips_fuzz_handshake fips_fuzz_routing fips_fuzz_lookup fips_fuzz_fsp fips_fuzz_session fips_fuzz_mmp fips_fuzz_probe fips_fuzz_rekey fips_fuzz_path fips_fuzz_rekey_profile fips_fuzz_settle fipsd_fuzz_control fipsd_fuzz_config
       - name: Fuzz (60 seconds per target)
         run: |
           mkdir -p build/corpus build/fuzz-artifacts
-          for target in fips_fuzz_host fips_fuzz_codec fips_fuzz_identity fips_fuzz_aead fips_fuzz_coord fips_fuzz_link fips_fuzz_stp fips_fuzz_bloom fips_fuzz_fmp fips_fuzz_handshake fips_fuzz_routing fips_fuzz_lookup fips_fuzz_fsp fips_fuzz_session fips_fuzz_mmp fips_fuzz_probe fips_fuzz_rekey fips_fuzz_path fips_fuzz_rekey_profile fipsd_fuzz_control fipsd_fuzz_config; do
+          for target in fips_fuzz_host fips_fuzz_codec fips_fuzz_identity fips_fuzz_aead fips_fuzz_coord fips_fuzz_link fips_fuzz_stp fips_fuzz_bloom fips_fuzz_fmp fips_fuzz_handshake fips_fuzz_routing fips_fuzz_lookup fips_fuzz_fsp fips_fuzz_session fips_fuzz_mmp fips_fuzz_probe fips_fuzz_rekey fips_fuzz_path fips_fuzz_rekey_profile fips_fuzz_settle fipsd_fuzz_control fipsd_fuzz_config; do
             component=libfips-core
             if [[ "$target" == fipsd_* ]]; then component=fipsd; fi
             if [[ -d "$component/fuzz/corpus/$target" ]]; then cp -R "$component/fuzz/corpus/$target" build/corpus/; else mkdir -p "build/corpus/$target"; fi
