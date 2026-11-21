@@ -122,6 +122,8 @@ static int send_frame(fipsd_transport *t, const fips_transport_addr *to, const u
 static int send_lane(fipsd_transport *t, fipsd_transport_lane lane, const fips_transport_addr *to,
     const uint8_t *bytes, size_t n)
 { nym_instance *x = t->user; return up(x) ? fipsd_transport_send_lane(x->tcp, lane, to, bytes, n) : -1; }
+static int lane_admit(fipsd_transport *t, fipsd_transport_lane lane, const fips_transport_addr *to)
+{ nym_instance *x = t->user; return up(x) ? fipsd_transport_lane_admit(x->tcp, lane, to) : 0; }
 static void close_connection(fipsd_transport *t, const fips_transport_addr *to)
 { nym_instance *x = t->user; if (up(x)) x->tcp->ops->close_connection(x->tcp, to); }
 static void network_changed(fipsd_transport *t, const struct fipsd_netmon_event *e)
@@ -130,7 +132,7 @@ static bool local_addr(const fipsd_transport *t, fips_transport_addr *out) { (vo
 static const fipsd_transport_ops ops = {.local_addr = local_addr, .start_async = start_async, .stop = stop,
     .state = fipsd_transport_shared_state, .mtu = mtu, .send = send_frame, .discover = discover,
     .connect_async = connect_async, .close_connection = close_connection, .network_changed = network_changed,
-    .send_lane = send_lane};
+    .send_lane = send_lane, .lane_admit = lane_admit};
 void fipsd_nym_config_default(fipsd_nym_config *c)
 {
     *c = (fipsd_nym_config){.socks5_addr = "127.0.0.1:1080", .connect_timeout_ms = 300000, .mtu = 1400,

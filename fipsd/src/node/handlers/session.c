@@ -87,8 +87,20 @@ bool hs_session_send_message(handlers *h, fips_session_entry *entry, session_ext
     return ok;
 }
 
+/* A datagram for a direct peer, which routing always sends on that peer's
+ * own link, is refused before the session AEAD too when that link's lane
+ * would refuse it now (fipsd_dp_link_send_ce's admission). */
+static bool link_refuses(handlers *h, const fips_node_addr *dest)
+{
+    peer_rec *rec = hs_rec_find(h, dest);
+    if (!rec) return false;
+    const fipsd_peer_info *info = fipsd_active_peer_info(rec->peer);
+    fipsd_transport *t = hs_transport(h, info->transport);
+    return t && fipsd_transport_lane_admit(t, FIPSD_TRANSPORT_LANE_DATA, &info->addr) != 0;
+}
 static bool send_data(handlers *h, fips_session_entry *entry, session_ext *x, uint16_t sp, uint16_t dp, const uint8_t *payload, size_t len)
 {
+    if (link_refuses(h, &entry->peer)) { ++h->counters.send_failed; return false; }
     uint8_t body[FIPSD_HANDLERS_DATAGRAM_MAX + 4];
     fips_writer w; fips_writer_init(&w, body, sizeof body);
     bool ok = fips_fsp_port_header_encode((fips_fsp_port_header){sp, dp}, &w, NULL) == FIPS_OK &&

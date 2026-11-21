@@ -104,6 +104,12 @@ typedef struct fipsd_transport_ops {
      * frame's `to` (see send_concurrent). NULL: fipsd_transport_send_batch
      * makes the n sends. */
     size_t (*send_batch)(fipsd_transport *, const fipsd_transport_frame *, size_t n, int *rc);
+    /* Optional: 0 when send_lane(lane, to) would currently accept a frame,
+     * -1 when it would refuse one as full, accounted as that refusal. The node
+     * asks before sealing a data-lane frame, so saturation is not paid for in
+     * AEAD work the lane then discards. Advisory: send_lane stays the verdict.
+     * Never parks. NULL: always admitted. */
+    int (*lane_admit)(fipsd_transport *, fipsd_transport_lane, const fips_transport_addr *);
 } fipsd_transport_ops;
 struct fipsd_transport {
     const fipsd_transport_ops *ops;
@@ -133,6 +139,9 @@ int fipsd_transport_register(fipsd_transport_registry *, fipsd_transport *);
 static inline int fipsd_transport_send_lane(fipsd_transport *t, fipsd_transport_lane lane,
     const fips_transport_addr *to, const uint8_t *bytes, size_t n)
 { return t->ops->send_lane ? t->ops->send_lane(t, lane, to, bytes, n) : t->ops->send(t, to, bytes, n); }
+static inline int fipsd_transport_lane_admit(fipsd_transport *t, fipsd_transport_lane lane,
+    const fips_transport_addr *to)
+{ return t->ops->lane_admit ? t->ops->lane_admit(t, lane, to) : 0; }
 static inline size_t fipsd_transport_send_batch(fipsd_transport *t, const fipsd_transport_frame *f,
     size_t n, int *rc)
 {

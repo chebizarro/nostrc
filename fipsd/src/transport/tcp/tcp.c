@@ -75,6 +75,21 @@ static int send_lane(fipsd_transport *t, fipsd_transport_lane lane, const fips_t
     }
     return 0;
 }
+static int lane_admit(fipsd_transport *t, fipsd_transport_lane lane, const fips_transport_addr *to)
+{
+    tcp_instance *u = t->user;
+    if (!u->started || !to || !to->len || to->len > 256) return 0;
+    bool control = lane == FIPSD_TRANSPORT_LANE_CONTROL;
+    nsync_mu_lock(&u->mu); tcp_conn *c = tcp_pool_find(u, to);
+    bool full = c && go_channel_get_depth(control ? c->control : c->queue) >=
+        (control ? FIPSD_TCP_CONTROL_DEPTH : u->config.send_queue_depth);
+    nsync_mu_unlock(&u->mu);
+    if (!full) return 0; /* no connection: send_lane gives that verdict */
+    tcp_stats_error(u, true);
+    atomic_fetch_add(control ? &u->shared.diagnostics.control_dropped : &u->shared.diagnostics.data_dropped, 1);
+    atomic_fetch_add(&u->shared.diagnostics.dropped, 1);
+    return -1;
+}
 static int send_frame(fipsd_transport *t, const fips_transport_addr *to, const uint8_t *bytes, size_t n)
 { return send_lane(t, FIPSD_TRANSPORT_LANE_DATA, to, bytes, n); }
 static void close_connection(fipsd_transport *t, const fips_transport_addr *to)
@@ -93,7 +108,7 @@ static bool local_addr(const fipsd_transport *t, fips_transport_addr *out)
 static const fipsd_transport_ops ops = {.local_addr = local_addr, .start_async = start_async, .stop = stop,
     .state = fipsd_transport_shared_state, .mtu = mtu, .send = send_frame, .discover = discover,
     .connect_async = connect_async, .close_connection = close_connection, .network_changed = network_changed,
-    .send_lane = send_lane};
+    .send_lane = send_lane, .lane_admit = lane_admit};
 void fipsd_tcp_config_default(fipsd_tcp_config *c)
 {
     *c = (fipsd_tcp_config){.mtu = 1400, .connect_timeout_ms = 5000, .keepalive_secs = 30,
