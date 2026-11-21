@@ -184,3 +184,9 @@ apply_warnings(fips_fuzz_settle)
 apply_sanitizers(fips_fuzz_settle)
 target_compile_options(fips_fuzz_settle PRIVATE -fsanitize=fuzzer)
 target_link_options(fips_fuzz_settle PRIVATE -fsanitize=fuzzer)
+add_test(NAME FipsFuzzSettleRegression COMMAND fips_fuzz_settle -runs=1
+  "${CMAKE_CURRENT_SOURCE_DIR}/corpus/fips_fuzz_settle/crash-5b340d5e32ce10f501ee7c74338942b45e7f1fbd")
+set_tests_properties(FipsFuzzSettleRegression PROPERTIES TIMEOUT 30 LABELS "fips;fuzz;regression"
+  ENVIRONMENT "UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1")
+nostrc_describe_test(FipsFuzzSettleRegression OWNER libfips-core TARGETS fips_fuzz_settle
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/corpus/fips_fuzz_settle/crash-5b340d5e32ce10f501ee7c74338942b45e7f1fbd")

@@ -112,6 +112,11 @@ nested scopes and thread isolation. This is not the original full 147-name sweep
 lease conservation after every step, failure rollback and owner draining.
 Table fuzz identities are bounded to the caller arena's four identity slots. This is not a
 replacement for upstream worlds, scheduler exploration or mutation testing.
+Join fuzzing builds each `fips_path_output` as a typed host value, setting only
+the union member selected by `kind` (`State.next` shares storage with
+`Released.keep`). `FipsFuzzSettleRegression` replays the hosted-CI UBSan crash
+`corpus/fips_fuzz_settle/crash-5b340d5e…` with `halt_on_error=1`; the same file
+also seeds the CI fuzz corpus.
 
 ## Not-ported reasons
 
