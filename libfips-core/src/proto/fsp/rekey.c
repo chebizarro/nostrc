@@ -1,5 +1,5 @@
 #include <fips/proto/fsp/rekey.h>
-#include "../rekey/noise_profile.h"
+#include "proto/rekey/noise_profile.h"
 #include <secp256k1.h>
 
 static bool initiate(void *ctx, const fips_peer_key *peer, fips_rekey_index ours,

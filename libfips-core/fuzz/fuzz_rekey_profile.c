@@ -1,4 +1,4 @@
-#include "../tests/fakes/rekey_profile.h"
+#include "fakes/rekey_profile.h"
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>

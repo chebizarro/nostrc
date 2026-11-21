@@ -293,7 +293,8 @@ def main():
         terminal_case(args.fipstop, repo, stop)
     failed = subprocess.run([args.fipstop, '-s', str(repo / '.missing.sock')], stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
     assert failed.returncode == 1 and b'terminal required' in failed.stderr
-    with tempfile.TemporaryDirectory(prefix='.ft-', dir=repo) as directory:
+    # AF_UNIX paths must fit sun_path even in a deeply nested CI checkout.
+    with tempfile.TemporaryDirectory(prefix='ft-', dir='/tmp') as directory:
         root = Path(directory)
         adapter_cases(args.unit, root)
         env = dict(os.environ, FIPSD_WORKERS='2', NO_COLOR='1')

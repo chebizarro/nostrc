@@ -485,6 +485,7 @@ if(NOSTR_TESTING_INSTALL)
     install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
         FILES_MATCHING PATTERN "*.h"
+        PATTERN "relay_control.h" EXCLUDE
     )
 
     install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/fixtures

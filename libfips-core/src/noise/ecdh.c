@@ -1,5 +1,5 @@
 #include <fips/noise/ecdh.h>
-#include "../identity/internal.h"
+#include "identity/internal.h"
 #include <secp256k1_ecdh.h>
 
 #ifdef FIPS_TEST_HOOKS

@@ -1,5 +1,5 @@
 #include <fips/noise/handshake.h>
-#include "../tests/fakes/host.h"
+#include "fakes/host.h"
 #include <sodium.h>
 #include <stdlib.h>
 #include <string.h>

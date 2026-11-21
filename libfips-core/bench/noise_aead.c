@@ -2,7 +2,7 @@
  * 64/1400-byte payloads, 1024 presealed packets and replay reset on wrap.
  * C session outputs are caller-owned; Rust's session path allocates a Vec. */
 #include "bench.h"
-#include "../tests/fakes/host.h"
+#include "fakes/host.h"
 #include <fips/noise/session.h>
 #include <string.h>
 #define RING 1024u

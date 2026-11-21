@@ -46,7 +46,7 @@ set_target_properties(fips_core PROPERTIES
 target_include_directories(fips_core PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
   "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
-  PRIVATE "${fips_core_VERSION_HEADER_DIR}")
+  PRIVATE "${fips_core_VERSION_HEADER_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(fips_core PRIVATE
   PkgConfig::FIPS_CORE_SECP256K1 PkgConfig::FIPS_CORE_SODIUM OpenSSL::Crypto)
 # The OpenSSL AEAD backend keeps one EVP context per thread in a pthread key.

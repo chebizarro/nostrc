@@ -31509,6 +31509,7 @@
         "-DBUILD_GNOSTR_APP=OFF",
         "-DBUILD_GROUNDHOG=OFF",
         "-DSIGNET_ENABLE=OFF",
+        "-DBUILD_FIPS=OFF",
         "-DENABLE_TCP_IPC=ON",
         "-DNIP55L_TEST_TRUST_ENV=ON",
         "-DNIP55L_SECRET_BACKEND=libsecret",
@@ -31546,6 +31547,7 @@
         "-DBUILD_GNOSTR_APP=OFF",
         "-DBUILD_GROUNDHOG=OFF",
         "-DSIGNET_ENABLE=OFF",
+        "-DBUILD_FIPS=OFF",
         "-DENABLE_TCP_IPC=ON",
         "-DNIP55L_TEST_TRUST_ENV=ON",
         "-DNIP55L_SECRET_BACKEND=libsecret",
@@ -33202,7 +33204,7 @@
       "unsupported_reason": "FIPS source/package build and installed-service smoke on release tags or manual dispatch; not an attested selected-normal profile receipt.",
       "matrix_source": "",
       "source_sha256": "5fdccc588f702c1ed89497a58ff91d0944b09282b323f37c06aff12044d86472",
-      "workflow_sha256": "09a64fcb32a7c062a1c977bb63d579daff87b0ccaaf3be4938e49141ff96fe66"
+      "workflow_sha256": "d6abd0a469ff14d89fa161b19f9e548b0d29f61a3d48c52cbfd88275266d3cbe"
     },
     ".github/workflows/fips-packaging.yml:deb-build": {
       "profiles": [],
@@ -33210,7 +33212,7 @@
       "unsupported_reason": "FIPS source/package build and installed-service smoke on release tags or manual dispatch; not an attested selected-normal profile receipt.",
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "source_sha256": "bdfa60542a7ae7d902129bb744d7f62f9d6fe285a6ae32984a61ee954801b43d",
-      "workflow_sha256": "09a64fcb32a7c062a1c977bb63d579daff87b0ccaaf3be4938e49141ff96fe66"
+      "workflow_sha256": "d6abd0a469ff14d89fa161b19f9e548b0d29f61a3d48c52cbfd88275266d3cbe"
     },
     ".github/workflows/fips-packaging.yml:deb-install": {
       "profiles": [],
@@ -33218,15 +33220,15 @@
       "unsupported_reason": "FIPS source/package build and installed-service smoke on release tags or manual dispatch; not an attested selected-normal profile receipt.",
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "source_sha256": "5c2d35a7d119f3e89163efe2be93f05c9e825f76bab0ec1be28c7585616cf596",
-      "workflow_sha256": "09a64fcb32a7c062a1c977bb63d579daff87b0ccaaf3be4938e49141ff96fe66"
+      "workflow_sha256": "d6abd0a469ff14d89fa161b19f9e548b0d29f61a3d48c52cbfd88275266d3cbe"
     },
     ".github/workflows/fips-packaging.yml:rpm": {
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "FIPS source/package build and installed-service smoke on release tags or manual dispatch; not an attested selected-normal profile receipt.",
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
-      "source_sha256": "37c6ef500d534534861c8e8c80aaf2230a083501953cc916f7c2b301c97ff819",
-      "workflow_sha256": "09a64fcb32a7c062a1c977bb63d579daff87b0ccaaf3be4938e49141ff96fe66"
+      "source_sha256": "a106f8ef33ada328c2b7eace9dc4e79d796a7ba4f3ad8ce6ace5feeb4190ffb3",
+      "workflow_sha256": "d6abd0a469ff14d89fa161b19f9e548b0d29f61a3d48c52cbfd88275266d3cbe"
     },
     ".github/workflows/fips-packaging.yml:rpm-install": {
       "profiles": [],
@@ -33234,7 +33236,7 @@
       "unsupported_reason": "FIPS source/package build and installed-service smoke on release tags or manual dispatch; not an attested selected-normal profile receipt.",
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64, runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "source_sha256": "36339bbca852d9a3138fd5c6e2728d91674bcf1548651f933bab507122ad32b5",
-      "workflow_sha256": "09a64fcb32a7c062a1c977bb63d579daff87b0ccaaf3be4938e49141ff96fe66"
+      "workflow_sha256": "d6abd0a469ff14d89fa161b19f9e548b0d29f61a3d48c52cbfd88275266d3cbe"
     },
     ".github/workflows/fips-packaging.yml:arch": {
       "profiles": [],
@@ -33242,7 +33244,7 @@
       "unsupported_reason": "FIPS source/package build and installed-service smoke on release tags or manual dispatch; not an attested selected-normal profile receipt.",
       "matrix_source": "",
       "source_sha256": "d657ee7c845a2c1c6e96a18ff16d71fb50da7fc8aca495aca4c3aae1cc3a0ffa",
-      "workflow_sha256": "09a64fcb32a7c062a1c977bb63d579daff87b0ccaaf3be4938e49141ff96fe66"
+      "workflow_sha256": "d6abd0a469ff14d89fa161b19f9e548b0d29f61a3d48c52cbfd88275266d3cbe"
     },
     ".github/workflows/fips-packaging.yml:macos": {
       "profiles": [],
@@ -33250,7 +33252,7 @@
       "unsupported_reason": "FIPS source/package build and installed-service smoke on release tags or manual dispatch; not an attested selected-normal profile receipt.",
       "matrix_source": "",
       "source_sha256": "d2036bfe8fa86108fd8fd4576021a35a826282cd2773eff0dccd417ab3dcb085",
-      "workflow_sha256": "09a64fcb32a7c062a1c977bb63d579daff87b0ccaaf3be4938e49141ff96fe66"
+      "workflow_sha256": "d6abd0a469ff14d89fa161b19f9e548b0d29f61a3d48c52cbfd88275266d3cbe"
     }
   },
   "schema_version": 1,

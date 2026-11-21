@@ -4,6 +4,7 @@ endif()
 if(GNOSTR_ENABLE_TSAN OR GO_ENABLE_TSAN)
   message(FATAL_ERROR "FIPS fuzzers cannot be combined with TSan")
 endif()
+include_directories("${CMAKE_CURRENT_SOURCE_DIR}/../tests")
 # Instrument the implementation too, not only the input adapter.
 target_compile_options(fips_core PRIVATE -fsanitize=fuzzer-no-link)
 # Ordinary consumers also need coverage support, but never a libFuzzer main.
