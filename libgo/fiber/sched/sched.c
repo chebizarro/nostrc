@@ -82,6 +82,7 @@ static struct {
   int        npollers;
   int        poll_partition_enable; /* GOF_POLL_PARTITION=1 to route wakeups to partitioned workers */
   int        bootstrapped; /* only worker0 drains inject until set */
+  int        idle_cursor; /* S.mu: rotate untargeted notifications across idle workers */
   atomic_int live_fibers;  /* number of fibers not yet finished */
   int        steal_min_live;   /* min live fibers before enabling stealing */
   int        steal_min_victim; /* min victim queue length to allow stealing */
@@ -118,8 +119,10 @@ static void wake_worker_locked(gof_worker *w) {
 
 static void wake_one_locked(void) {
   if (!S.bootstrapped) { wake_worker_locked(&S.workers[0]); return; }
-  for (int i = 0; i < S.nworkers; ++i) {
+  for (int off = 0; off < S.nworkers; ++off) {
+    int i = (S.idle_cursor + off) % S.nworkers;
     if (S.workers[i].idle_until && !S.workers[i].wake_pending) {
+      S.idle_cursor = (i + 1) % S.nworkers;
       wake_worker_locked(&S.workers[i]); return;
     }
   }

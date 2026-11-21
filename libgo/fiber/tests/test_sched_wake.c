@@ -29,24 +29,29 @@ int main(void) {
   S.nworkers = 3;
   S.bootstrapped = 1;
   pthread_mutex_init(&S.mu, NULL);
-  for (int i = 0; i < 3; ++i) {
-    workers[i].index = i;
-    pthread_cond_init(&workers[i].cv, NULL);
-    assert(pthread_create(&threads[i], NULL, idle_worker, &workers[i]) == 0);
-  }
-  pthread_mutex_lock(&S.mu);
-  while (waiting != 3) pthread_cond_wait(&ready, &S.mu);
-  work[0] = work[1] = work[2] = 1;
-  wake_one_locked();
-  wake_one_locked(); /* must not collapse onto the first pending worker */
-  wake_worker_locked(&workers[2]);
-  wake_worker_locked(&workers[2]); /* targeted duplicate is harmless */
-  pthread_mutex_unlock(&S.mu);
-  for (int i = 0; i < 3; ++i) {
-    assert(pthread_join(threads[i], NULL) == 0);
-    pthread_cond_destroy(&workers[i].cv);
+  for (int round = 0; round < 3; ++round) {
+    waiting = 0;
+    memset(work, 0, sizeof(work));
+    for (int i = 0; i < 3; ++i) {
+      workers[i].index = i;
+      pthread_cond_init(&workers[i].cv, NULL);
+      assert(pthread_create(&threads[i], NULL, idle_worker, &workers[i]) == 0);
+    }
+    pthread_mutex_lock(&S.mu);
+    while (waiting != 3) pthread_cond_wait(&ready, &S.mu);
+    work[0] = work[1] = work[2] = 1;
+    wake_one_locked();
+    wake_one_locked(); /* must not collapse onto the first pending worker */
+    int target = (5 - round) % 3; /* the worker not selected by the rotating pair */
+    wake_worker_locked(&workers[target]);
+    wake_worker_locked(&workers[target]); /* targeted duplicate is harmless */
+    pthread_mutex_unlock(&S.mu);
+    for (int i = 0; i < 3; ++i) {
+      assert(pthread_join(threads[i], NULL) == 0);
+      pthread_cond_destroy(&workers[i].cv);
+    }
   }
   pthread_mutex_destroy(&S.mu);
-  puts("idle wakes: two distinct untargeted workers and one exact target");
+  puts("idle wakes: distinct untargeted workers, exact targets, rotating selection");
   return 0;
 }
