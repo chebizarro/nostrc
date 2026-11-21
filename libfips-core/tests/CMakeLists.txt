@@ -386,6 +386,11 @@ add_dependencies(fips_core_host_test fips_core_session_test)
 # validity oracle is the test's own libsecp256k1 context, not the port's.
 add_executable(fips_core_noise_negative_test test_noise_negative.c fakes/host.c
   ../src/noise/handshake.c ../src/noise/ecdh.c ../src/noise/cipher.c)
+# These test executables compile private Noise sources with hooks, rather than
+# using only the library objects; give them the same private source include root.
+foreach(target IN ITEMS fips_core_ecdh_test fips_core_handshake_test fips_core_noise_negative_test)
+  target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+endforeach()
 target_compile_definitions(fips_core_noise_negative_test PRIVATE FIPS_TEST_HOOKS FIPS_CORE_STATIC_DEFINE)
 target_link_libraries(fips_core_noise_negative_test PRIVATE fips_core
   PkgConfig::FIPS_CORE_SODIUM PkgConfig::FIPS_CORE_SECP256K1)
