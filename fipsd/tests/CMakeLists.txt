@@ -165,6 +165,12 @@ if(FIPSD_UPSTREAM_CONFIG_DIR)
 endif()
 
 # Node lifecycle, bounded worker pools and platform network monitor.
+fipsd_unit_test(fipsd_dispatch_fairness_test test_dispatch_fairness.c)
+add_dependencies(fipsd_tests fipsd_dispatch_fairness_test)
+add_test(NAME FipsdDispatchFairnessTest COMMAND fipsd_dispatch_fairness_test)
+set_tests_properties(FipsdDispatchFairnessTest PROPERTIES TIMEOUT 30 LABELS "fips;node"
+  ENVIRONMENT "FIPSD_WORKERS=1")
+nostrc_describe_test(FipsdDispatchFairnessTest OWNER fipsd TARGETS fipsd_dispatch_fairness_test)
 fipsd_unit_test(fipsd_node_lifecycle_test test_node_lifecycle.c)
 fipsd_unit_test(fipsd_node_workers_test test_node_workers.c)
 fipsd_unit_test(fipsd_node_netmon_test test_node_netmon.c)

@@ -288,6 +288,14 @@ bool fipsd_dp_link_send_ce(handlers *h, peer_rec *rec, fips_transport_id transpo
         FIPS_NOISE_TAG_SIZE > mtu) {
         fipsd_dp_reject_frame(h, FIPSD_DP_MTU); return false;
     }
+    /* A data-lane frame the lane would refuse now is refused before it takes a
+     * counter or an AEAD. Under saturation nearly every sealed frame was
+     * discarded at the lane, and that dispatcher and worker time starved
+     * rekey and receive processing. Farewells keep their attempt. */
+    if (!path_message(message, len) && !(len && message[0] == FIPS_LINK_Disconnect) &&
+        fipsd_transport_lane_admit(t, FIPSD_TRANSPORT_LANE_DATA, to)) {
+        ++h->counters.send_failed; return false;
+    }
     fips_rekey_sealed s = {0};
     if (fipsd_active_peer_link_seal(rec->peer, hs_now(h), &s) != FIPS_REKEY_SEAL_OK) {
         ++h->counters.send_failed; return false;
