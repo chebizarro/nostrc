@@ -1,0 +1,85 @@
+# Settlement core
+
+Source: `core/src/proto/settle/` in jmcorgan/fips at
+`64f5b4d482cfe14abad108ffc2d92128f7658311`.
+
+This directory ports **params, links, legs, gates, table arbitration and join**.
+Public headers are `fips/proto/settle.h` and, under `fips/proto/settle/`, `gates.h`,
+`input.h`, `output.h`, `table.h` and `join.h`. The independent test-only history/judge
+is under `model/`; it uses no production settlement types or algorithms. Test mapping and qualification:
+[`tests/SETTLE.md`](../../../tests/SETTLE.md).
+
+- `params.c`: upstream defaults, binary64 backoff/truncation; bounded deadlines
+  reuse the shared `fips/host.h` instant operations and `fips_deadline`.
+- `links.c`: bounded records/paths, derived-index queries, attribution, capability,
+  path migration, shared-connection release and retirement. Queries derive the
+  index from records instead of maintaining a second owning collection.
+- `legs.c`: dial/answer records, byte-identical resends, failed-send retry,
+  retained answers, deadlines, ordered poll/close, and explicit index-lease moves.
+
+The caller supplies storage, time and synchronization. No allocator, clock read,
+IO or global mutable state is used by the production core. Storage and arguments/outputs must not alias;
+initialized owning collections must be drained before reinitialization. Owning
+leg/lease values must not be copied or modified by callers. Supplied durations
+must be normalized (`nanos < 1000000000`) and instants must share a compatible
+host clock. Poll returns borrowed resend bytes until the next mutation; the host
+reports send success/failure explicitly. Reaped outputs return owning leases.
+
+C-local limits are caller-selected record/path capacities, transport address
+capacity and a 4096-byte transcript bound. Capacity/ID/transcript rejection is
+transactional. Poll conservatively preflights `1 + path_count` close slots per
+reaped link; this can exceed the number of actual deduplicated closes.
+
+- `gates.c`: all six restart sources, floors, replay/silent/redial memory,
+  dampener stamps, refused counts and identity expiry. Caller-selected identity
+  capacity and 64-entry per-identity ephemeral bounds fail transactionally.
+
+- `table.c`: admitted-msg1/answer protocol, connecting/dial lifecycle, crossing
+  tie-break, redial slots and proof-driven swaps, caps, ordered effects, path
+  attribution/moves, restart/removal and connection keep rules. Two disjoint
+  caller-owned arenas checkpoint fallible operations and swap only after success.
+  Infallible per-frame `Heard` reports update directly without copying arenas. A failure preserves
+  the live state, previous output list and input lease. Table outputs copy byte
+  payloads; Install/Free leases must be consumed before another mutation.
+
+- `model/`: independent abstract history, judgment and query APIs; 55 upstream
+  model test cases plus 13 gate/model histories are replayed in C. Only compiled
+  with `FIPS_TEST_HOOKS`; the default library contains no model implementation.
+
+- `join.c`: start/shift/stop of real rekey and path slots, ordered rekey routing,
+  eagerly snapshotted path/core mirrors and roam/bind reports. A caller-owned
+  iterator borrows output owners without copying leases, keys or driver slots.
+  Start refuses a foreign authenticated key transactionally. Shift preserves a
+  foreign-key machine and returns the unused setup lease; accepted shifts carry
+  replay/link-age state before renewing paths. Clear only after host effects.
+
+- `parity.c` (test-only): all 46 shared schedule descriptors, transport/mode
+  defaults, typed marks/lines/core overrides, transactional trace reader/formatter,
+  and missing/duplicate/mismatched script scans. The fixed bounds and ASCII text
+  domain are documented in `parity.h`. Generated data is checked against Rust.
+  Reading the committed trace is not a claim of executing a node/world schedule.
+
+- `faults.c` (test-only): all 147 source names, 92 applicable core mutation
+  sites, caller-owned thread scopes and fail-closed selection. Production macros
+  are literal false. The registered mutation test kills every enabled mutation
+  only after unmutated controls pass; unsupported harness/candidate guards are
+  inventoried rather than exposed as no-op switches. C derives its index, so the
+  cached-index staleness mutation is structurally inapplicable. See
+  `tests/SETTLE-FAULTS.md` for every source site and boundary.
+
+Not yet ported: alternative candidate policies and wider explorers/simulators.
+The D1 rekey dependency is included by the approved normal merge.
+Test-only Rust replant/naming/drive helpers are not exposed. The production
+shell adapters `reap_leg`, `open_link`, `drop_leg`, `unadopt` and refused-count
+writers are provided. The test-only helpers/explorers are **not** claimed as covered simply because
+the production table and independent model have differential tests. Remaining
+world/explorer qualification is tracked in `nostrc-f12v2.8`; the production
+settlement modules and independent history/judge are implemented.
+No fipsd node/peer wiring is included.
+
+`upstream/` contains byte-for-byte snapshots of the upstream README and three
+spec files at the pin above. They describe the **whole upstream implementation**,
+not a claim that those rules are implemented here. Upstream source and specs
+remain authoritative. C-local resource/text bounds and the unported simulator
+boundary above are explicit; runtime differential tests are not a node-convergence
+or live-compatibility claim.

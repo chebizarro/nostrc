@@ -1,0 +1,1 @@
+core 5 n0 held=yes session=own dir=out setup=udp-home active=tcp-home heard=heard cause=late-dial-split

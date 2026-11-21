@@ -4,6 +4,7 @@ mod nostr;
 mod proto;
 mod rekey;
 mod support;
+mod settle;
 
 use fips_core::identity::sha256;
 use serde_json::{Value, json};
@@ -51,6 +52,7 @@ fn export(out: &Path) -> Result<()> {
         }
     }
     fs::create_dir_all(out)?;
+    settle::export(out)?;
     // Deterministic context blinding, not OS entropy. Does not change signatures.
     assert!(fips_core::identity::init_secp(&[0x42; 32]));
     basic::entropy(&Exporter {
