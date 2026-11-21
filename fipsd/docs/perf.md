@@ -1997,3 +1997,181 @@ Direct static gates passed: `check-unsequenced-args.py --root <worktree>`,
 `check-gui-test-gdk-frame.py` (55 sources), `check-linux-ci-packages.py`, and
 `git diff --check`. No workflow files, tracker state or pre-push wrapper were
 changed/run. The manifest keeps fipsd and fipsctl at 0.1.0 Unreleased.
+
+
+## Native client receive cost and burst headroom (wave 26)
+
+This follow-up to nostrc-u19cz.8/.9/.11 uses `96409f73c` as the before
+binary, not the older queue-only `810730485`. The production native delivery
+path, stream framing/readiness contract, per-flow limits and buffer sizing
+are unchanged. Only the performance driver's receiver changed: drain before
+polling (wait on `EAGAIN`), and verify the complete constant payload tail with
+`memcmp` rather than one assertion per byte. Sequence bounds, per-record
+length, timestamp handling and duplicate detection are unchanged.
+
+### Isolated client cost, not daemon capacity
+
+A diagnostic socketpair joined the **actual** `perf_native.c` drain function
+and the unchanged plain-POSIX `client.c`, compiled with `-O3 -DNDEBUG`.
+Two threads used `fips_native_send`/`fips_native_recv`, framed stream on
+macOS and SEQPACKET on Linux, 1200-byte records, two seconds offered traffic
+and a three-second receiver deadline. Every sent record had to be received
+exactly once with its complete payload intact. Process CPU includes both
+sender and receiver; it is not daemon CPU or a receive-only profile. Three
+before/after pairs ran in AB/BA/AB order, under the shared perf locks. The
+standalone diagnostic source/reproduction is in bead `nostrc-u19cz.8`.
+
+| Platform | Before CPU us/record, median (range) | After | Change |
+|---|---:|---:|---:|
+| macOS arm64 | 5.612 (5.303–5.709) | 4.206 (4.169–4.554) | -25.1% |
+| Linux arm64 VM | 2.629 (2.453–5.136) | 2.082 (1.650–2.237) | -20.8% |
+
+This measures removal of driver overhead, **not** a production libfipsnative
+speedup or a claim that the receive path no longer limits the mesh. Reading
+beyond one frame inside the existing public receive API would hide bytes
+from callers waiting on the descriptor; no such change was made.
+
+### Deterministic stalled-client socket capacity
+
+With neither endpoint reading, a nonblocking writer sent 1200-byte payloads
+until refused. Both the sender's `SO_SNDBUF` and peer's `SO_RCVBUF` were set
+to the requested budget. These are kernel/socket diagnostics, not end-to-end
+bursts or measured scheduling latency. Linux reports doubled accounting
+values; neither platform's reported option is a measurement of reserved RAM.
+
+| Platform / flow | Requested bytes | Reported sndbuf / rcvbuf | Whole records accepted |
+|---|---:|---:|---:|
+| macOS framed stream (1204 wire bytes) | 65,536 | 65,536 / 65,536 | 54 |
+| macOS framed stream | 262,144 | 262,144 / 262,144 | 217 |
+| macOS datagram | 65,536 | 65,536 / 65,536 | 53 |
+| macOS datagram | 262,144 | 262,144 / 262,144 | 215 |
+| Linux SEQPACKET | 65,536 | 131,072 / 131,072 | 57 |
+| Linux SEQPACKET | 262,144 | 524,288 / 524,288 | 228 |
+
+At the default 16-slot flow queue, 54 socket records plus 16 queued records
+are about 84,000 payload bytes: only 0.96 ms of idealized headroom at
+700 Mbit/s (2.24 ms at 300 Mbit/s). Actual queue/feeder occupancy and kernel
+accounting differ; this is not a guaranteed stall tolerance. Quadrupling the
+socket budget buys roughly four times this socket capacity, not a fix for a
+persistently slow client, and multiplies per-flow socket memory allowances.
+No default increase or new configuration knob is justified by a shared,
+heavily loaded host alone. Framed streams still park losslessly when the
+queue can hold the burst; an exhausted bounded queue still counts drops.
+FreeBSD's existing counted datagram drops are unchanged and were not
+qualified on a FreeBSD host.
+
+### Locked full-path comparison
+
+Each platform ran three AB/BA/AB before/after pairs at fixed 300/500/700
+payload Mbit/s and unpaced, three seconds each, 100 latency samples, C/C
+only. `perf_loopback.py` still checks every payload and duplicate and records
+native counter deltas. The host was shared with other wave-26 work and
+sanitizer tests; the perf locks prevent simultaneous timing runs, not other
+host work. Initial macOS measurements during compilation (load average
+89) are discarded. These are **loaded-host observations, not idle capacity
+baselines**; the ranges are too wide to infer an end-to-end improvement or
+attribute a limit to native `send` syscalls. `sendmmsg` is therefore not
+introduced speculatively. Linux direct SEQPACKET delivery is qualified by
+its native API, ordered direct-write, stalled-reader and slow-reader tests,
+not by a claim that it is faster than an unrelated historical revision.
+
+| Platform / offered Mbit/s | Before delivered Mbit/s median (range) | After | Before / after median loss |
+|---|---:|---:|---:|
+| macOS / 300 | 298.6 (290.1–298.7) | 298.9 (298.4–299.2) | 0.46% / 0.36% |
+| macOS / 500 | 495.0 (312.7–500.0) | 452.5 (406.1–490.4) | 0.99% / 9.51% |
+| macOS / 700 | 690.7 (548.0–698.2) | 647.2 (217.7–696.4) | 1.33% / 7.55% |
+| macOS / unpaced | 1527.4 (203.2–1562.9) | 1529.2 (660.3–1533.4) | 0.40% / 0.74% |
+| Linux VM / 300 | 231.1 (146.8–288.3) | 297.2 (213.6–298.8) | 22.94% / 0.89% |
+| Linux VM / 500 | 486.7 (282.6–492.4) | 467.8 (460.9–489.9) | 2.67% / 6.44% |
+| Linux VM / 700 | 606.0 (402.8–696.8) | 546.3 (487.8–690.5) | 13.42% / 21.96% |
+| Linux VM / unpaced | 750.9 (328.4–1246.4) | 666.4 (184.0–1191.9) | 15.99% / 19.54% |
+
+Fixed-rate loss includes offers refused by local send-side backpressure, not
+only receiver queue drops. Receiver `native.drop_flow_queue_full` increments
+were observed on both versions; the socket/queue budgets remain bounded.
+The modest/no full-path median improvement, wide ranges and high host load
+are a written finding for the production receive-cost and send-batching
+hypotheses, not proof of a regression or a production throughput fix.
+
+Reproduction (absolute roots; use saved before binaries from `96409f73c` and
+candidate binaries, alternate AB/BA/AB rather than run all before first):
+
+```sh
+# macOS; on Linux use ROOT=/home/bizarro/w26-native/src,
+# BUILD=/home/bizarro/w26-native/build and flock /tmp/w26-perf.lock.
+ROOT=/Users/bizarro/Documents/Projects/nostrc-wt/w26-native
+BUILD="$ROOT/.build-release"
+lockf /tmp/w26-mac-perf.lock python3 "$ROOT/fipsd/tests/perf_loopback.py" \
+  --fipsd "$BUILD/fipsd/fipsd" \
+  --native-tool "$BUILD/fipsd/tests/fipsd_perf_native" \
+  --rust /tmp/fips-rust-target-perffix/release/fips \
+  --pairs c-c --runs 1 --latency-samples 100 --paced-rate 300 --paced-seconds 3 \
+  --work-dir /tmp/w26-c-measure/repro --output /tmp/w26-c-measure/repro.json
+# Repeat at 500 and 700; for unpaced replace the two --paced-* flags with --seconds 3.
+# For Linux C/C only, --rust was the C daemon path (unused with --pairs c-c),
+# not a Rust control measurement. Native clients and daemons are both real C.
+```
+
+### Qualification and socket-directory consolidation
+
+`nostrc-jyag5` moves the four copies (control, native API, BLE-agent control,
+gateway control) into `fipsd_privilege_socket_parent` in `privilege.c`.
+The live-control regression for a missing directory beneath a symlinked
+ancestor (`/var` on macOS) is retained. The shared helper test additionally
+checks canonical XDG modes, unchanged existing custom/ancestor modes, final
+directory symlink/non-directory refusals, path bounds and newly created
+intermediate directories under umask 0077. All newly created directories
+receive the requested group and 0750; pre-existing ancestors are untouched.
+These PATCH-class daemon corrections fold into unreleased fipsd 0.1.1;
+libfipsnative is unchanged, and the performance driver is test-only. Other
+initial unreleased components retain their versions; no release/tag changes.
+
+Final commands and results (all build and VM directories were task-owned):
+
+```sh
+ROOT=/Users/bizarro/Documents/Projects/nostrc-wt/w26-native
+ASAN_OPTIONS=detect_leaks=0:strict_string_checks=1:halt_on_error=1 \
+UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+ctest --test-dir "$ROOT/.build-asan" -R '^Fips' -j6 --no-tests=error --output-on-failure
+TSAN_OPTIONS=halt_on_error=1 \
+ctest --test-dir "$ROOT/.build-tsan" -R '^Fips' -j6 --no-tests=error --output-on-failure
+# Linux VM
+ctest --test-dir /home/bizarro/w26-native/build \
+  -R '^Fipsd(Native|Control|Privilege|BleAgent|GatewayControl)' \
+  --no-tests=error --output-on-failure
+python3 /home/bizarro/w26-native/src/fipsd/tests/udp_interop.py \
+  --fipsd /home/bizarro/w26-native/build/fipsd/fipsd \
+  --rust /home/bizarro/w26-native/rust-target/release/fips \
+  --native-tool /home/bizarro/w26-native/build/fipsd/tests/fipsd_native_client_tool \
+  --rust-echo /home/bizarro/w26-native/rust-target/release/examples/native-echo --family 4
+# Windows VM (PowerShell, MSYS2 CLANGARM64 tools on PATH)
+cmake --build C:/Users/bizarro/w26-native/build -j4 --target fipsd fipsd_tests
+ctest --test-dir C:/Users/bizarro/w26-native/build \
+  -R '^Fipsd(Native|Control)' --no-tests=error --output-on-failure
+```
+
+| Platform / configuration | Final result |
+|---|---|
+| macOS Debug/Werror ASan+UBSan | 214 passed, 11 skipped, 1 disabled, 0 failed; 135.90 s |
+| macOS Debug/Werror TSan, vendored instrumented nsync | 214 passed, 11 skipped, 1 disabled, 0 failed; 202.28 s |
+| Linux arm64 Release/Werror native/control/privilege/BLE/gateway | 13 passed, 2 skipped, 0 failed; 14.40 s |
+| Linux C-client→Rust-daemon and unmodified Rust-client→fipsd | Both daemon initiator roles passed, IPv4 |
+| Windows 11 arm64 Debug/Werror build + TCP-control tests | Build passed; 2 passed, 0 failed; 14.67 s |
+
+macOS builds use `GO_ENABLE_ASAN=ON, GO_ENABLE_UBSAN=ON` or
+`GO_ENABLE_TSAN=ON, NOSTR_USE_SYSTEM_NSYNC=OFF`, and build `fipsd_tests` plus
+`libfips-core/all`. This is not an LSan qualification (`detect_leaks=0`).
+The eleven macOS skips are four privileged/BPF smokes and seven unbound
+optional Rust-control/TCP/Tor interop gates; the mixed UDP soak is disabled
+by default. The real UDP C↔Rust gates (IPv4/IPv6 and multi-node) **ran and
+passed** in both sanitizer selections. A separate macOS ASan C-client↔Rust
+daemon IPv4 run passed both roles; the pinned 6aa80504 Rust `native-echo`
+example explicitly refuses macOS, so the Rust-client direction is qualified
+on Linux instead (the failing macOS invocation is not a pass). The Linux
+skips are unbound Rust-fipsctl control interop and the macOS-only kqueue
+characterization. Windows excludes the POSIX helper and native API (no
+SCM_RIGHTS); its two selected tests are TCP control, not native-API proof.
+
+`test_perf_loopback.py` passed all nine tests. All five pre-push static
+checkers and `git diff --check` passed; no workflow changes, actionlint need,
+Nostr protocol edits or sibling-owned source changes.
