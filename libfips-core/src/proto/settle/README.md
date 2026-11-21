@@ -1,10 +1,11 @@
-# Settlement primitives (partial port)
+# Settlement core (port in progress)
 
 Source: `core/src/proto/settle/` in jmcorgan/fips at
 `64f5b4d482cfe14abad108ffc2d92128f7658311`.
 
-This directory ports **params, links, legs and gates**, not yet the full peer
-settlement machine. Input/output vocabulary is declared in sibling headers. Public API: `fips/proto/settle/settle.h`. Test mapping and qualification:
+This directory ports **params, links, legs, gates and table arbitration**.
+Public headers are under `fips/proto/settle/`: `settle.h`, `gates.h`,
+`input.h`, `output.h` and `table.h`. Join and the independent model follow. Test mapping and qualification:
 [`tests/SETTLE.md`](../../../tests/SETTLE.md).
 
 - `params.c`: upstream defaults, binary64 backoff/truncation; bounded deadlines
@@ -32,10 +33,18 @@ reaped link; this can exceed the number of actual deduplicated closes.
   dampener stamps, refused counts and identity expiry. Caller-selected identity
   capacity and 64-entry per-identity ephemeral bounds fail transactionally.
 
-Not yet ported: peer arbitration table, join policy,
+- `table.c`: admitted-msg1/answer protocol, connecting/dial lifecycle, crossing
+  tie-break, redial slots and proof-driven swaps, caps, ordered effects, path
+  attribution/moves, restart/removal and connection keep rules. Two disjoint
+  caller-owned arenas commit by swapping only after success. A failure preserves
+  the live state, previous output list and input lease. Table outputs copy byte
+  payloads; Install/Free leases must be consumed before another mutation.
+
+Not yet ported: join policy,
 parity schedules, mutation switches, model history/judge and explorers/simulators.
-Test-only Rust replant/naming/drive helpers and the shell-specific `reap_one`
-entrypoint are not exposed. Those are **not** replaced by a fake judge or by the
+Test-only Rust replant/naming/drive helpers are not exposed. The production
+shell adapters `reap_leg`, `open_link`, `drop_leg`, `unadopt` and refused-count
+writers are provided. Those are **not** replaced by a fake judge or by the
 Rust primitive differential oracle. Remaining core work: `nostrc-f12v2.8`.
 No fipsd node/peer wiring is included.
 

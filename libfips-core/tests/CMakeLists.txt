@@ -546,8 +546,8 @@ add_dependencies(fips_core_host_test fips_core_path_test fips_core_path_vectors_
 
 # Compile the actual settlement sources here too: GO_ENABLE_TSAN deliberately
 # leaves fips_core uninstrumented, but these sans-IO primitives need TSan proof.
-set(settle_test_sources ../src/proto/settle/params.c ../src/proto/settle/links.c ../src/proto/settle/legs.c ../src/proto/settle/gates.c)
-add_executable(fips_core_settle_test test_settle.c test_settle_gates.c fakes/host.c ${settle_test_sources})
+set(settle_test_sources ../src/proto/settle/params.c ../src/proto/settle/links.c ../src/proto/settle/legs.c ../src/proto/settle/gates.c ../src/proto/settle/table.c)
+add_executable(fips_core_settle_test test_settle.c test_settle_gates.c test_settle_table.c fakes/host.c ${settle_test_sources})
 target_link_libraries(fips_core_settle_test PRIVATE fips_core Threads::Threads)
 set_target_properties(fips_core_settle_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
 apply_warnings(fips_core_settle_test)

@@ -1,5 +1,6 @@
 #include <fips/proto/settle/settle.h>
 #include "../tests/fakes/host.h"
+#include "../tests/fakes/settle_table.h"
 #include <stdlib.h>
 #include <string.h>
 #define CHECK(x) do { if (!(x)) abort(); } while (0)
@@ -13,8 +14,55 @@ static fips_settle_pair pair(uint8_t n)
     fips_settle_pair p={.transport={(uint32_t)(n/16)}};
     CHECK(fips_transport_addr_new(&n,1,&p.addr)==FIPS_OK); return p;
 }
+static void fuzz_table(const uint8_t *data,size_t size)
+{
+    fips_node_addr me={{0}}; fips_settle_params p=fips_settle_params_default();
+    fips_test_settle_table *f=fips_test_settle_table_create(me,&p,4,8,64,64); fips_settle_table *t=&f->table;
+    uint32_t next=1; size_t returned=0; fips_rekey_index_source source={draw,&next}; uint64_t time=0;
+    for (size_t i=0;i+3<size && i<1024;i+=4) {
+        unsigned kind=data[i]%30; uint64_t link=data[i+1]%(fips_settle_table_links(t)->next+1);
+        fips_node_addr peer; memset(peer.bytes,(int)(data[i+1]%4+1),16); fips_settle_pair a=pair(data[i+2]),b=pair(data[i+3]);
+        fips_rekey_index_lease lease={0}; fips_settle_input in={.kind=(fips_settle_input_kind)kind};
+        uint8_t epoch[8],e[32]; memset(epoch,data[i+3]%3,8); memset(e,data[i+2],32);
+        if (kind<28) switch (in.kind) {
+        case FIPS_SETTLE_IN_DIAL: case FIPS_SETTLE_IN_PUNCHED:
+            CHECK(fips_rekey_allocate(source,&lease)); in.data.dial=(fips_settle_dial){.peer=peer,.to=a,.msg1={data+i,4},.lease=&lease,.has_link=(data[i+3]&1)!=0,.link=link,.has_cap=true,.cap=data[i+3]%8}; break;
+        case FIPS_SETTLE_IN_CONNECTING: in.data.connecting.peer=peer; in.data.connecting.to=a; in.data.connecting.has_cap=true; in.data.connecting.cap=data[i+3]%8; break;
+        case FIPS_SETTLE_IN_ARRIVED: in.data.arrived.from=a; in.data.arrived.bytes=(fips_settle_bytes){data+i,4}; break;
+        case FIPS_SETTLE_IN_MSG1: in.data.msg1.read=(fips_settle_read){.peer=peer,.from=a,.bytes={data+i,4}}; memcpy(in.data.msg1.read.epoch,epoch,8); memcpy(in.data.msg1.read.ephemeral,e,32); in.data.msg1.reachable=(data[i+3]&1)!=0; break;
+        case FIPS_SETTLE_IN_REPLACE: case FIPS_SETTLE_IN_REDIAL: in.data.read=(fips_settle_read){.peer=peer,.from=a,.bytes={data+i,4}}; memcpy(in.data.read.epoch,epoch,8); memcpy(in.data.read.ephemeral,e,32); break;
+        case FIPS_SETTLE_IN_LEG_HEARD: in.data.leg_heard.link=link; in.data.leg_heard.from=a; break;
+        case FIPS_SETTLE_IN_HELLO: CHECK(fips_rekey_allocate(source,&lease)); in.data.hello.link=link; in.data.hello.lease=&lease; in.data.hello.msg2=(fips_settle_bytes){data+i,4}; break;
+        case FIPS_SETTLE_IN_ABANDON: in.data.abandon.link=link; in.data.abandon.authorized=(data[i+3]&1)!=0; break;
+        case FIPS_SETTLE_IN_MSG2: in.data.msg2.link=link; in.data.msg2.from=a; memcpy(in.data.msg2.epoch,epoch,8); break;
+        case FIPS_SETTLE_IN_RESTARTED: case FIPS_SETTLE_IN_PEER_EPOCH: in.data.epoch.peer=peer; memcpy(in.data.epoch.epoch,epoch,8); break;
+        case FIPS_SETTLE_IN_HEARD: in.data.heard.peer=peer; in.data.heard.from=a; in.data.heard.kind=data[i+3]; break;
+        case FIPS_SETTLE_IN_MOVED: in.data.moved.link=link; in.data.moved.from=a; in.data.moved.to=b; in.data.moved.roam=(data[i+3]&1)!=0; break;
+        case FIPS_SETTLE_IN_SWITCHED: in.data.switched.link=link; in.data.switched.to=a; in.data.switched.proven=(fips_settle_proven)(data[i+3]%3); break;
+        case FIPS_SETTLE_IN_RELEASED: in.data.released.link=link; in.data.released.pair=a; in.data.released.keep=(data[i+3]&1)!=0; break;
+        case FIPS_SETTLE_IN_STATE: in.data.state.link=link; in.data.state.pair=a; in.data.state.proven=(fips_settle_proven)(data[i+3]%3); break;
+        case FIPS_SETTLE_IN_ENDED: case FIPS_SETTLE_IN_ORPHANED: case FIPS_SETTLE_IN_DISCONNECT: case FIPS_SETTLE_IN_DEAD: case FIPS_SETTLE_IN_ADMIN: in.data.peer=peer; break;
+        case FIPS_SETTLE_IN_CONNECT_FAILED: case FIPS_SETTLE_IN_SENT: case FIPS_SETTLE_IN_SEND_FAILED: case FIPS_SETTLE_IN_UNSENDABLE: case FIPS_SETTLE_IN_CAPABLE: in.data.link=link; break;
+        }
+        unsigned active=t->active; fips_settle_outputs previous=fips_settle_table_outputs(t); time+=(uint64_t)data[i+3]*100;
+        fips_status status=kind==28 ? fips_settle_table_poll(t,fips_test_instant(time)) : kind==29 ? fips_settle_table_close(t,fips_test_instant(time)) : fips_settle_table_step(t,&in,fips_test_instant(time));
+        if (status!=FIPS_OK) {
+            CHECK(t->active==active && fips_settle_table_outputs(t).items==previous.items && fips_settle_table_outputs(t).count==previous.count);
+            if (lease.live) release(&lease,&returned);
+        } else CHECK(!lease.live);
+        fips_settle_outputs out=fips_settle_table_outputs(t);
+        for (size_t j=0;j<out.count;++j) if (out.items[j].lease.live) { CHECK(out.items[j].kind==FIPS_SETTLE_OUT_INSTALL || out.items[j].kind==FIPS_SETTLE_OUT_FREE); release(&out.items[j].lease,&returned); }
+        size_t own=0; const fips_settle_legs *legs=fips_settle_table_legs(t);
+        for (size_t j=0;j<legs->capacity;++j) if (legs->slots[j].active) { CHECK(legs->slots[j].lease.live); ++own; }
+        CHECK(own+returned==next-1);
+    }
+    CHECK(fips_settle_table_close(t,fips_test_instant(time))==FIPS_OK); fips_settle_outputs out=fips_settle_table_outputs(t);
+    for (size_t i=0;i<out.count;++i) if (out.items[i].lease.live) release(&out.items[i].lease,&returned);
+    CHECK(returned==next-1); fips_test_settle_table_destroy(f,fips_test_instant(time));
+}
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
+    fuzz_table(data,size);
     fips_settle_links links; fips_settle_link records[4]; fips_settle_path paths[32];
     fips_settle_legs legs; fips_settle_leg slots[4];
     CHECK(fips_settle_links_init(&links,records,4,paths,8)==FIPS_OK);

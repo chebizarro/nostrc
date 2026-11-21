@@ -6,16 +6,16 @@ Source: `core/src/proto/settle/` at
 ## Scope
 
 Implemented: params, link records/paths/derived index/attribution/close rule,
-handshake legs/answers/resends/deadlines/lease ownership and restart gates.
-Input/output vocabulary is declared for the following table layer. This is a coherent
-primitive/gates layer, **not yet the settlement table or an independent model judge**.
+handshake legs/answers/resends/deadlines/lease ownership, restart gates,
+input/output vocabulary and production table arbitration. Join and the
+independent model judge are **not implemented yet**.
 No fipsd integration, hosted CI, live networking or full settlement convergence
 is claimed. Remaining core work is `nostrc-f12v2.8`; leave `nostrc-f12v2.7` open.
 Pinned upstream specs are in `src/proto/settle/upstream/`, verbatim and expressly
 not a claim that every upstream rule is implemented in this subset.
 
 The complete inventory below contains **369 actual Rust test functions in 36
-files**, including feature-gated slow tests: **18 ported, 16 covered-by, 335 not ported**. Covered-by is a many-to-many behavioral mapping,
+files**, including feature-gated slow tests: **96 ported, 16 covered-by, 257 not ported**. Covered-by is a many-to-many behavioral mapping,
 not a claim that every original assertion/helper was translated. Attribute-line
 numbers identify the pinned sources. An earlier raw substring count of 370
 included the string literal `"#[test]"` in `tests/mod.rs`'s source scanner;
@@ -32,8 +32,8 @@ failed sends, zero resend cap, short host clock and actual slot reuse followed
 by ascending close/lease output. Four pthreads run **independent** caller-owned
 states; shared-object mutation requires caller synchronization.
 
-`FipsDiffSettle` (`diff/settle.c`, `vectors/settle.json`) checks 13 traces and
-428 steps: 192 deterministic mixed link operations with every record, index,
+`FipsDiffSettle` (`diff/settle.c`, `vectors/settle.json`) checks 91 traces and
+1220 trace rows (including construction/cleanup): 192 deterministic mixed link operations with every record, index,
 placement and close snapshot, plus 11 leg traces varying multiplier, resend
 interval, origin cap, answer and failed-send retry. A gate trace checks all six sources, both floors, stamps, replay/silent/redial
 memory, partial forgetting, refusal counts, identity lapse and split clocks.
@@ -42,18 +42,30 @@ this tests gate semantics, not hashing. The new exporter module
 `tools/fips-vectors/src/settle.rs` executes unmodified upstream `fips-core` at
 the exact pin, not a C-derived oracle. It rejects mutation environment switches.
 The replay rejects wrong pin/family/schema, trace count and mismatched outputs.
-This is **primitive equivalence**, not an independent history/model judge.
+The 78 table traces run every original `tests/table.rs` assertion body in
+`settle/table_tests.rs` against pinned upstream and record every production
+input, ordered output and public state view for C replay. Adaptations are
+imports/test registration, observing (not changing) digest construction, one
+private gate-writer fixture, and removing candidate-only output arms absent
+from the dependency's `test-hooks` build. Original behavioral assertions are
+preserved. Cleanup closes/drains each table explicitly and is also replayed.
+This is **table/primitive equivalence**, not an independent model judge.
+Native `test_settle_table.c` additionally checks post-partial-write arena
+rollback, input lease preservation, connecting facts overriding dial facts,
+unconsumed-output ownership barriers and idempotent close.
 Other exporter families and shared pin metadata remain D1-owned.
 
 `FIPS_ENABLE_FUZZERS=ON` adds `fips_fuzz_settle`. The core is instrumented with
-`-fsanitize=fuzzer-no-link`. Bounded link/leg operations check lease conservation
-and uniqueness after every step and drain owners at exit. This is not a
+`-fsanitize=fuzzer-no-link`. Bounded link/leg operations and all 28 table inputs plus poll/close check
+lease conservation after every step, failure rollback and owner draining.
+Table fuzz identities are bounded to the caller arena's four identity slots. This is not a
 replacement for upstream worlds, scheduler exploration or mutation testing.
 
 ## Not-ported reasons
 
-- **CORE**: table arbitration and join need the full unported state
-  machine and input/output vocabulary. No substitute helper coverage claimed.
+- **CORE**: join needs the upstream rekey/path adapter vocabulary and lifecycle.
+  Its redial dependency is absent from the assigned C rekey port; no substitute
+  adapter or swallowed rekey output is claimed.
 - **MODEL**: independent model history/judge and their 55 tests remain unported.
   Rust primitive differential traces do not replace this independent judge.
 - **WORLD**: deterministic transports/nodes, starts, simulation, regression,
@@ -68,14 +80,16 @@ replacement for upstream worlds, scheduler exploration or mutation testing.
   no equivalent C structural scan is claimed by this partial module.
 
 Infrastructure helpers without test attributes are not counted as tests.
-The shell-specific `reap_one` entrypoint and test-only replant/naming/drive
-helpers are not exposed in the C subset. See the module README for API bounds.
+The production `reap_leg` shell adapter is implemented; test-only
+replant/naming/drive helpers are not exposed. See the module README for API bounds.
 
 ## Qualification commands
 
-2026-11-21, macOS arm64 (Homebrew LLVM) and Ubuntu 24.04 arm64 (`clang-18`):
-warnings-as-errors; **2/2 pass, zero skipped** per platform under ASan+UBSan and
-separately TSan; **20,000 fuzz runs clean per platform** (ASan+UBSan).
+2026-11-21: each vocabulary/gates and table layer passes **2/2, zero skipped**
+on macOS arm64 (Homebrew LLVM), separately under ASan+UBSan and TSan, with
+warnings-as-errors. The initial params/links/legs subset passed both sanitizer
+configurations and 20,000 fuzz runs on Ubuntu 24.04 arm64 (`clang-18`); the
+new layers' Linux qualification is pending until end-of-task verification.
 The TSan test executables compile all three settlement sources directly because
 global CMake deliberately leaves the core archive uninstrumented under TSan.
 No suppression or sanitizer exclusion was added.
@@ -547,84 +561,84 @@ hosted CI acceptance.
 
 | Upstream test (attribute line) | Disposition | C coverage / reason |
 |---|---|---|
-| `a_restarted_peers_epoch_its_rekey_took_makes_its_msg1_at_that_epoch_a_rekey` (L251) | not ported | CORE (see boundary above) |
-| `a_path_moved_rekeys_the_links_index_entry_to_the_new_pair` (L278) | not ported | CORE (see boundary above) |
-| `a_path_switched_adds_the_new_pair_to_the_index` (L300) | not ported | CORE (see boundary above) |
-| `a_path_released_drops_its_pair_and_closes_unless_in_use_or_kept` (L308) | not ported | CORE (see boundary above) |
-| `a_path_state_change_to_probing_stops_it_counting_as_in_use` (L343) | not ported | CORE (see boundary above) |
-| `a_msg1_from_a_proven_path_is_on_the_link` (L358) | not ported | CORE (see boundary above) |
-| `a_capable_peers_bare_setup_pair_is_off_the_link_in_the_table` (L425) | not ported | CORE (see boundary above) |
-| `a_msg1_from_the_pair_the_core_holds_the_peer_at_with_no_path_there_is_off_the_link` (L460) | not ported | CORE (see boundary above) |
-| `a_msg1_from_a_pair_whose_path_is_probing_is_off_the_link` (L476) | not ported | CORE (see boundary above) |
-| `a_msg1_from_a_setup_pair_the_index_names_another_link_at_is_off_the_link` (L515) | not ported | CORE (see boundary above) |
-| `a_punched_input_opens_a_dial_leg_at_the_punched_pair` (L545) | not ported | CORE (see boundary above) |
-| `a_failed_msg2_send_keeps_the_stored_answer_for_the_resend` (L559) | not ported | CORE (see boundary above) |
-| `an_unsent_dial_resend_is_tried_again_at_the_next_tick_and_not_before` (L576) | not ported | CORE (see boundary above) |
-| `a_failed_dial_resend_is_due_at_the_next_poll_whatever_its_instant` (L623) | not ported | CORE (see boundary above) |
-| `a_send_failure_after_a_dials_last_resend_asks_for_no_more` (L679) | not ported | CORE (see boundary above) |
-| `an_answer_whose_msg2_cannot_be_sent_is_given_up_and_closes_nothing` (L728) | not ported | CORE (see boundary above) |
-| `a_msg1_from_the_address_of_an_unsent_answer_draws_that_answer_whatever_its_bytes` (L753) | not ported | CORE (see boundary above) |
-| `an_orphaned_bundle_removes_the_peer_and_retires_its_link` (L773) | not ported | CORE (see boundary above) |
-| `an_orphaned_bundles_peer_is_retried` (L790) | not ported | CORE (see boundary above) |
-| `a_restarted_or_replaced_peer_is_retried_in_each_of_the_three_ways` (L808) | not ported | CORE (see boundary above) |
-| `an_orphaned_peer_closes_its_bundles_paths_and_not_a_setup_pair_released_to_keep` (L872) | not ported | CORE (see boundary above) |
-| `a_teardown_of_a_capable_link_closes_each_path_but_the_one_the_peer_sends_on` (L924) | not ported | CORE (see boundary above) |
-| `a_link_not_known_capable_keeps_its_other_paths_at_an_operator_disconnect` (L951) | not ported | CORE (see boundary above) |
-| `a_link_not_known_capable_keeps_its_other_paths_at_a_move` (L965) | not ported | CORE (see boundary above) |
-| `an_operator_disconnect_closes_the_peers_pair_though_a_dial_uses_it` (L1003) | not ported | CORE (see boundary above) |
-| `a_msg1_past_the_admission_cap_is_rejected_and_holds_no_leg` (L1023) | not ported | CORE (see boundary above) |
-| `a_crossing_moves_the_smaller_node_and_retires_the_inbound_link` (L1075) | not ported | CORE (see boundary above) |
-| `a_crossing_decided_by_the_tie_break_alone_moves_the_smaller_node_onto_its_dial` (L1093) | not ported | CORE (see boundary above) |
-| `a_second_dial_to_a_peer_held_on_this_nodes_own_dial_moves_the_peer_onto_it` (L1113) | not ported | CORE (see boundary above) |
-| `a_move_onto_this_nodes_own_dial_makes_the_peering_heard` (L1140) | not ported | CORE (see boundary above) |
-| `a_frame_moves_the_instant_of_the_peerings_last_frame` (L1157) | not ported | CORE (see boundary above) |
-| `a_move_onto_a_dial_answered_from_the_peers_other_pair_keeps_that_pair_open` (L1185) | not ported | CORE (see boundary above) |
-| `a_move_onto_a_dial_answered_from_the_peers_other_pair_closes_the_dials_own_connection` (L1207) | not ported | CORE (see boundary above) |
-| `a_move_that_makes_the_peering_heard_forgets_its_replay_memory_and_keeps_its_silent_sessions` (L1233) | not ported | CORE (see boundary above) |
-| `a_frame_on_a_peering_heard_from_its_install_keeps_the_replay_memory_and_forgets_the_silent_sessions` (L1283) | not ported | CORE (see boundary above) |
-| `an_own_dials_session_that_ends_before_the_peers_first_frame_counts_as_a_silent_session` (L1332) | not ported | CORE (see boundary above) |
-| `a_late_second_dial_in_order_retires_the_link_moved_off` (L1375) | not ported | CORE (see boundary above) |
-| `a_move_resets_peer_data` (L1403) | not ported | CORE (see boundary above) |
-| `the_table_and_the_record_read_the_mirror_the_same_way` (L1432) | not ported | CORE (see boundary above) |
-| `a_connecting_dials_pair_is_in_use_before_its_msg1_and_a_failed_connect_retires_it_with_no_lease` (L1497) | not ported | CORE (see boundary above) |
-| `a_dial_given_up_while_connecting_closes_nothing` (L1529) | not ported | CORE (see boundary above) |
-| `a_dial_after_its_connect_starts_its_leg_on_the_link_the_connect_opened` (L1554) | not ported | CORE (see boundary above) |
-| `a_move_onto_a_later_dial_to_a_peer_held_on_the_link_it_dialled_ends_the_pin` (L1625) | not ported | CORE (see boundary above) |
-| `a_move_onto_a_dial_made_before_the_peer_was_held_keeps_the_pin` (L1646) | not ported | CORE (see boundary above) |
-| `a_second_dial_made_before_the_peer_was_held_and_answered_after_a_crossing_ends_the_pin` (L1667) | not ported | CORE (see boundary above) |
-| `a_refused_msg1_asks_for_no_answer` (L1725) | not ported | CORE (see boundary above) |
-| `a_rekey_msg1_asks_for_no_answer` (L1746) | not ported | CORE (see boundary above) |
-| `an_abandoned_answer_frees_its_link_and_takes_no_lease` (L1765) | not ported | CORE (see boundary above) |
-| `a_restarts_teardown_comes_before_its_answer_is_asked_for` (L1800) | not ported | CORE (see boundary above) |
-| `a_msg1_from_a_new_identity_at_the_peer_cap_is_refused_before_any_answer` (L1854) | not ported | CORE (see boundary above) |
-| `a_replacement_for_an_identity_not_held_at_the_peer_cap_is_refused_before_any_answer` (L1869) | not ported | CORE (see boundary above) |
-| `a_held_identity_at_the_peer_cap_restarts_as_before` (L1888) | not ported | CORE (see boundary above) |
-| `a_dial_completing_to_a_new_identity_at_the_peer_cap_is_not_installed` (L1916) | not ported | CORE (see boundary above) |
-| `an_answer_sent_to_a_new_identity_once_the_peer_cap_filled_is_not_installed` (L1948) | not ported | CORE (see boundary above) |
-| `a_zero_peer_cap_admits_any_number` (L1981) | not ported | CORE (see boundary above) |
-| `a_switch_moves_the_held_record_to_the_new_active_path_in_the_table` (L1990) | not ported | CORE (see boundary above) |
-| `a_frame_from_another_transport_moves_nothing_in_the_core` (L2031) | not ported | CORE (see boundary above) |
-| `a_one_path_roam_moves_the_cores_record_and_resets_once` (L2060) | not ported | CORE (see boundary above) |
-| `a_path_the_bundle_followed_moves_the_cores_record_and_resets_nothing` (L2092) | not ported | CORE (see boundary above) |
-| `a_switch_to_an_acknowledged_path_leaves_it_acknowledged` (L2131) | not ported | CORE (see boundary above) |
-| `a_redial_opens_a_leg_and_leaves_the_held_peer` (L2194) | not ported | CORE (see boundary above) |
-| `a_msg1_from_the_address_of_a_sent_answer_is_read_unless_it_is_the_msg1_answered` (L2208) | not ported | CORE (see boundary above) |
-| `a_frame_under_a_sent_redial_leg_replaces_the_held_peer_for_redial` (L2233) | not ported | CORE (see boundary above) |
-| `a_redial_leg_reaped_at_its_deadline_leaves_the_held_peer` (L2279) | not ported | CORE (see boundary above) |
-| `a_redial_leg_whose_peer_is_gone_installs_at_its_send_and_is_no_longer_a_redial` (L2306) | not ported | CORE (see boundary above) |
-| `one_redial_leg_per_identity` (L2332) | not ported | CORE (see boundary above) |
-| `the_redial_memory_refuses_a_seen_ephemeral` (L2367) | not ported | CORE (see boundary above) |
-| `a_reap_of_one_leg_reaps_only_that_leg_and_only_from_its_deadline` (L2394) | not ported | CORE (see boundary above) |
-| `a_second_redial_within_the_unheard_floor_of_the_first_is_held_back` (L2428) | not ported | CORE (see boundary above) |
-| `a_redial_within_the_dampener_of_a_swap_is_refused` (L2455) | not ported | CORE (see boundary above) |
-| `a_redials_answer_leaves_the_held_peer_until_a_frame_proves_it` (L2496) | not ported | CORE (see boundary above) |
-| `a_pending_redials_leg_is_reaped_at_its_deadline` (L2517) | not ported | CORE (see boundary above) |
-| `a_redials_leg_installed_at_its_send_is_no_longer_a_pending_redial` (L2533) | not ported | CORE (see boundary above) |
-| `a_redial_abandoned_after_its_acl_passed_is_noted_in_the_redial_memory` (L2559) | not ported | CORE (see boundary above) |
-| `a_peer_a_redials_swap_replaces_is_retried` (L2605) | not ported | CORE (see boundary above) |
-| `a_redials_swap_installs_the_peer_unheard_and_its_frames_heard_hears_it` (L2626) | not ported | CORE (see boundary above) |
-| `an_operator_disconnect_abandons_the_peers_pending_redial` (L2666) | not ported | CORE (see boundary above) |
-| `a_redials_answer_given_up_as_unsendable_is_no_longer_a_pending_redial` (L2698) | not ported | CORE (see boundary above) |
+| `a_restarted_peers_epoch_its_rekey_took_makes_its_msg1_at_that_epoch_a_rekey` (L251) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_path_moved_rekeys_the_links_index_entry_to_the_new_pair` (L278) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_path_switched_adds_the_new_pair_to_the_index` (L300) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_path_released_drops_its_pair_and_closes_unless_in_use_or_kept` (L308) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_path_state_change_to_probing_stops_it_counting_as_in_use` (L343) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_msg1_from_a_proven_path_is_on_the_link` (L358) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_capable_peers_bare_setup_pair_is_off_the_link_in_the_table` (L425) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_msg1_from_the_pair_the_core_holds_the_peer_at_with_no_path_there_is_off_the_link` (L460) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_msg1_from_a_pair_whose_path_is_probing_is_off_the_link` (L476) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_msg1_from_a_setup_pair_the_index_names_another_link_at_is_off_the_link` (L515) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_punched_input_opens_a_dial_leg_at_the_punched_pair` (L545) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_failed_msg2_send_keeps_the_stored_answer_for_the_resend` (L559) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `an_unsent_dial_resend_is_tried_again_at_the_next_tick_and_not_before` (L576) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_failed_dial_resend_is_due_at_the_next_poll_whatever_its_instant` (L623) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_send_failure_after_a_dials_last_resend_asks_for_no_more` (L679) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `an_answer_whose_msg2_cannot_be_sent_is_given_up_and_closes_nothing` (L728) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_msg1_from_the_address_of_an_unsent_answer_draws_that_answer_whatever_its_bytes` (L753) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `an_orphaned_bundle_removes_the_peer_and_retires_its_link` (L773) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `an_orphaned_bundles_peer_is_retried` (L790) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_restarted_or_replaced_peer_is_retried_in_each_of_the_three_ways` (L808) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `an_orphaned_peer_closes_its_bundles_paths_and_not_a_setup_pair_released_to_keep` (L872) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_teardown_of_a_capable_link_closes_each_path_but_the_one_the_peer_sends_on` (L924) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_link_not_known_capable_keeps_its_other_paths_at_an_operator_disconnect` (L951) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_link_not_known_capable_keeps_its_other_paths_at_a_move` (L965) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `an_operator_disconnect_closes_the_peers_pair_though_a_dial_uses_it` (L1003) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_msg1_past_the_admission_cap_is_rejected_and_holds_no_leg` (L1023) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_crossing_moves_the_smaller_node_and_retires_the_inbound_link` (L1075) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_crossing_decided_by_the_tie_break_alone_moves_the_smaller_node_onto_its_dial` (L1093) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_second_dial_to_a_peer_held_on_this_nodes_own_dial_moves_the_peer_onto_it` (L1113) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_move_onto_this_nodes_own_dial_makes_the_peering_heard` (L1140) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_frame_moves_the_instant_of_the_peerings_last_frame` (L1157) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_move_onto_a_dial_answered_from_the_peers_other_pair_keeps_that_pair_open` (L1185) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_move_onto_a_dial_answered_from_the_peers_other_pair_closes_the_dials_own_connection` (L1207) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_move_that_makes_the_peering_heard_forgets_its_replay_memory_and_keeps_its_silent_sessions` (L1233) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_frame_on_a_peering_heard_from_its_install_keeps_the_replay_memory_and_forgets_the_silent_sessions` (L1283) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `an_own_dials_session_that_ends_before_the_peers_first_frame_counts_as_a_silent_session` (L1332) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_late_second_dial_in_order_retires_the_link_moved_off` (L1375) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_move_resets_peer_data` (L1403) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `the_table_and_the_record_read_the_mirror_the_same_way` (L1432) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_connecting_dials_pair_is_in_use_before_its_msg1_and_a_failed_connect_retires_it_with_no_lease` (L1497) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_dial_given_up_while_connecting_closes_nothing` (L1529) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_dial_after_its_connect_starts_its_leg_on_the_link_the_connect_opened` (L1554) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_move_onto_a_later_dial_to_a_peer_held_on_the_link_it_dialled_ends_the_pin` (L1625) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_move_onto_a_dial_made_before_the_peer_was_held_keeps_the_pin` (L1646) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_second_dial_made_before_the_peer_was_held_and_answered_after_a_crossing_ends_the_pin` (L1667) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_refused_msg1_asks_for_no_answer` (L1725) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_rekey_msg1_asks_for_no_answer` (L1746) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `an_abandoned_answer_frees_its_link_and_takes_no_lease` (L1765) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_restarts_teardown_comes_before_its_answer_is_asked_for` (L1800) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_msg1_from_a_new_identity_at_the_peer_cap_is_refused_before_any_answer` (L1854) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_replacement_for_an_identity_not_held_at_the_peer_cap_is_refused_before_any_answer` (L1869) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_held_identity_at_the_peer_cap_restarts_as_before` (L1888) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_dial_completing_to_a_new_identity_at_the_peer_cap_is_not_installed` (L1916) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `an_answer_sent_to_a_new_identity_once_the_peer_cap_filled_is_not_installed` (L1948) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_zero_peer_cap_admits_any_number` (L1981) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_switch_moves_the_held_record_to_the_new_active_path_in_the_table` (L1990) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_frame_from_another_transport_moves_nothing_in_the_core` (L2031) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_one_path_roam_moves_the_cores_record_and_resets_once` (L2060) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_path_the_bundle_followed_moves_the_cores_record_and_resets_nothing` (L2092) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_switch_to_an_acknowledged_path_leaves_it_acknowledged` (L2131) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_redial_opens_a_leg_and_leaves_the_held_peer` (L2194) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_msg1_from_the_address_of_a_sent_answer_is_read_unless_it_is_the_msg1_answered` (L2208) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_frame_under_a_sent_redial_leg_replaces_the_held_peer_for_redial` (L2233) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_redial_leg_reaped_at_its_deadline_leaves_the_held_peer` (L2279) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_redial_leg_whose_peer_is_gone_installs_at_its_send_and_is_no_longer_a_redial` (L2306) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `one_redial_leg_per_identity` (L2332) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `the_redial_memory_refuses_a_seen_ephemeral` (L2367) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_reap_of_one_leg_reaps_only_that_leg_and_only_from_its_deadline` (L2394) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_second_redial_within_the_unheard_floor_of_the_first_is_held_back` (L2428) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_redial_within_the_dampener_of_a_swap_is_refused` (L2455) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_redials_answer_leaves_the_held_peer_until_a_frame_proves_it` (L2496) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_pending_redials_leg_is_reaped_at_its_deadline` (L2517) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_redials_leg_installed_at_its_send_is_no_longer_a_pending_redial` (L2533) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_redial_abandoned_after_its_acl_passed_is_noted_in_the_redial_memory` (L2559) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_peer_a_redials_swap_replaces_is_retried` (L2605) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_redials_swap_installs_the_peer_unheard_and_its_frames_heard_hears_it` (L2626) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `an_operator_disconnect_abandons_the_peers_pending_redial` (L2666) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
+| `a_redials_answer_given_up_as_unsendable_is_no_longer_a_pending_redial` (L2698) | ported | same-named upstream assertion body in `settle/table_tests.rs`; C table trace replay |
 ### `tests/world.rs`
 
 | Upstream test (attribute line) | Disposition | C coverage / reason |

@@ -204,9 +204,11 @@ static void *independent(void *ctx)
     (void)ctx; for (unsigned i=0; i<16; ++i) { links_test(); legs_test(); timing_test(); short_clock_test(); } return NULL;
 }
 void fips_test_settle_gates(void);
+void fips_test_settle_table_boundaries(void);
 int main(void)
 {
     fips_test_settle_gates();
+    fips_test_settle_table_boundaries();
     links_test(); legs_test(); timing_test(); short_clock_test();
     pthread_t threads[4];
     for (unsigned i=0; i<4; ++i) CHECK(pthread_create(&threads[i],NULL,independent,NULL)==0);

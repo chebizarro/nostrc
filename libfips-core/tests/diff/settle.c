@@ -1,6 +1,7 @@
 /* Independent family runner: does not alter D1's shared schema/pin scaffolding. */
 #include <fips/proto/settle/gates.h>
 #include "../fakes/host.h"
+#include "../fakes/settle_table.h"
 #include <jansson.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -224,6 +225,198 @@ static size_t check_gates(json_t *trace)
     }
     free(slots); return json_array_size(rows);
 }
+static size_t unhex(json_t *v,uint8_t *out,size_t capacity)
+{
+    const char *s=text(v); size_t n=strlen(s); REQUIRE(!(n&1) && n/2<=capacity);
+    for (size_t i=0;i<n;i+=2) {
+        const char *a=strchr("0123456789abcdef",s[i]), *b=strchr("0123456789abcdef",s[i+1]); REQUIRE(a && b);
+        out[i/2]=(uint8_t)((a-"0123456789abcdef")*16+(b-"0123456789abcdef"));
+    }
+    return n/2;
+}
+static void fixed(json_t *v,uint8_t *out,size_t n) { REQUIRE(unhex(v,out,n)==n); }
+static fips_node_addr full_node(json_t *v) { fips_node_addr p; fixed(v,p.bytes,16); return p; }
+static json_t *node_json(fips_node_addr p) { return hex_bytes(p.bytes,16); }
+static fips_settle_pair full_pair(json_t *v)
+{
+    uint64_t transport=at(v,0); REQUIRE(transport<=UINT32_MAX); fips_settle_pair p={.transport={(uint32_t)transport}};
+    uint8_t buf[FIPS_TRANSPORT_ADDR_CAPACITY]; size_t n=unhex(json_array_get(v,1),buf,sizeof(buf));
+    REQUIRE(fips_transport_addr_new(buf,n,&p.addr)==FIPS_OK); return p;
+}
+static json_t *pair_json(const fips_settle_pair *p)
+{ json_t *a=json_array(); add(a,integer(p->transport.value)); add(a,hex_bytes(p->addr.bytes,p->addr.len)); return a; }
+static fips_settle_read full_read(json_t *v,uint8_t *bytes)
+{
+    fips_settle_read r={.peer=full_node(json_array_get(v,0)),.from=full_pair(json_array_get(v,1))};
+    r.bytes=(fips_settle_bytes){bytes,unhex(json_array_get(v,2),bytes,FIPS_SETTLE_MESSAGE_CAPACITY)};
+    fixed(json_array_get(v,3),r.ephemeral,32); fixed(json_array_get(v,4),r.epoch,8); return r;
+}
+static fips_settle_input full_input(json_t *v,uint8_t *bytes,fips_rekey_index_lease *lease)
+{
+    uint64_t kind=at(v,0); REQUIRE(kind<=FIPS_SETTLE_IN_STATE); fips_settle_input in={.kind=(fips_settle_input_kind)kind};
+    json_t *a=json_array_get(v,1);
+    switch (in.kind) {
+    case FIPS_SETTLE_IN_DIAL: case FIPS_SETTLE_IN_PUNCHED:
+        in.data.dial.peer=full_node(json_array_get(a,0)); in.data.dial.to=full_pair(json_array_get(a,1));
+        in.data.dial.msg1=(fips_settle_bytes){bytes,unhex(json_array_get(a,2),bytes,FIPS_SETTLE_MESSAGE_CAPACITY)};
+        REQUIRE(at(a,3)<=UINT32_MAX); *lease=(fips_rekey_index_lease){.live=true,.index=(uint32_t)at(a,3)}; in.data.dial.lease=lease;
+        in.data.dial.has_cap=optional(json_array_get(a,4)); if (in.data.dial.has_cap) { REQUIRE(at(a,4)<=UINT32_MAX); in.data.dial.cap=(uint32_t)at(a,4); }
+        in.data.dial.has_link=optional(json_array_get(a,5)); if (in.data.dial.has_link) in.data.dial.link=at(a,5); break;
+    case FIPS_SETTLE_IN_CONNECTING:
+        in.data.connecting.peer=full_node(a); in.data.connecting.to=full_pair(json_array_get(v,2));
+        in.data.connecting.has_cap=optional(json_array_get(v,3)); if (in.data.connecting.has_cap) { REQUIRE(at(v,3)<=UINT32_MAX); in.data.connecting.cap=(uint32_t)at(v,3); } break;
+    case FIPS_SETTLE_IN_ARRIVED: in.data.arrived.from=full_pair(a); in.data.arrived.bytes=(fips_settle_bytes){bytes,unhex(json_array_get(v,2),bytes,FIPS_SETTLE_MESSAGE_CAPACITY)}; break;
+    case FIPS_SETTLE_IN_MSG1: in.data.msg1.read=full_read(a,bytes); in.data.msg1.reachable=boolean(json_array_get(v,2)); break;
+    case FIPS_SETTLE_IN_REPLACE: case FIPS_SETTLE_IN_REDIAL: in.data.read=full_read(a,bytes); break;
+    case FIPS_SETTLE_IN_LEG_HEARD: in.data.leg_heard.link=num(a); in.data.leg_heard.from=full_pair(json_array_get(v,2)); break;
+    case FIPS_SETTLE_IN_HELLO:
+        in.data.hello.link=num(a); in.data.hello.msg2=(fips_settle_bytes){bytes,unhex(json_array_get(v,2),bytes,FIPS_SETTLE_MESSAGE_CAPACITY)};
+        REQUIRE(at(v,3)<=UINT32_MAX); *lease=(fips_rekey_index_lease){.live=true,.index=(uint32_t)at(v,3)}; in.data.hello.lease=lease; break;
+    case FIPS_SETTLE_IN_ABANDON: in.data.abandon.link=num(a); in.data.abandon.authorized=boolean(json_array_get(v,2)); break;
+    case FIPS_SETTLE_IN_MSG2: in.data.msg2.link=num(a); fixed(json_array_get(v,2),in.data.msg2.epoch,8); in.data.msg2.from=full_pair(json_array_get(v,3)); break;
+    case FIPS_SETTLE_IN_RESTARTED: case FIPS_SETTLE_IN_PEER_EPOCH: in.data.epoch.peer=full_node(a); fixed(json_array_get(v,2),in.data.epoch.epoch,8); break;
+    case FIPS_SETTLE_IN_HEARD: in.data.heard.peer=full_node(a); in.data.heard.from=full_pair(json_array_get(v,2)); REQUIRE(at(v,3)<=UINT8_MAX); in.data.heard.kind=(uint8_t)at(v,3); break;
+    case FIPS_SETTLE_IN_MOVED: in.data.moved.link=num(a); in.data.moved.from=full_pair(json_array_get(v,2)); in.data.moved.to=full_pair(json_array_get(v,3)); in.data.moved.roam=boolean(json_array_get(v,4)); break;
+    case FIPS_SETTLE_IN_SWITCHED: in.data.switched.link=num(a); in.data.switched.to=full_pair(json_array_get(v,2)); REQUIRE(at(v,3)<=2); in.data.switched.proven=(fips_settle_proven)at(v,3); break;
+    case FIPS_SETTLE_IN_RELEASED: in.data.released.link=num(a); in.data.released.pair=full_pair(json_array_get(v,2)); in.data.released.keep=boolean(json_array_get(v,3)); break;
+    case FIPS_SETTLE_IN_STATE: in.data.state.link=num(a); in.data.state.pair=full_pair(json_array_get(v,2)); REQUIRE(at(v,3)<=2); in.data.state.proven=(fips_settle_proven)at(v,3); break;
+    case FIPS_SETTLE_IN_ENDED: case FIPS_SETTLE_IN_ORPHANED: case FIPS_SETTLE_IN_DISCONNECT: case FIPS_SETTLE_IN_DEAD: case FIPS_SETTLE_IN_ADMIN: in.data.peer=full_node(a); break;
+    case FIPS_SETTLE_IN_CONNECT_FAILED: case FIPS_SETTLE_IN_SENT: case FIPS_SETTLE_IN_SEND_FAILED: case FIPS_SETTLE_IN_UNSENDABLE: case FIPS_SETTLE_IN_CAPABLE: in.data.link=num(a); break;
+    }
+    return in;
+}
+static json_t *closes_json(fips_settle_outputs out,const fips_settle_output *o)
+{
+    REQUIRE(o->close_offset<=out.close_count && o->close_count<=out.close_count-o->close_offset);
+    json_t *a=json_array(); for (size_t i=0;i<o->close_count;++i) add(a,pair_json(&out.closes[o->close_offset+i])); return a;
+}
+static json_t *table_outputs_json(fips_settle_table *t)
+{
+    static const char *transitions[]={"Promote","Replace","Move","Keep","Restarted","Roam"};
+    static const char *whys[]={"Restart","Replacement","Redial","OwnRestart","Ended","Orphaned","Disconnect","Dead","Admin","Closed"};
+    static const char *sources[]={"NotHeld","Restart","Replacement","Redial","OwnMsg2","RekeyMsg2"};
+    static const char *refusals[]={"Accept","Unheard","Heard","Dampened","Replayed","ReplayFull","Silent","Redialed"};
+    fips_settle_outputs out=fips_settle_table_outputs(t); json_t *all=json_array();
+    for (size_t i=0;i<out.count;++i) {
+        fips_settle_output *o=&out.items[i]; json_t *a=json_array(); add(a,integer(o->kind));
+        switch (o->kind) {
+        case FIPS_SETTLE_OUT_OPENED: add(a,integer(o->link)); break;
+        case FIPS_SETTLE_OUT_ASK: add(a,integer(o->link)); add(a,node_json(o->peer)); break;
+        case FIPS_SETTLE_OUT_ANSWER: add(a,integer(o->link)); add(a,hex_bytes(o->bytes,o->length)); add(a,json_boolean(o->stored)); break;
+        case FIPS_SETTLE_OUT_RESEND: add(a,integer(o->link)); add(a,hex_bytes(o->bytes,o->length)); break;
+        case FIPS_SETTLE_OUT_REKEY: add(a,node_json(o->peer)); add(a,json_boolean(o->on_link)); add(a,json_boolean(o->reachable)); add(a,json_boolean(o->heard)); break;
+        case FIPS_SETTLE_OUT_INSTALL: REQUIRE(o->lease.live); add(a,node_json(o->peer)); add(a,integer(o->link)); add(a,pair_json(&o->pair)); add(a,json_boolean(o->build==FIPS_SETTLE_BUILD_FROM_CARRY)); add(a,json_boolean(o->initiator)); add(a,integer(o->lease.index)); break;
+        case FIPS_SETTLE_OUT_RESET: REQUIRE((unsigned)o->transition<6); add(a,node_json(o->peer)); add(a,json_string(transitions[o->transition])); break;
+        case FIPS_SETTLE_OUT_REMOVE: REQUIRE((unsigned)o->why<10); add(a,node_json(o->peer)); add(a,json_string(whys[o->why])); break;
+        case FIPS_SETTLE_OUT_RETIRE: case FIPS_SETTLE_OUT_RELEASE: add(a,integer(o->link)); add(a,closes_json(out,o)); break;
+        case FIPS_SETTLE_OUT_CLOSE: add(a,closes_json(out,o)); break;
+        case FIPS_SETTLE_OUT_FREE: REQUIRE(o->lease.live); add(a,integer(o->lease.index)); break;
+        case FIPS_SETTLE_OUT_SWAPPED: add(a,node_json(o->peer)); add(a,json_boolean(o->own)); add(a,json_boolean(o->unpin)); break;
+        case FIPS_SETTLE_OUT_RETRY: add(a,node_json(o->peer)); break;
+        case FIPS_SETTLE_OUT_REJECT: {
+            REQUIRE((unsigned)o->denial<4 && (unsigned)o->source<6 && (unsigned)o->refusal<8);
+            add(a,o->has_peer ? node_json(o->peer) : json_null()); add(a,o->has_source ? json_string(sources[o->source]) : json_null());
+            json_t *d=json_array(); add(d,integer(o->denial)); if (o->denial==FIPS_SETTLE_DENIAL_GATE) add(d,json_string(refusals[o->refusal])); add(a,d); break;
+        }
+        }
+        add(all,a);
+    }
+    return all;
+}
+static int node_cmp(const void *a,const void *b) { return memcmp(((const fips_node_addr *)a)->bytes,((const fips_node_addr *)b)->bytes,16); }
+typedef struct index_row { fips_settle_pair pair; uint64_t link; } index_row;
+static int index_cmp(const void *a,const void *b)
+{
+    const index_row *x=a,*y=b;
+    if (x->pair.transport.value!=y->pair.transport.value) return x->pair.transport.value<y->pair.transport.value ? -1 : 1;
+    size_t n=x->pair.addr.len<y->pair.addr.len ? x->pair.addr.len : y->pair.addr.len;
+    int c=memcmp(x->pair.addr.bytes,y->pair.addr.bytes,n); if (c) return c;
+    if (x->pair.addr.len!=y->pair.addr.len) return x->pair.addr.len<y->pair.addr.len ? -1 : 1;
+    return x->link==y->link ? 0 : x->link<y->link ? -1 : 1;
+}
+static json_t *table_snapshot(fips_settle_table *t,fips_instant now)
+{
+    fips_settle_table_state *s=&t->states[t->active];
+    json_t *root=json_object(),*records=json_array(),*index=json_array(),*peers=json_array(),*legs=json_array(),*gates=json_array(),*redials=json_array();
+    size_t capacity=s->storage.capacity*(s->storage.paths_per_link+1), count=0;
+    index_row *idx=fips_test_settle_array(capacity,sizeof(*idx));
+    for (uint64_t n=0;n<s->links.next;++n) {
+        const fips_settle_link *r=fips_settle_link_get(&s->links,n); if (!r) continue;
+        json_t *a=json_array(),*paths=json_array(); add(a,integer(n)); add(a,pair_json(&r->setup)); add(a,json_boolean(r->direction==FIPS_LINK_INBOUND));
+        add(a,r->holder.peer ? node_json(r->holder.identity) : json_null()); add(a,json_boolean(r->released)); add(a,json_boolean(r->capable));
+        if (!r->released) idx[count++]=(index_row){r->setup,n};
+        for (size_t i=0;i<r->path_count;++i) { json_t *p=json_array(); add(p,pair_json(&r->paths[i].pair)); add(p,integer(r->paths[i].state)); add(paths,p); if (r->paths[i].state!=FIPS_SETTLE_PROBING) idx[count++]=(index_row){r->paths[i].pair,n}; }
+        add(a,paths); add(records,a);
+    }
+    REQUIRE(count<=capacity); qsort(idx,count,sizeof(*idx),index_cmp);
+    for (size_t i=0;i<count;++i) if (!i || index_cmp(&idx[i-1],&idx[i])) { json_t *a=json_array(); add(a,pair_json(&idx[i].pair)); add(a,integer(idx[i].link)); add(index,a); }
+    free(idx);
+    fips_node_addr *known=fips_test_settle_array(2*s->storage.capacity+s->storage.gate_capacity,sizeof(*known)); size_t kn=0;
+    for (size_t i=0;i<s->storage.capacity;++i) { if (s->storage.held[i].active) known[kn++]=s->storage.held[i].peer; if (s->storage.meta[i].active && s->storage.meta[i].pending_redial) known[kn++]=s->storage.meta[i].peer; }
+    for (size_t i=0;i<s->gates.capacity;++i) if (s->gates.slots[i].active) known[kn++]=s->gates.slots[i].peer;
+    qsort(known,kn,sizeof(*known),node_cmp);
+    for (size_t i=0;i<kn;++i) {
+        if (i && !node_cmp(&known[i-1],&known[i])) continue;
+        fips_node_addr p=known[i]; const fips_settle_held *h=fips_settle_table_held(t,&p);
+        if (h) {
+            json_t *a=json_array(); add(a,node_json(p)); add(a,integer(h->link)); add(a,hex_bytes(h->epoch,8)); add(a,pair_json(&h->current)); add(a,json_boolean(h->heard));
+            add(a,integer(h->installed.opaque[0])); add(a,h->has_last ? integer(h->last.opaque[0]) : json_null()); add(a,h->has_setup ? hex_bytes(h->setup,32) : json_null()); add(a,h->has_sending ? pair_json(&h->sending) : json_null()); add(peers,a);
+        }
+        const fips_settle_memory *m=fips_settle_gate_get(&s->gates,&p);
+        if (m) {
+            json_t *a=json_array(),*silence=json_null(); add(a,node_json(p)); add(a,integer(m->replay_count)); add(a,integer(m->redial_count)); add(a,m->silence.present ? integer(m->silence.count) : json_null()); add(a,m->has_stamp ? integer(m->stamp.opaque[0]) : json_null());
+            fips_settle_silencing r;
+            if (fips_settle_gate_refusing(&s->gates,&p,now,&r)) { silence=json_array(); add(silence,r.has_epoch ? hex_bytes(r.epoch,8) : json_null()); add(silence,integer(r.silent)); add(silence,integer(r.remaining.secs*1000+r.remaining.nanos/1000000)); }
+            add(a,silence); add(gates,a);
+        }
+        uint64_t link; if (fips_settle_table_redialing(t,&p,&link)) { json_t *a=json_array(); add(a,node_json(p)); add(a,integer(link)); add(redials,a); }
+    }
+    free(known);
+    for (uint64_t n=0;n<s->links.next;++n) {
+        const fips_settle_leg *l=fips_settle_leg_get(&s->legs,n); if (!l) continue;
+        json_t *a=json_array(); add(a,integer(n)); add(a,l->has_peer ? node_json(l->peer) : json_null()); add(a,hex_bytes(l->msg1,l->msg1_len)); add(a,l->answer ? hex_bytes(l->msg2,l->msg2_len) : json_null());
+        add(a,integer(l->sent)); add(a,integer(l->resends)); add(a,l->has_next ? integer(l->next.opaque[0]) : json_null()); add(a,integer(l->deadline.opaque[0])); add(a,integer(l->lease.index)); add(a,l->has_held ? integer(l->held) : json_null()); add(legs,a);
+    }
+    put(root,"records",records); put(root,"index",index); put(root,"held",peers); put(root,"legs",legs); put(root,"gates",gates); put(root,"redials",redials);
+    fips_instant wake; bool found=fips_settle_table_next_wake(t,&wake); put(root,"wake",found ? integer(wake.opaque[0]) : json_null()); return root;
+}
+static size_t check_table(json_t *trace)
+{
+    fips_test_settle_table *tables[1024]={0}; fips_instant last[1024];
+    json_t *rows=field(trace,"rows"); REQUIRE(json_is_array(rows) && json_array_size(rows)>0); (void)text(field(trace,"test"));
+    for (size_t n=0;n<json_array_size(rows);++n) {
+        json_t *row=json_array_get(rows,n),*op=field(row,"op"); size_t id=(size_t)num(field(row,"id")); REQUIRE(id<1024);
+        const char *kind=text(json_array_get(op,0));
+        if (!strcmp(kind,"new")) {
+            REQUIRE(!tables[id]); fips_settle_params p=fips_settle_params_default(); p.pending=(size_t)at(op,2); p.peers=(size_t)at(op,3); REQUIRE(at(op,4)<=UINT32_MAX); p.resends=(uint32_t)at(op,4);
+            tables[id]=fips_test_settle_table_create(full_node(json_array_get(op,1)),&p,64,32,512,4096); last[id]=fips_test_instant(0); continue;
+        }
+        REQUIRE(tables[id]);
+        if (!strcmp(kind,"drop")) { fips_test_settle_table_destroy(tables[id],last[id]); tables[id]=NULL; continue; }
+        fips_settle_table *t=&tables[id]->table; fips_instant now=fips_test_instant(num(field(row,"now"))); last[id]=now;
+        fips_status status=FIPS_ERR_RANGE; bool fixture=false;
+        if (!strcmp(kind,"step")) {
+            uint8_t bytes[FIPS_SETTLE_MESSAGE_CAPACITY]; fips_rekey_index_lease lease={0}; fips_settle_input in=full_input(json_array_get(op,1),bytes,&lease);
+            status=fips_settle_table_step(t,&in,now); REQUIRE(status!=FIPS_OK || !lease.live);
+        } else if (!strcmp(kind,"poll")) status=fips_settle_table_poll(t,now);
+        else if (!strcmp(kind,"close")) status=fips_settle_table_close(t,now);
+        else if (!strcmp(kind,"reap")) status=fips_settle_table_reap_leg(t,at(op,1),now);
+        else if (!strcmp(kind,"gate_ended")) {
+            /* Pinned upstream test plants one silent-session record through a
+             * private writer. This fixture operation is not a production input. */
+            fixture=true; fips_node_addr peer=full_node(json_array_get(op,1)); uint8_t epoch[8],e[32]; bool ep=optional(json_array_get(op,2)), setup=optional(json_array_get(op,3)), started; fips_duration length;
+            if (ep) fixed(json_array_get(op,2),epoch,8); if (setup) fixed(json_array_get(op,3),e,32);
+            fips_instant memory=optional(json_array_get(op,4)) ? fips_test_instant(at(op,4)) : now;
+            status=fips_settle_gate_ended(&t->states[t->active].gates,peer,ep ? epoch : NULL,setup ? e : NULL,now,&memory,&t->params,&started,&length);
+        }
+        if (status!=FIPS_OK) fprintf(stderr,"table trace %s row %zu operation %s failed\n",text(field(trace,"test")),n,kind);
+        REQUIRE(status==FIPS_OK); REQUIRE(t->states[t->active].links.next==num(field(row,"next")));
+        if (!fixture) equal(table_outputs_json(t),field(row,"out"));
+        equal(table_snapshot(t,now),field(row,"state")); fips_test_settle_drain(t);
+    }
+    for (size_t i=0;i<1024;++i) REQUIRE(!tables[i]);
+    return json_array_size(rows);
+}
 int main(int argc, char **argv)
 {
     REQUIRE(argc<=2); json_error_t error;
@@ -233,12 +426,13 @@ int main(int argc, char **argv)
     REQUIRE(!strcmp(text(field(root,"pin")),PIN)); REQUIRE(!strcmp(text(field(root,"family")),"settle"));
     REQUIRE(!strcmp(text(field(root,"generator")),"fips-vectors")); REQUIRE(!strcmp(text(field(root,"generator_version")),"0.1.0"));
     REQUIRE(json_is_array(field(root,"gaps")));
-    json_t *cases=field(root,"cases"); REQUIRE(json_is_array(cases) && json_array_size(cases)==13);
+    json_t *cases=field(root,"cases"); REQUIRE(json_is_array(cases) && json_array_size(cases)==91);
     size_t rows=0;
     for (size_t i=0; i<json_array_size(cases); ++i) {
         json_t *trace=json_array_get(cases,i); const char *kind=text(field(trace,"kind"));
         if (!strcmp(kind,"links")) rows+=check_links(trace);
         else if (!strcmp(kind,"gates")) rows+=check_gates(trace);
+        else if (!strcmp(kind,"table")) rows+=check_table(trace);
         else { REQUIRE(!strcmp(kind,"legs")); rows+=check_legs(trace); }
     }
     printf("settle: %zu checked traces, %zu checked steps, 0 skipped, 0 failed\n",json_array_size(cases),rows);
