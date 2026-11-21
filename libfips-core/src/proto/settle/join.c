@@ -118,8 +118,12 @@ fips_status fips_settle_join(fips_settle_joined *j,fips_node_addr peer,const fip
         break;
     case FIPS_SETTLE_JOIN_ROAM:
         j->has_tail=true;
-        if (e->has_from) j->tail=(fips_settle_input){.kind=FIPS_SETTLE_IN_MOVED,.data.moved={.link=e->link,.from=e->from,.to=e->to,.roam=!e->standby || SETTLE_FAULT(StandbyRoamResets)}};
-        else j->tail=(fips_settle_input){.kind=FIPS_SETTLE_IN_STATE,.data.state={.link=e->link,.pair=e->to,.proven=FIPS_SETTLE_LIVE}}; break;
+        if (e->has_from) {
+            j->tail=(fips_settle_input){.kind=FIPS_SETTLE_IN_MOVED,.data.moved={.link=e->link,.from=e->from,.to=e->to,.roam=!e->standby || SETTLE_FAULT(StandbyRoamResets)}};
+        } else {
+            j->tail=(fips_settle_input){.kind=FIPS_SETTLE_IN_STATE,.data.state={.link=e->link,.pair=e->to,.proven=FIPS_SETTLE_LIVE}};
+        }
+        break;
     }
     return FIPS_OK;
 }

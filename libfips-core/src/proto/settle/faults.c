@@ -25,7 +25,8 @@ fips_status fips_settle_fault_enter(fips_settle_faults *set,fips_settle_faults *
 {
     if(set){unsigned tail=FIPS_SETTLE_FAULT_COUNT%64;if(tail && (set->bits[FIPS_SETTLE_FAULT_COUNT/64]>>tail))return FIPS_ERR_RANGE;
         for(unsigned f=0;f<FIPS_SETTLE_FAULT_COUNT;++f)if((set->bits[f/64]&(UINT64_C(1)<<(f%64)))&&!faults[f].supported)return FIPS_ERR_RANGE;}
-    if(previous)*previous=active;active=set;return FIPS_OK;
+    if(previous)*previous=active;
+    active=set;return FIPS_OK;
 }
 bool fips_settle_fault_on(fips_settle_fault f)
 { return active && (unsigned)f<FIPS_SETTLE_FAULT_COUNT && (active->bits[(unsigned)f/64]&(UINT64_C(1)<<((unsigned)f%64))); }

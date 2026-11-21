@@ -137,6 +137,8 @@ that linked undocumented symbols, and requires rebuilding those consumers.
 No release tag is published by this change; all other components have no
 B1-owned shipped artifact change and no B1 bump.
 
+nostrc-f12v2.9: no bump for libfips-core 0.1.0 Unreleased; settlement fuzz tagged-union construction and crash replay are test-only. GCC misleading-indentation fixes preserve production behavior and public API/ABI. No published version or release-tag change.
+
 nostrc-f12v2.7 (D2 subset): no bump for libfips-core 0.1.0 Unreleased; additive caller-owned settlement params/links/legs/gates/table/join APIs fold into the initial unreleased port. tools/fips-vectors stays 0.1.0 (test-only settlement oracle family); no published release/tag change. The independent history/judge, parity vocabulary/schedules/trace machinery and scoped mutation guards are test-only (FIPS_TEST_HOOKS), with no default-library artifact change. Alternative candidate policies and wider world/explorer infrastructure remain nostrc-f12v2.8.
 
 nostrc-f12v2.6: no bump for libfips-core 0.1.0 Unreleased; additive path codecs, bounded PathSet, policy/liveness and runtime-gated Bundle action-list APIs fold into the initial unreleased version; no published release/tag change.

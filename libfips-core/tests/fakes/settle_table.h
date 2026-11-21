@@ -23,7 +23,8 @@ static inline fips_test_settle_table *fips_test_settle_table_create(fips_node_ad
             .closes=fips_test_settle_array(closes,sizeof(fips_settle_pair)),
             .capacity=capacity,.paths_per_link=paths,.gate_capacity=capacity,.output_capacity=outputs,.close_capacity=closes};
     }
-    if (fips_settle_table_init(&f->table,me,p,storage)!=FIPS_OK) abort(); return f;
+    if (fips_settle_table_init(&f->table,me,p,storage)!=FIPS_OK) abort();
+    return f;
 }
 static inline void fips_test_settle_drain(fips_settle_table *t)
 {
