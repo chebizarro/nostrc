@@ -1,4 +1,4 @@
-#include "../tests/fakes/rekey.h"
+#include "fakes/rekey.h"
 #include <sodium.h>
 #include <string.h>
 /* Two peers, deterministic time, arbitrary delivery/drop/reorder/corruption.

@@ -174,9 +174,6 @@ static char *extract_content_preview(const char *json_str, size_t max_len) {
     return preview;
 }
 
-/* Define entry point based on whether we're using libFuzzer or standalone */
-#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
-
 /* libFuzzer entry point */
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (size < 2) {
@@ -325,7 +322,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     return 0;
 }
 
-#else /* Standalone test harness for AFL or manual testing */
+#ifndef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION /* Standalone harness */
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
@@ -363,14 +360,10 @@ int main(int argc, char *argv[]) {
     fclose(f);
 
     /* Call the fuzzer entry point */
-    extern int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
     int result = LLVMFuzzerTestOneInput(data, (size_t)size);
 
     free(data);
     return result;
 }
-
-/* Define the fuzzer function even in standalone mode */
-int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 
 #endif /* FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION */

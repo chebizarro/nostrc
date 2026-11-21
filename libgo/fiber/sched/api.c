@@ -1,6 +1,6 @@
 #include "../include/libgo/fiber.h"
 #include "sched.h"
-#include "../io/netpoll.h"
+#include "io/netpoll.h"
 #include <errno.h>
 #include <time.h>
 #include <stdio.h>

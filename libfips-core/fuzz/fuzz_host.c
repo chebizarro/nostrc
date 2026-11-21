@@ -1,5 +1,5 @@
 #include <fips/host.h>
-#include "../tests/fakes/host.h"
+#include "fakes/host.h"
 #include <stdlib.h>
 
 /* Fixed little-endian fields, zero-padded for short inputs; no invalid host

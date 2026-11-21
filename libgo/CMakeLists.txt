@@ -605,7 +605,8 @@ if(WIN32)
   # Winsock (WSARecvMsg/ConnectEx/AcceptEx come through WSAIoctl).
   target_link_libraries(go_fiber PUBLIC ws2_32 mswsock)
 endif()
-target_include_directories(go_fiber PUBLIC ${GOF_PUBLIC_INC})
+target_include_directories(go_fiber PUBLIC ${GOF_PUBLIC_INC}
+  PRIVATE ${GOF_FIBER_DIR})
 nostrc_library_visibility(go_fiber GO_FIBER_API libgo/fiber-export.h "${CMAKE_INSTALL_INCLUDEDIR}/libgo")
 if(GOF_PORTABLE_CONTEXT)
   target_compile_definitions(go_fiber PUBLIC GOF_PORTABLE_CONTEXT=1)

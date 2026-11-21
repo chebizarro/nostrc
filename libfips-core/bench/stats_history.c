@@ -5,7 +5,7 @@
  * peer, so it is O(n) either way); the arrival is evicted again by an untimed
  * tick 24 hours later, so n stays fixed. Host program: it reads a monotonic
  * clock and allocates; the core under test does neither. Not a ctest. */
-#include "../tests/fakes/host.h"
+#include "fakes/host.h"
 #include <fips/node/stats_history.h>
 #include <stdio.h>
 #include <stdlib.h>

@@ -32,7 +32,7 @@
 #include <nostr-relay.h>
 #include <nostr-envelope.h>
 #include <nostr-tag.h>
-#include "../../libnostr/src/relay-private.h"
+#include "nostr/testing/relay_control.h"
 #include "nostr/testing/mock_relay_server.h"
 #include "nostr_relay_test_hooks.h"
 

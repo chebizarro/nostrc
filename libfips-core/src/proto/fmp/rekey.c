@@ -1,6 +1,6 @@
 #include <fips/proto/fmp/rekey.h>
 #include <fips/identity/key.h>
-#include "../rekey/noise_profile.h"
+#include "proto/rekey/noise_profile.h"
 
 static bool initiate(void *ctx, const fips_peer_key *peer, fips_rekey_index ours,
                      fips_rekey_hs *hs, fips_rekey_wire *out) {

@@ -5,7 +5,7 @@
  * nothing expired and with 16 entries due, to show its cost follows what it
  * removes, not the capacity. Host program: it reads a monotonic clock and
  * allocates; the core under test does neither. Not a ctest. */
-#include "../tests/fakes/host.h"
+#include "fakes/host.h"
 #include <fips/cache/coord_cache.h>
 #include <inttypes.h>
 #include <stdio.h>

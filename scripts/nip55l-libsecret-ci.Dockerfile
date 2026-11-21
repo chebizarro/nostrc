@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake ninja-build meson pkg-config python3 patch \
     ca-certificates curl xz-utils gettext dbus-daemon \
     libglib2.0-dev libgcrypt20-dev libsecp256k1-dev libjansson-dev \
-    libwebsockets-dev libsodium-dev libssl-dev libcurl4-openssl-dev \
+    libwebsockets-dev libsodium-dev libssl-dev libcurl4-openssl-dev libsoup-3.0-dev \
     libnsync-dev \
  && rm -rf /var/lib/apt/lists/*
 

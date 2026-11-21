@@ -1,7 +1,7 @@
 #include <fips/noise/handshake.h>
 #include <fips/noise/ecdh.h>
 #include <fips/proto/framing.h>
-#include "../identity/internal.h"
+#include "identity/internal.h"
 
 _Static_assert(FIPS_NOISE_TAG_SIZE == FIPS_FRAMING_NOISE_TAG_SIZE, "Noise tag framing");
 _Static_assert(FIPS_NOISE_PUBKEY_SIZE == FIPS_FRAMING_NOISE_PUBKEY_SIZE, "Noise key framing");

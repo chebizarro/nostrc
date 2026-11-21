@@ -33,9 +33,9 @@
 #include <ws2tcpip.h>
 #include <mswsock.h>
 #include <windows.h>
-#include "../include/libgo/fiber.h"
+#include "libgo/fiber.h"
 #include "netpoll.h"
-#include "../sched/sched.h"
+#include "sched/sched.h"
 #include <errno.h>
 #include <limits.h>
 #include <pthread.h>
