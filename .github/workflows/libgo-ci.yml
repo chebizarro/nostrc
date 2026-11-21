@@ -272,6 +272,7 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
+            -DBUILD_FIPS=OFF \
             -DENABLE_FUZZING=ON \
             -DENABLE_FUZZING_RUNTIME=OFF \
             -DBUILD_LIBMARMOT=OFF \

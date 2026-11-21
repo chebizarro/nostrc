@@ -54,7 +54,7 @@ jobs:
           key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
 
       - name: Configure
-        run: scripts/ci/configure-release.sh build
+        run: scripts/ci/configure-release.sh build -DBUILD_FIPS=OFF
 
       - name: Build all targets
         run: |

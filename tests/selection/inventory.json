@@ -30232,6 +30232,7 @@
         "-DBUILD_LIBVAULT_MARMOT=OFF",
         "-DBUILD_APPS=OFF",
         "-DBUILD_RELAYD=OFF",
+        "-DBUILD_FIPS=OFF",
         "-DNOSTR_WITH_GLIB=OFF",
         "-DENABLE_NIP44=ON",
         "-DENABLE_NIP59=ON",
@@ -32381,9 +32382,9 @@
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "bdcee669f63a000a6450b2609b17cadcd4224522ed08697ad52a6e0671616f74",
+      "source_sha256": "51cf3a170804e46ec894454ee7b77eaf1d82b3bfdc83f791a243955a23d1010d",
       "unsupported_reason": "AppImage x86_64/aarch64 build, bundle and smoke artifacts are not modeled as executable package contracts; generic core/Groundhog profiles do not cover them.",
-      "workflow_sha256": "fee6eda253756cb0004ef5f3df2317d3ca1e96c66555b257d5d2d0360b8ba85e"
+      "workflow_sha256": "f49822834fd5427a24c51e0ef45660fa4ec8676a91caaf88dee8a7eb2b30e30e"
     },
     ".github/workflows/grotto-ci.yml:signer": {
       "matrix_source": "matrix:\n        include:\n          - {runner: ubuntu-24.04, mode: native}\n          - {runner: ubuntu-latest, mode: native}\n          - {runner: ubuntu-24.04, mode: asan-ubsan}\n          - {runner: ubuntu-24.04, mode: tsan}",
@@ -32598,7 +32599,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "8d360a701d27745a7582533376c42b89e132d0647d5ada98702bb798eb0b2edc",
       "unsupported_reason": "Only Linux/macOS asan_ubsan entries are authored; tsan, tsan_mpmc, W4 exclusion semantics, separate Linux gofiber and root fuzz-driver variants remain unsupported. macOS ASan stress exclusion remains not_executed.",
-      "workflow_sha256": "24cb04488abe1df01671e99c6d4fa60fbfc1444a3511ecaf0240bf0303eb53fe"
+      "workflow_sha256": "161e4a1b5b5e82d117e01bb383268fb630f490a1a7085e75bc9776fbc54dfadb"
     },
     ".github/workflows/libgo-ci.yml:gofiber-linux-sanitizers": {
       "matrix_source": "matrix:\n        sanitizer: [asan_ubsan, tsan]",
@@ -32606,15 +32607,15 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "fcf573d90fb2841f25422e84431ed02907e8cd2fb6e6353059d6530d295e9e67",
       "unsupported_reason": "Only Linux/macOS asan_ubsan entries are authored; tsan, tsan_mpmc, W4 exclusion semantics, separate Linux gofiber and root fuzz-driver variants remain unsupported. macOS ASan stress exclusion remains not_executed.",
-      "workflow_sha256": "24cb04488abe1df01671e99c6d4fa60fbfc1444a3511ecaf0240bf0303eb53fe"
+      "workflow_sha256": "161e4a1b5b5e82d117e01bb383268fb630f490a1a7085e75bc9776fbc54dfadb"
     },
     ".github/workflows/libgo-ci.yml:fuzz-driver": {
       "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "f8f83c95336f654a95e418a47460d5579b627ba5e68835a38f389a82c807f7c0",
+      "source_sha256": "a0ba548157588d3a5e260afd54ec012c07a60c0433973c5f8c437dd90dac74bc",
       "unsupported_reason": "Only Linux/macOS asan_ubsan entries are authored; tsan, tsan_mpmc, W4 exclusion semantics, separate Linux gofiber and root fuzz-driver variants remain unsupported. macOS ASan stress exclusion remains not_executed.",
-      "workflow_sha256": "24cb04488abe1df01671e99c6d4fa60fbfc1444a3511ecaf0240bf0303eb53fe"
+      "workflow_sha256": "161e4a1b5b5e82d117e01bb383268fb630f490a1a7085e75bc9776fbc54dfadb"
     },
     ".github/workflows/libhanami-ci.yml:build-and-test": {
       "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]",
@@ -32660,17 +32661,17 @@
       "matrix_source": "matrix:\n        include:\n          - distro: ubuntu-24.04\n            image: ubuntu:24.04\n            update: apt-get update\n            install: >-\n              apt-get install -y build-essential cmake pkg-config ninja-build\n              libjansson-dev libglib2.0-dev libgirepository1.0-dev\n              libsqlite3-dev libcurl4-openssl-dev\n              libfuse3-dev fuse3\n              libssl-dev libsecp256k1-dev\n              libwebsockets-dev libnsync-dev libsodium-dev libsoup-3.0-dev\n          - distro: debian-bookworm\n            image: debian:bookworm\n            update: apt-get update\n            install: >-\n              apt-get install -y build-essential cmake pkg-config ninja-build\n              libjansson-dev libglib2.0-dev gir1.2-glib-2.0\n              libsqlite3-dev libcurl4-openssl-dev\n              libfuse3-dev fuse3\n              libssl-dev libsecp256k1-dev\n              libwebsockets-dev libnsync-dev libsodium-dev libsoup-3.0-dev\n          - distro: fedora-40\n            image: fedora:40\n            update: dnf -y update\n            install: >-\n              dnf -y install @development-tools cmake ninja-build pkgconf-pkg-config gcc-c++ patch\n              jansson-devel glib2-devel gobject-introspection-devel\n              sqlite-devel libcurl-devel\n              fuse3-devel\n              openssl-devel libsecp256k1-devel\n              libwebsockets-devel libsodium-devel libsoup3-devel\n          - distro: archlinux\n            image: archlinux:latest\n            update: pacman -Syu --noconfirm\n            install: >-\n              pacman -S --noconfirm base-devel cmake ninja pkgconf\n              jansson glib2 gobject-introspection sqlite curl\n              fuse3\n              openssl libsecp256k1 libwebsockets libsodium libsoup3",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "1ced4ce5970c7ba55351644f144241243a95c883ea4b9a82dc243ad0908fcfea",
+      "source_sha256": "ba4b1905f94f68e1195a4e647d8f65274c3f2280ae6911907e4fd26c9ca5a160",
       "unsupported_reason": "Standalone Ubuntu five-unit headless profile is independently enrolled, not an alias for this legacy root configure (140 registrations including signer/runtime consumers). Four distro root setup/toolchain and advisory FUSE/secrets contracts remain separate; no privileged systemd session coverage is inferred.",
-      "workflow_sha256": "a47f37f363837ff8f72e0ca60679d02497cd78ba64b8bd6f70b7a8156d280715"
+      "workflow_sha256": "57f4d07644b769d78eb7170bb3925745fa0ca86e8de10059c678f88204179c90"
     },
     ".github/workflows/nostr-homed-ci.yml:systemd-opensession": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "bb97a198b976900312019344de2dcd0dc8234a2cc0d310ce30fc0e500386a757",
+      "source_sha256": "02fc898f107521f462904b4aa84185f145f9041e0e75a966cb4dcdec411fe757",
       "unsupported_reason": "Debian/Fedora/Ubuntu/Arch distro setup/toolchains and privileged systemd session/runtime contracts are unsupported; no-tests and requested-checkout hosted failures are not passing test acceptance.",
-      "workflow_sha256": "a47f37f363837ff8f72e0ca60679d02497cd78ba64b8bd6f70b7a8156d280715"
+      "workflow_sha256": "57f4d07644b769d78eb7170bb3925745fa0ca86e8de10059c678f88204179c90"
     },
     ".github/workflows/nostrc-ci.yml:build-and-test": {
       "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]\n        sanitizer: [asan_ubsan]",
