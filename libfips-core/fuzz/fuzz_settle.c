@@ -1,4 +1,5 @@
 #include <fips/proto/settle/settle.h>
+#include <fips/proto/settle/join.h>
 #include "../tests/fakes/host.h"
 #include "../tests/fakes/settle_table.h"
 #include <stdlib.h>
@@ -60,9 +61,38 @@ static void fuzz_table(const uint8_t *data,size_t size)
     for (size_t i=0;i<out.count;++i) if (out.items[i].lease.live) release(&out.items[i].lease,&returned);
     CHECK(returned==next-1); fips_test_settle_table_destroy(f,fips_test_instant(time));
 }
+static fips_settle_proven join_read(void *ctx,const fips_path_ref *p)
+{ (void)ctx; return (fips_settle_proven)(p->addr.len ? p->addr.bytes[0]%3 : 0); }
+static void fuzz_join(const uint8_t *data,size_t size)
+{
+    fips_settle_joined *j=calloc(1,sizeof(*j)); CHECK(j); fips_node_addr peer={{0}};
+    for (size_t i=0;i+3<size && i<512;i+=4) {
+        fips_settle_join_event e={0}; fips_rekey_outputs r={0};
+        fips_path_output paths[2]={0}; fips_path_outputs p={paths,2,2};
+        if (data[i]%3==0) {
+            e.kind=FIPS_SETTLE_JOIN_REKEY; e.rekey_out=&r; r.count=1;
+            r.items[0].kind=(fips_rekey_output_kind)(data[i+1]%18);
+            if (r.items[0].kind==FIPS_REKEY_OUT_Release) r.items[0].lease=(fips_rekey_index_lease){1,true};
+        } else if (data[i]%3==1) {
+            e.kind=FIPS_SETTLE_JOIN_PATHS; e.path_out=&p; e.read=join_read;
+            e.has_link=(data[i+1]&1)!=0; e.link=data[i+2]; e.has_released=(data[i+1]&2)!=0; e.released=data[i+3];
+            for (unsigned k=0;k<2;++k) { paths[k].kind=(fips_path_output_kind)((data[i+1]+k)%11); fips_settle_pair to=pair(data[i+2]); paths[k].to=(fips_path_ref){to.transport,to.addr}; paths[k].as.state.next=(fips_path_state)(data[i+3]%6); }
+        } else {
+            e.kind=FIPS_SETTLE_JOIN_ROAM; e.link=data[i+1]; e.has_from=(data[i+2]&1)!=0; e.standby=(data[i+2]&2)!=0; e.from=pair(data[i+2]); e.to=pair(data[i+3]);
+        }
+        CHECK(fips_settle_join(j,peer,&e)==FIPS_OK); fips_settle_join_step s; size_t steps=0;
+        while (fips_settle_join_next(j,&s)) {
+            CHECK(++steps<=4);
+            if(s.rekey) { CHECK(s.rekey==&r.items[0]); if(s.rekey->lease.live) {uint32_t index; CHECK(fips_rekey_index_lease_release(&s.rekey->lease,&index));} }
+            if(s.path) CHECK(s.path==&paths[0] || s.path==&paths[1]);
+        }
+        CHECK(steps>0); fips_rekey_outputs_clear(&r); fips_settle_join_clear(j);
+    }
+    free(j);
+}
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
-    fuzz_table(data,size);
+    fuzz_join(data,size); fuzz_table(data,size);
     fips_settle_links links; fips_settle_link records[4]; fips_settle_path paths[32];
     fips_settle_legs legs; fips_settle_leg slots[4];
     CHECK(fips_settle_links_init(&links,records,4,paths,8)==FIPS_OK);

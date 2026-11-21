@@ -206,11 +206,12 @@ static void *independent(void *ctx)
 void fips_test_settle_gates(void);
 void fips_test_settle_table_boundaries(void);
 void fips_test_settle_model(void);
+void fips_test_settle_join(void);
 int main(void)
 {
     fips_test_settle_gates();
     fips_test_settle_table_boundaries();
-    fips_test_settle_model();
+    fips_test_settle_model(); fips_test_settle_join();
     links_test(); legs_test(); timing_test(); short_clock_test();
     pthread_t threads[4];
     for (unsigned i=0; i<4; ++i) CHECK(pthread_create(&threads[i],NULL,independent,NULL)==0);

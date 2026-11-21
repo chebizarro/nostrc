@@ -206,7 +206,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 # Peer settlement primitives at 64f5b4d482cf (table/gates/judge remain separate).
-set(FIPS_SETTLE_SOURCES src/proto/settle/params.c src/proto/settle/links.c src/proto/settle/legs.c src/proto/settle/gates.c src/proto/settle/table.c)
+set(FIPS_SETTLE_SOURCES src/proto/settle/params.c src/proto/settle/links.c src/proto/settle/legs.c src/proto/settle/gates.c src/proto/settle/table.c src/proto/settle/join.c)
 target_sources(fips_core PRIVATE ${FIPS_SETTLE_SOURCES})
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   set_source_files_properties(src/proto/settle/params.c PROPERTIES

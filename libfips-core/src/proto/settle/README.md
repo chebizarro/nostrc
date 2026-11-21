@@ -3,9 +3,9 @@
 Source: `core/src/proto/settle/` in jmcorgan/fips at
 `64f5b4d482cfe14abad108ffc2d92128f7658311`.
 
-This directory ports **params, links, legs, gates and table arbitration**.
+This directory ports **params, links, legs, gates, table arbitration and join**.
 Public headers are under `fips/proto/settle/`: `settle.h`, `gates.h`,
-`input.h`, `output.h` and `table.h`. The independent test-only history/judge
+`input.h`, `output.h`, `table.h` and `join.h`. The independent test-only history/judge
 is under `model/`; it uses no production settlement types or algorithms. Test mapping and qualification:
 [`tests/SETTLE.md`](../../../tests/SETTLE.md).
 
@@ -46,11 +46,15 @@ reaped link; this can exceed the number of actual deduplicated closes.
   model test cases plus 13 gate/model histories are replayed in C. Only compiled
   with `FIPS_TEST_HOOKS`; the default library contains no model implementation.
 
-Not yet ported: join policy, parity schedules, mutation switches and
-explorers/simulators. Join requires the D1-owned rekey redial API
-(`Arrival.heard`, `RedialRequested`, `note_redial`), absent from this branch but
-now available in D1 commit `d45c2f239`. Importing that dependency awaits
-orchestration approval; no adapter stub is supplied.
+- `join.c`: start/shift/stop of real rekey and path slots, ordered rekey routing,
+  eagerly snapshotted path/core mirrors and roam/bind reports. A caller-owned
+  iterator borrows output owners without copying leases, keys or driver slots.
+  Start refuses a foreign authenticated key transactionally. Shift preserves a
+  foreign-key machine and returns the unused setup lease; accepted shifts carry
+  replay/link-age state before renewing paths. Clear only after host effects.
+
+Not yet ported: parity schedules, mutation switches and explorers/simulators.
+The D1 rekey dependency is included by the approved normal merge.
 Test-only Rust replant/naming/drive helpers are not exposed. The production
 shell adapters `reap_leg`, `open_link`, `drop_leg`, `unadopt` and refused-count
 writers are provided. The test-only helpers/explorers are **not** claimed as covered simply because

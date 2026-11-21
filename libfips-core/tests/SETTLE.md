@@ -8,14 +8,15 @@ Source: `core/src/proto/settle/` at
 Implemented: params, link records/paths/derived index/attribution/close rule,
 handshake legs/answers/resends/deadlines/lease ownership, restart gates,
 input/output vocabulary, production table arbitration and the independent
-model history/judge. Join and fault/parity integration are **not implemented yet**.
+model history/judge and the production join adapter. Fault/parity integration
+and dependent world infrastructure are **not implemented yet**.
 No fipsd integration, hosted CI, live networking or full settlement convergence
 is claimed. Remaining core work is `nostrc-f12v2.8`; leave `nostrc-f12v2.7` open.
 Pinned upstream specs are in `src/proto/settle/upstream/`, verbatim and expressly
 not a claim that every upstream rule is implemented in this subset.
 
 The complete inventory below contains **369 actual Rust test functions in 36
-files**, including feature-gated slow tests: **153 ported, 16 covered-by, 200 not ported**. Covered-by is a many-to-many behavioral mapping,
+files**, including feature-gated slow tests: **163 ported, 17 covered-by, 189 not ported**. Covered-by is a many-to-many behavioral mapping,
 not a claim that every original assertion/helper was translated. Attribute-line
 numbers identify the pinned sources. An earlier raw substring count of 370
 included the string literal `"#[test]"` in `tests/mod.rs`'s source scanner;
@@ -32,8 +33,8 @@ failed sends, zero resend cap, short host clock and actual slot reuse followed
 by ascending close/lease output. Four pthreads run **independent** caller-owned
 states; shared-object mutation requires caller synchronization.
 
-`FipsDiffSettle` (`diff/settle.c`, `vectors/settle.json`) checks 159 traces and
-1713 trace rows (including construction/cleanup): 192 deterministic mixed link operations with every record, index,
+`FipsDiffSettle` (`diff/settle.c`, `vectors/settle.json`) checks 160 traces and
+1789 trace rows (including construction/cleanup): 192 deterministic mixed link operations with every record, index,
 placement and close snapshot, plus 11 leg traces varying multiplier, resend
 interval, origin cap, answer and failed-send retry. A gate trace checks all six sources, both floors, stamps, replay/silent/redial
 memory, partial forgetting, refusal counts, identity lapse and split clocks.
@@ -61,7 +62,14 @@ full table-versus-model world or join equivalence.
 Native `test_settle_table.c` additionally checks post-partial-write arena
 rollback, input lease preservation, connecting facts overriding dial facts,
 unconsumed-output ownership barriers and idempotent close.
-Other exporter families and shared pin metadata remain D1-owned.
+Join adds 76 pinned upstream routing rows covering rekey routing, path/core
+interleaving with held/released link combinations, and active/standby roam/bind.
+Native tests also exercise real IK start/stop, refused foreign-key shifts,
+successful carry/renewal, lease returns and both option-slot flags. Rekey/path
+sources are compiled directly in both test executables for TSan qualification.
+D1's completed pin branch was merged normally as `5420a09a0`; full-SHA Cargo
+entries are retained. The workflow target and corpus names match the actual
+settlement targets; no CI line correction was needed.
 
 `FIPS_ENABLE_FUZZERS=ON` adds `fips_fuzz_settle`. The core is instrumented with
 `-fsanitize=fuzzer-no-link`. Bounded link/leg operations and all 28 table inputs plus poll/close check
@@ -71,13 +79,8 @@ replacement for upstream worlds, scheduler exploration or mutation testing.
 
 ## Not-ported reasons
 
-- **CORE**: join needs the upstream rekey/path adapter vocabulary and lifecycle.
-  `Arrival.heard`, `RedialRequested` and `note_redial` are absent from this
-  branch's C rekey port. D1 commit `d45c2f239` now supplies them on `wave26/pin`;
-  importing that sibling dependency needs orchestration approval. No substitute
-  adapter, duplicated rekey edit or swallowed rekey output is claimed.
 - **WORLD**: deterministic transports/nodes, starts, simulation, regression,
-  shadow and comparison infrastructure still need the complete joined core.
+  shadow and comparison infrastructure have not yet been ported.
 - **JOINT**: bounded explorers compose settlement, rekey/FMP/FSP, multipath and
   ordered effects. Existing C rekey/path modules alone cannot qualify this.
 - **LEGACY**: current-node/shell simulation and explorers need node parity;
@@ -99,7 +102,7 @@ warnings-as-errors. Final qualification of all delivered layers also passes
 **2/2, zero skipped** separately under ASan+UBSan and TSan on Ubuntu 24.04 arm64
 (`clang-18`), using the shared build lock and `-j4`. Both macOS and Linux complete
 20,000 ASan/UBSan fuzz runs clean. The final replay on each platform checks all
-159 traces / 1713 steps with zero skipped or failed.
+159 traces / 1713 steps (the previous layers); join's final Linux run is pending. with zero skipped or failed.
 The TSan test executables compile all production settlement sources directly because
 global CMake deliberately leaves the core archive uninstrumented under TSan.
 No suppression or sanitizer exclusion was added.
@@ -286,17 +289,17 @@ hosted CI acceptance.
 
 | Upstream test (attribute line) | Disposition | C coverage / reason |
 |---|---|---|
-| `each_rekey_output_routes_to_the_core_or_the_shell` (L210) | not ported | CORE (see boundary above) |
-| `each_bundle_output_mirrors_to_its_input` (L379) | not ported | CORE (see boundary above) |
-| `a_bundle_output_at_a_removal_reaches_no_link` (L396) | not ported | CORE (see boundary above) |
-| `a_released_path_goes_to_the_link_moved_off` (L408) | not ported | CORE (see boundary above) |
-| `a_roam_is_moved_and_a_bind_is_a_live_path` (L458) | not ported | CORE (see boundary above) |
-| `a_standby_paths_roam_is_moved_and_not_marked_a_roam` (L501) | not ported | CORE (see boundary above) |
-| `a_steps_outputs_come_back_in_order` (L528) | not ported | CORE (see boundary above) |
-| `a_rekey_step_through_join_allocates_nothing` (L604) | not ported | CORE (see boundary above) |
-| `a_start_mirrors_the_original_path_as_live` (L822) | not ported | CORE (see boundary above) |
-| `a_move_refused_for_another_key_leaves_both_machines_as_they_were` (L873) | not ported | CORE (see boundary above) |
-| `a_stop_files_what_the_rekey_machine_carried` (L939) | not ported | CORE (see boundary above) |
+| `each_rekey_output_routes_to_the_core_or_the_shell` (L210) | ported | `test_settle_join.c`: adapted upstream routing/lifecycle assertions; borrowed owners and real rekey/path machines. |
+| `each_bundle_output_mirrors_to_its_input` (L379) | ported | `test_settle_join.c`: adapted upstream routing/lifecycle assertions; borrowed owners and real rekey/path machines. |
+| `a_bundle_output_at_a_removal_reaches_no_link` (L396) | ported | `test_settle_join.c`: adapted upstream routing/lifecycle assertions; borrowed owners and real rekey/path machines. |
+| `a_released_path_goes_to_the_link_moved_off` (L408) | ported | `test_settle_join.c`: adapted upstream routing/lifecycle assertions; borrowed owners and real rekey/path machines. |
+| `a_roam_is_moved_and_a_bind_is_a_live_path` (L458) | ported | `test_settle_join.c`: adapted upstream routing/lifecycle assertions; borrowed owners and real rekey/path machines. |
+| `a_standby_paths_roam_is_moved_and_not_marked_a_roam` (L501) | ported | `test_settle_join.c`: adapted upstream routing/lifecycle assertions; borrowed owners and real rekey/path machines. |
+| `a_steps_outputs_come_back_in_order` (L528) | ported | `test_settle_join.c`: adapted upstream routing/lifecycle assertions; borrowed owners and real rekey/path machines. |
+| `a_rekey_step_through_join_allocates_nothing` (L604) | covered-by | The C iterator borrows the original output owner (pointer-identity checks), has no allocator calls and builds no intermediate output collection; Rust's thread allocation counter is not translated. |
+| `a_start_mirrors_the_original_path_as_live` (L822) | ported | `test_settle_join.c`: adapted upstream routing/lifecycle assertions; borrowed owners and real rekey/path machines. |
+| `a_move_refused_for_another_key_leaves_both_machines_as_they_were` (L873) | ported | `test_settle_join.c`: adapted upstream routing/lifecycle assertions; borrowed owners and real rekey/path machines. |
+| `a_stop_files_what_the_rekey_machine_carried` (L939) | ported | `test_settle_join.c`: adapted upstream routing/lifecycle assertions; borrowed owners and real rekey/path machines. |
 ### `tests/joint/explore.rs`
 
 | Upstream test (attribute line) | Disposition | C coverage / reason |
