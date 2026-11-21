@@ -204,3 +204,11 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   set_source_files_properties(src/proto/path/select.c src/proto/path/live.c PROPERTIES
     COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 endif()
+
+# Peer settlement primitives at 64f5b4d482cf (table/gates/judge remain separate).
+set(FIPS_SETTLE_SOURCES src/proto/settle/params.c src/proto/settle/links.c src/proto/settle/legs.c)
+target_sources(fips_core PRIVATE ${FIPS_SETTLE_SOURCES})
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  set_source_files_properties(src/proto/settle/params.c PROPERTIES
+    COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
+endif()

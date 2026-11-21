@@ -95,3 +95,17 @@ add_test(NAME FipsDiffRekeyLegacySelfTest COMMAND "${CMAKE_COMMAND}"
 set_tests_properties(FipsDiffRekeyLegacySelfTest PROPERTIES TIMEOUT 30 LABELS "fips;diff;negative;fips-diff")
 nostrc_describe_test(FipsDiffRekeyLegacySelfTest OWNER libfips-core TARGETS fips_diff
   INPUTS ${vector_inputs} "${CMAKE_CURRENT_SOURCE_DIR}/legacy_selftest.cmake")
+
+# Separate runner keeps D2's new family out of D1's shared exporter/replay edits.
+add_executable(fips_diff_settle settle.c ../fakes/host.c
+  ../../src/proto/settle/params.c ../../src/proto/settle/links.c ../../src/proto/settle/legs.c)
+target_link_libraries(fips_diff_settle PRIVATE fips_core PkgConfig::FIPS_DIFF_JANSSON)
+set_target_properties(fips_diff_settle PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+target_compile_definitions(fips_diff_settle PRIVATE FIPS_SETTLE_VECTOR="${CMAKE_CURRENT_SOURCE_DIR}/../vectors/settle.json")
+apply_warnings(fips_diff_settle)
+apply_sanitizers(fips_diff_settle)
+add_test(NAME FipsDiffSettle COMMAND fips_diff_settle)
+set_tests_properties(FipsDiffSettle PROPERTIES TIMEOUT 30 LABELS "fips;diff;fips-diff")
+nostrc_describe_test(FipsDiffSettle OWNER libfips-core TARGETS fips_diff_settle
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/../vectors/settle.json")
+add_dependencies(fips_core_host_test fips_diff_settle)

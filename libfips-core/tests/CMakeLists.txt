@@ -543,3 +543,16 @@ set_tests_properties(FipsCorePathVectorsTest PROPERTIES TIMEOUT 30 LABELS "fips;
 nostrc_describe_test(FipsCorePathVectorsTest OWNER libfips-core TARGETS fips_core_path_vectors_test
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/vectors/proto.json" "${CMAKE_CURRENT_SOURCE_DIR}/../UPSTREAM.md")
 add_dependencies(fips_core_host_test fips_core_path_test fips_core_path_vectors_test)
+
+# Compile the actual settlement sources here too: GO_ENABLE_TSAN deliberately
+# leaves fips_core uninstrumented, but these sans-IO primitives need TSan proof.
+set(settle_test_sources ../src/proto/settle/params.c ../src/proto/settle/links.c ../src/proto/settle/legs.c)
+add_executable(fips_core_settle_test test_settle.c fakes/host.c ${settle_test_sources})
+target_link_libraries(fips_core_settle_test PRIVATE fips_core Threads::Threads)
+set_target_properties(fips_core_settle_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_settle_test)
+apply_sanitizers(fips_core_settle_test)
+add_test(NAME FipsCoreSettleTest COMMAND fips_core_settle_test)
+set_tests_properties(FipsCoreSettleTest PROPERTIES TIMEOUT 30 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreSettleTest OWNER libfips-core TARGETS fips_core_settle_test)
+add_dependencies(fips_core_host_test fips_core_settle_test)

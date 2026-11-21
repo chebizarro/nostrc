@@ -1,0 +1,84 @@
+#include <fips/proto/settle/settle.h>
+#include "../tests/fakes/host.h"
+#include <stdlib.h>
+#include <string.h>
+#define CHECK(x) do { if (!(x)) abort(); } while (0)
+static bool draw(void *ctx, uint32_t *out) { uint32_t *next=ctx; *out=(*next)++; return true; }
+static void release(fips_rekey_index_lease *l, size_t *returned)
+{
+    uint32_t index; CHECK(fips_rekey_index_lease_release(l,&index)); ++*returned;
+}
+static fips_settle_pair pair(uint8_t n)
+{
+    fips_settle_pair p={.transport={(uint32_t)(n/16)}};
+    CHECK(fips_transport_addr_new(&n,1,&p.addr)==FIPS_OK); return p;
+}
+int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
+{
+    fips_settle_links links; fips_settle_link records[4]; fips_settle_path paths[32];
+    fips_settle_legs legs; fips_settle_leg slots[4];
+    CHECK(fips_settle_links_init(&links,records,4,paths,8)==FIPS_OK);
+    fips_settle_legs_init(&legs,slots,4);
+    fips_settle_params p=fips_settle_params_default();
+    uint32_t next=1; size_t returned=0;
+    fips_rekey_index_source source={draw,&next}; uint64_t time=0;
+    for (size_t i=0; i+3<size && i<1024; i+=4) {
+        uint64_t n=data[i+1]%(links.next+1); fips_settle_pair a=pair(data[i+2]), b=pair(data[i+3]);
+        switch (data[i]%10) {
+        case 0: {
+            fips_settle_holder h={0}; uint64_t number;
+            (void)fips_settle_link_open(&links,&a,data[i+3]&1 ? FIPS_LINK_INBOUND : FIPS_LINK_OUTBOUND,h,&number); break;
+        }
+        case 1: (void)fips_settle_link_path(&links,n,&a,(fips_settle_proven)(data[i+3]%3)); break;
+        case 2: (void)fips_settle_link_moved(&links,n,&a,&b); break;
+        case 3: {
+            fips_settle_pair closes[9]; size_t count;
+            (void)fips_settle_link_release(&links,n,&a,data[i+3]&1,closes,9,&count); break;
+        }
+        case 4: fips_settle_link_capable(&links,n); break;
+        case 5: {
+            fips_rekey_index_lease lease; CHECK(fips_rekey_allocate(source,&lease));
+            fips_settle_start start={.link=n,.msg1=data+i,.msg1_len=4,.lease=&lease,.has_cap=true,.cap=data[i+2]%8};
+            fips_settle_leg old;
+            fips_status status=fips_settle_leg_open(&legs,&start,data[i+3]&1,data+i,4,fips_test_instant(time),&p,&old);
+            if (status!=FIPS_OK) release(&lease,&returned);
+            else if (old.active) release(&old.lease,&returned);
+            break;
+        }
+        case 6: fips_settle_leg_unsent(&legs,n,fips_test_instant(time),&p); break;
+        case 7: {
+            fips_settle_leg old;
+            if (fips_settle_leg_take(&legs,n,&old)) release(&old.lease,&returned);
+            break;
+        }
+        case 8: {
+            fips_settle_holder h={.peer=true}; memset(h.identity.bytes,data[i+2],16);
+            fips_settle_link_hold(&links,n,h); break;
+        }
+        default: time+=(uint64_t)data[i+2]*1000; break;
+        }
+        fips_settle_leg_out out[4]; fips_settle_pair closes[36]; size_t count, cn;
+        CHECK(fips_settle_legs_poll(&legs,&links,fips_test_instant(time),false,out,4,&count,closes,36,&cn)==FIPS_OK);
+        for (size_t j=0; j<count; ++j) {
+            if (out[j].reaped) release(&out[j].lease,&returned);
+            else if (data[i+3]&1) fips_settle_leg_resent(&legs,out[j].link,fips_test_instant(time),&p);
+            else fips_settle_leg_unsent(&legs,out[j].link,fips_test_instant(time),&p);
+        }
+        size_t held=0;
+        for (size_t j=0; j<4; ++j) if (slots[j].active) {
+            ++held; CHECK(slots[j].lease.live && slots[j].msg1_len<=FIPS_SETTLE_MESSAGE_CAPACITY);
+            for (size_t k=j+1; k<4; ++k) if (slots[k].active) CHECK(slots[j].lease.index!=slots[k].lease.index && slots[j].link!=slots[k].link);
+        }
+        CHECK(held+returned==next-1);
+        for (size_t j=0; j<4; ++j) if (records[j].active) {
+            CHECK(records[j].path_count<=8);
+            fips_settle_placement at=fips_settle_place(&links,&a,records[j].number,NULL,NULL);
+            if (fips_settle_link_indexed(&links,records[j].number,&a)) CHECK(at.established);
+        }
+    }
+    fips_settle_leg_out out[4]; fips_settle_pair closes[36]; size_t count, cn;
+    CHECK(fips_settle_legs_poll(&legs,&links,fips_test_instant(time),true,out,4,&count,closes,36,&cn)==FIPS_OK);
+    for (size_t i=0; i<count; ++i) { CHECK(out[i].reaped); release(&out[i].lease,&returned); }
+    CHECK(returned==next-1);
+    return 0;
+}
