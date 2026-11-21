@@ -5,7 +5,8 @@ Source: `core/src/proto/settle/` in jmcorgan/fips at
 
 This directory ports **params, links, legs, gates and table arbitration**.
 Public headers are under `fips/proto/settle/`: `settle.h`, `gates.h`,
-`input.h`, `output.h` and `table.h`. Join and the independent model follow. Test mapping and qualification:
+`input.h`, `output.h` and `table.h`. The independent test-only history/judge
+is under `model/`; it uses no production settlement types or algorithms. Test mapping and qualification:
 [`tests/SETTLE.md`](../../../tests/SETTLE.md).
 
 - `params.c`: upstream defaults, binary64 backoff/truncation; bounded deadlines
@@ -36,16 +37,24 @@ reaped link; this can exceed the number of actual deduplicated closes.
 - `table.c`: admitted-msg1/answer protocol, connecting/dial lifecycle, crossing
   tie-break, redial slots and proof-driven swaps, caps, ordered effects, path
   attribution/moves, restart/removal and connection keep rules. Two disjoint
-  caller-owned arenas commit by swapping only after success. A failure preserves
+  caller-owned arenas checkpoint fallible operations and swap only after success.
+  Infallible per-frame `Heard` reports update directly without copying arenas. A failure preserves
   the live state, previous output list and input lease. Table outputs copy byte
   payloads; Install/Free leases must be consumed before another mutation.
 
-Not yet ported: join policy,
-parity schedules, mutation switches, model history/judge and explorers/simulators.
+- `model/`: independent abstract history, judgment and query APIs; 55 upstream
+  model test cases plus 13 gate/model histories are replayed in C. Only compiled
+  with `FIPS_TEST_HOOKS`; the default library contains no model implementation.
+
+Not yet ported: join policy, parity schedules, mutation switches and
+explorers/simulators. Join requires the D1-owned rekey redial API
+(`Arrival.heard`, `RedialRequested`, `note_redial`), absent from this branch but
+now available in D1 commit `d45c2f239`. Importing that dependency awaits
+orchestration approval; no adapter stub is supplied.
 Test-only Rust replant/naming/drive helpers are not exposed. The production
 shell adapters `reap_leg`, `open_link`, `drop_leg`, `unadopt` and refused-count
-writers are provided. Those are **not** replaced by a fake judge or by the
-Rust primitive differential oracle. Remaining core work: `nostrc-f12v2.8`.
+writers are provided. The test-only helpers/explorers are **not** claimed as covered simply because
+the production table and independent model have differential tests. Remaining core work: `nostrc-f12v2.8`.
 No fipsd node/peer wiring is included.
 
 `upstream/` contains byte-for-byte snapshots of the upstream README and three

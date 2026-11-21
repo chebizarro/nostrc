@@ -7,15 +7,15 @@ Source: `core/src/proto/settle/` at
 
 Implemented: params, link records/paths/derived index/attribution/close rule,
 handshake legs/answers/resends/deadlines/lease ownership, restart gates,
-input/output vocabulary and production table arbitration. Join and the
-independent model judge are **not implemented yet**.
+input/output vocabulary, production table arbitration and the independent
+model history/judge. Join and fault/parity integration are **not implemented yet**.
 No fipsd integration, hosted CI, live networking or full settlement convergence
 is claimed. Remaining core work is `nostrc-f12v2.8`; leave `nostrc-f12v2.7` open.
 Pinned upstream specs are in `src/proto/settle/upstream/`, verbatim and expressly
 not a claim that every upstream rule is implemented in this subset.
 
 The complete inventory below contains **369 actual Rust test functions in 36
-files**, including feature-gated slow tests: **96 ported, 16 covered-by, 257 not ported**. Covered-by is a many-to-many behavioral mapping,
+files**, including feature-gated slow tests: **153 ported, 16 covered-by, 200 not ported**. Covered-by is a many-to-many behavioral mapping,
 not a claim that every original assertion/helper was translated. Attribute-line
 numbers identify the pinned sources. An earlier raw substring count of 370
 included the string literal `"#[test]"` in `tests/mod.rs`'s source scanner;
@@ -25,15 +25,15 @@ only real standalone attributes are counted here.
 
 `FipsCoreSettleTest` includes 18 same-named direct upstream gate tests in
 `test_settle_gates.c`, plus transactional arena/parameter rejection checks.
-The gate/model history and default-interval comparisons await the independent
-model judge. `test_settle.c` also adds capacity preflight/output sentinels,
+`test_settle_model.c` checks the independent defaults against gate intervals,
+model arena limits, transactional failure, clock overflow and batch runs. `test_settle.c` also adds capacity preflight/output sentinels,
 full arenas, ID exhaustion, oversized transcripts, replacement/take lease moves,
 failed sends, zero resend cap, short host clock and actual slot reuse followed
 by ascending close/lease output. Four pthreads run **independent** caller-owned
 states; shared-object mutation requires caller synchronization.
 
-`FipsDiffSettle` (`diff/settle.c`, `vectors/settle.json`) checks 91 traces and
-1220 trace rows (including construction/cleanup): 192 deterministic mixed link operations with every record, index,
+`FipsDiffSettle` (`diff/settle.c`, `vectors/settle.json`) checks 159 traces and
+1713 trace rows (including construction/cleanup): 192 deterministic mixed link operations with every record, index,
 placement and close snapshot, plus 11 leg traces varying multiplier, resend
 interval, origin cap, answer and failed-send retry. A gate trace checks all six sources, both floors, stamps, replay/silent/redial
 memory, partial forgetting, refusal counts, identity lapse and split clocks.
@@ -49,7 +49,15 @@ imports/test registration, observing (not changing) digest construction, one
 private gate-writer fixture, and removing candidate-only output arms absent
 from the dependency's `test-hooks` build. Original behavioral assertions are
 preserved. Cleanup closes/drains each table explicitly and is also replayed.
-This is **table/primitive equivalence**, not an independent model judge.
+The additional 55 model traces preserve all original `model/tests/` assertion
+bodies; the C replay checks judgments and complete public model state after
+every event. Thirteen gate/model histories also run production C gates alongside
+the independent C judge and compare their refusals. The model shares no production
+table/gate/rekey algorithm or state. Its copyable arenas and histories are bounded
+to 128 entries; capacity/clock failures leave state and outputs unchanged. As in
+upstream, model APIs require `FIPS_TEST_HOOKS`: test executables compile the model
+directly, and it is not included in the default library archive. This is not yet
+full table-versus-model world or join equivalence.
 Native `test_settle_table.c` additionally checks post-partial-write arena
 rollback, input lease preservation, connecting facts overriding dial facts,
 unconsumed-output ownership barriers and idempotent close.
@@ -64,18 +72,18 @@ replacement for upstream worlds, scheduler exploration or mutation testing.
 ## Not-ported reasons
 
 - **CORE**: join needs the upstream rekey/path adapter vocabulary and lifecycle.
-  Its redial dependency is absent from the assigned C rekey port; no substitute
-  adapter or swallowed rekey output is claimed.
-- **MODEL**: independent model history/judge and their 55 tests remain unported.
-  Rust primitive differential traces do not replace this independent judge.
+  `Arrival.heard`, `RedialRequested` and `note_redial` are absent from this
+  branch's C rekey port. D1 commit `d45c2f239` now supplies them on `wave26/pin`;
+  importing that sibling dependency needs orchestration approval. No substitute
+  adapter, duplicated rekey edit or swallowed rekey output is claimed.
 - **WORLD**: deterministic transports/nodes, starts, simulation, regression,
-  shadow and comparison infrastructure depend on CORE and MODEL.
+  shadow and comparison infrastructure still need the complete joined core.
 - **JOINT**: bounded explorers compose settlement, rekey/FMP/FSP, multipath and
   ordered effects. Existing C rekey/path modules alone cannot qualify this.
 - **LEGACY**: current-node/shell simulation and explorers need node parity;
   node wiring is outside this task. No legacy/live compatibility claim.
-- **MUTATION**: fault switches/candidate sweeps require the complete machine and
-  independent judge, so are deferred rather than ported as ineffective toggles.
+- **MUTATION**: fault switches/candidate sweeps and parity hooks still need the
+  complete joined machine, so are deferred rather than ported as ineffective toggles.
 - **STRUCTURE**: Rust lint/module/source-scanning fences are language-specific;
   no equivalent C structural scan is claimed by this partial module.
 
@@ -85,12 +93,14 @@ replant/naming/drive helpers are not exposed. See the module README for API boun
 
 ## Qualification commands
 
-2026-11-21: each vocabulary/gates and table layer passes **2/2, zero skipped**
+2026-11-21: each vocabulary/gates, table and independent model layer passes **2/2, zero skipped**
 on macOS arm64 (Homebrew LLVM), separately under ASan+UBSan and TSan, with
-warnings-as-errors. The initial params/links/legs subset passed both sanitizer
-configurations and 20,000 fuzz runs on Ubuntu 24.04 arm64 (`clang-18`); the
-new layers' Linux qualification is pending until end-of-task verification.
-The TSan test executables compile all three settlement sources directly because
+warnings-as-errors. Final qualification of all delivered layers also passes
+**2/2, zero skipped** separately under ASan+UBSan and TSan on Ubuntu 24.04 arm64
+(`clang-18`), using the shared build lock and `-j4`. Both macOS and Linux complete
+20,000 ASan/UBSan fuzz runs clean. The final replay on each platform checks all
+159 traces / 1713 steps with zero skipped or failed.
+The TSan test executables compile all production settlement sources directly because
 global CMake deliberately leaves the core archive uninstrumented under TSan.
 No suppression or sanitizer exclusion was added.
 
@@ -125,7 +135,8 @@ module with pinned `fips-core`, `serde_json` and `hex`; regeneration is byte-equ
 /tmp/w26-settle-export/check` also passes for the registered full exporter.
 The registered full exporter was also run with `export --out` into scratch;
 its settlement output is byte-equal. Negative checks reject wrong pin, family,
-schema and trace count, and all four forbidden mutation environment variables.
+schema, trace count, a corrupted model judgment and a corrupted model state;
+all four forbidden mutation environment variables are rejected too.
 Only settlement vectors are delivered here; D1 owns regeneration of other
 families and shared pin metadata. Scratch builds/drivers are removed at handoff.
 
@@ -145,81 +156,81 @@ hosted CI acceptance.
 
 | Upstream test (attribute line) | Disposition | C coverage / reason |
 |---|---|---|
-| `rule_1_a_msg1_from_an_identity_not_held_installs_the_peer` (L9) | not ported | MODEL (see boundary above) |
-| `rule_2_a_changed_epoch_is_a_restart` (L26) | not ported | MODEL (see boundary above) |
-| `rule_3_1_a_resend_of_the_setup_msg1_draws_the_same_msg2` (L44) | not ported | MODEL (see boundary above) |
-| `rule_3_2_a_copy_with_a_rewritten_header_is_discarded` (L61) | not ported | MODEL (see boundary above) |
-| `rule_3_3_any_other_msg1_on_a_young_link_replaces_the_peer` (L77) | not ported | MODEL (see boundary above) |
-| `rule_3_3_a_refused_replacement_is_recorded_so_its_resends_are_copies` (L96) | not ported | MODEL (see boundary above) |
-| `rule_4_1_an_eligible_copy_off_a_reachable_link_is_discarded` (L122) | not ported | MODEL (see boundary above) |
-| `rule_4_1_an_eligible_msg1_off_an_unreachable_link_goes_on_to_the_next_rule` (L140) | not ported | MODEL (see boundary above) |
-| `rule_4_2_while_a_pending_session_is_held_only_its_arming_msg1_is_answered` (L158) | not ported | MODEL (see boundary above) |
-| `rule_4_3_an_eligible_copy_the_record_holds_is_discarded` (L175) | not ported | MODEL (see boundary above) |
-| `rule_4_4_a_rekey_msg1_during_this_nodes_own_rekey_is_discarded_by_the_smaller_node` (L191) | not ported | MODEL (see boundary above) |
-| `rule_4_5_an_eligible_msg1_on_the_link_is_the_peers_rekey` (L211) | not ported | MODEL (see boundary above) |
+| `rule_1_a_msg1_from_an_identity_not_held_installs_the_peer` (L9) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `rule_2_a_changed_epoch_is_a_restart` (L26) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `rule_3_1_a_resend_of_the_setup_msg1_draws_the_same_msg2` (L44) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `rule_3_2_a_copy_with_a_rewritten_header_is_discarded` (L61) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `rule_3_3_any_other_msg1_on_a_young_link_replaces_the_peer` (L77) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `rule_3_3_a_refused_replacement_is_recorded_so_its_resends_are_copies` (L96) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `rule_4_1_an_eligible_copy_off_a_reachable_link_is_discarded` (L122) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `rule_4_1_an_eligible_msg1_off_an_unreachable_link_goes_on_to_the_next_rule` (L140) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `rule_4_2_while_a_pending_session_is_held_only_its_arming_msg1_is_answered` (L158) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `rule_4_3_an_eligible_copy_the_record_holds_is_discarded` (L175) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `rule_4_4_a_rekey_msg1_during_this_nodes_own_rekey_is_discarded_by_the_smaller_node` (L191) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `rule_4_5_an_eligible_msg1_on_the_link_is_the_peers_rekey` (L211) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
 ### `model/tests/close.rs`
 
 | Upstream test (attribute line) | Disposition | C coverage / reason |
 |---|---|---|
-| `the_losing_handshakes_connection_is_closed_and_no_disconnect_is_sent` (L26) | not ported | MODEL (see boundary above) |
-| `a_connectionless_losing_link_closes_nothing` (L48) | not ported | MODEL (see boundary above) |
-| `a_connection_a_remaining_link_still_needs_is_kept_open` (L57) | not ported | MODEL (see boundary above) |
-| `after_a_crossing_each_end_needs_only_its_kept_links_setup_address` (L79) | not ported | MODEL (see boundary above) |
-| `a_reaped_attempts_connection_is_closed_unless_a_live_link_needs_it` (L88) | not ported | MODEL (see boundary above) |
+| `the_losing_handshakes_connection_is_closed_and_no_disconnect_is_sent` (L26) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_connectionless_losing_link_closes_nothing` (L48) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_connection_a_remaining_link_still_needs_is_kept_open` (L57) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `after_a_crossing_each_end_needs_only_its_kept_links_setup_address` (L79) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_reaped_attempts_connection_is_closed_unless_a_live_link_needs_it` (L88) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
 ### `model/tests/crossing.rs`
 
 | Upstream test (attribute line) | Disposition | C coverage / reason |
 |---|---|---|
-| `the_tie_break_moves_the_smaller_node_onto_its_own_dial` (L35) | not ported | MODEL (see boundary above) |
-| `the_tie_break_keeps_the_larger_nodes_inbound_handshake` (L50) | not ported | MODEL (see boundary above) |
-| `both_ends_of_a_crossing_settle_on_the_handshake_the_smaller_node_dialed` (L58) | not ported | MODEL (see boundary above) |
-| `a_held_link_this_node_dialed_moves_onto_its_later_dial_whatever_the_ordering` (L72) | not ported | MODEL (see boundary above) |
-| `a_msg2_with_a_changed_epoch_is_not_a_cross_connection` (L91) | not ported | MODEL (see boundary above) |
-| `a_msg1_that_arrives_on_the_link_after_the_peer_is_held_is_a_replacement_the_heard_floor_refuses` (L107) | not ported | MODEL (see boundary above) |
-| `a_msg1_that_arrives_off_the_link_after_the_peer_is_held_is_a_redial_its_first_frame_settles` (L125) | not ported | MODEL (see boundary above) |
-| `after_a_late_second_dial_the_peers_first_frame_under_the_old_session_moves_back` (L149) | not ported | MODEL (see boundary above) |
-| `after_a_late_second_dial_the_peers_first_frame_under_the_new_session_drops_the_old` (L173) | not ported | MODEL (see boundary above) |
-| `a_stored_msg2_sent_after_the_peer_is_held_elsewhere_installs_nothing` (L194) | not ported | MODEL (see boundary above) |
-| `a_stored_msg2_sent_with_no_peer_held_installs_the_peer` (L222) | not ported | MODEL (see boundary above) |
-| `a_dial_on_the_peers_aged_link_completing_while_held_is_left_open` (L245) | not ported | MODEL (see boundary above) |
+| `the_tie_break_moves_the_smaller_node_onto_its_own_dial` (L35) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `the_tie_break_keeps_the_larger_nodes_inbound_handshake` (L50) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `both_ends_of_a_crossing_settle_on_the_handshake_the_smaller_node_dialed` (L58) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_held_link_this_node_dialed_moves_onto_its_later_dial_whatever_the_ordering` (L72) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_msg2_with_a_changed_epoch_is_not_a_cross_connection` (L91) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_msg1_that_arrives_on_the_link_after_the_peer_is_held_is_a_replacement_the_heard_floor_refuses` (L107) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_msg1_that_arrives_off_the_link_after_the_peer_is_held_is_a_redial_its_first_frame_settles` (L125) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `after_a_late_second_dial_the_peers_first_frame_under_the_old_session_moves_back` (L149) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `after_a_late_second_dial_the_peers_first_frame_under_the_new_session_drops_the_old` (L173) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_stored_msg2_sent_after_the_peer_is_held_elsewhere_installs_nothing` (L194) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_stored_msg2_sent_with_no_peer_held_installs_the_peer` (L222) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_dial_on_the_peers_aged_link_completing_while_held_is_left_open` (L245) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
 ### `model/tests/gates.rs`
 
 | Upstream test (attribute line) | Disposition | C coverage / reason |
 |---|---|---|
-| `the_unheard_floor_refuses_a_replacement_until_the_peering_is_one_second_old` (L23) | not ported | MODEL (see boundary above) |
-| `the_heard_floor_refuses_a_replacement_within_fifteen_seconds_of_the_last_frame` (L36) | not ported | MODEL (see boundary above) |
-| `the_heard_floor_counts_from_installation_when_no_frame_has_arrived` (L48) | not ported | MODEL (see boundary above) |
-| `heard_from_starts_at_the_first_frame_for_a_peering_installed_from_a_msg1` (L64) | not ported | MODEL (see boundary above) |
-| `the_dampener_refuses_until_fifteen_seconds_after_the_last_accepted_restart` (L79) | not ported | MODEL (see boundary above) |
-| `between_the_floors_and_the_ceiling_the_model_refuses_only_while_dampened` (L115) | not ported | MODEL (see boundary above) |
-| `a_replacement_at_a_msg1_stamps_the_dampener_only_if_the_old_peering_was_heard` (L125) | not ported | MODEL (see boundary above) |
-| `a_restart_found_at_this_nodes_own_msg2_does_not_stamp_the_dampener` (L138) | not ported | MODEL (see boundary above) |
-| `a_restart_revealed_in_a_rekey_msg2_keeps_the_link_and_does_not_stamp_the_dampener` (L159) | not ported | MODEL (see boundary above) |
+| `the_unheard_floor_refuses_a_replacement_until_the_peering_is_one_second_old` (L23) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `the_heard_floor_refuses_a_replacement_within_fifteen_seconds_of_the_last_frame` (L36) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `the_heard_floor_counts_from_installation_when_no_frame_has_arrived` (L48) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `heard_from_starts_at_the_first_frame_for_a_peering_installed_from_a_msg1` (L64) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `the_dampener_refuses_until_fifteen_seconds_after_the_last_accepted_restart` (L79) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `between_the_floors_and_the_ceiling_the_model_refuses_only_while_dampened` (L115) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_replacement_at_a_msg1_stamps_the_dampener_only_if_the_old_peering_was_heard` (L125) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_restart_found_at_this_nodes_own_msg2_does_not_stamp_the_dampener` (L138) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_restart_revealed_in_a_rekey_msg2_keeps_the_link_and_does_not_stamp_the_dampener` (L159) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
 ### `model/tests/redial.rs`
 
 | Upstream test (attribute line) | Disposition | C coverage / reason |
 |---|---|---|
-| `a_fresh_msg1_off_an_eligible_reachable_link_is_answered_and_leaves_the_peering_until_its_frame` (L18) | not ported | MODEL (see boundary above) |
-| `a_fresh_msg1_off_a_young_link_is_answered_as_a_redial_and_not_held_by_the_heard_floor` (L35) | not ported | MODEL (see boundary above) |
-| `a_frame_under_the_held_session_leaves_the_redial_pending_and_its_timeout_drops_it` (L45) | not ported | MODEL (see boundary above) |
-| `a_fresh_msg1_off_the_link_of_an_unheard_peering_is_a_replacement_at_the_msg1_and_not_a_redial` (L58) | not ported | MODEL (see boundary above) |
-| `a_second_redial_within_one_second_is_refused_and_a_later_one_replaces_it` (L75) | not ported | MODEL (see boundary above) |
-| `the_swap_of_a_heard_peering_stamps_the_dampener_and_an_answered_redial_does_not` (L88) | not ported | MODEL (see boundary above) |
-| `an_armed_redials_copy_is_a_copy_and_its_byte_identical_resend_draws_the_stored_msg2` (L105) | not ported | MODEL (see boundary above) |
-| `a_redial_whose_peering_is_lost_first_installs_the_peer_at_its_frame` (L119) | not ported | MODEL (see boundary above) |
+| `a_fresh_msg1_off_an_eligible_reachable_link_is_answered_and_leaves_the_peering_until_its_frame` (L18) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_fresh_msg1_off_a_young_link_is_answered_as_a_redial_and_not_held_by_the_heard_floor` (L35) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_frame_under_the_held_session_leaves_the_redial_pending_and_its_timeout_drops_it` (L45) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_fresh_msg1_off_the_link_of_an_unheard_peering_is_a_replacement_at_the_msg1_and_not_a_redial` (L58) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_second_redial_within_one_second_is_refused_and_a_later_one_replaces_it` (L75) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `the_swap_of_a_heard_peering_stamps_the_dampener_and_an_answered_redial_does_not` (L88) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `an_armed_redials_copy_is_a_copy_and_its_byte_identical_resend_draws_the_stored_msg2` (L105) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_redial_whose_peering_is_lost_first_installs_the_peer_at_its_frame` (L119) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
 ### `model/tests/roam.rs`
 
 | Upstream test (attribute line) | Disposition | C coverage / reason |
 |---|---|---|
-| `a_switch_of_the_active_path_moves_the_peer_there_and_is_no_transition` (L9) | not ported | MODEL (see boundary above) |
-| `a_switch_with_no_peer_held_changes_nothing` (L28) | not ported | MODEL (see boundary above) |
-| `a_frame_from_a_new_address_on_the_one_paths_transport_roams_the_peer` (L36) | not ported | MODEL (see boundary above) |
-| `a_frame_from_another_transport_moves_nothing_at_one_path` (L46) | not ported | MODEL (see boundary above) |
-| `a_frame_from_a_new_address_moves_nothing_while_the_link_holds_several_paths` (L75) | not ported | MODEL (see boundary above) |
-| `a_path_message_from_a_new_address_moves_nothing_on_a_link_that_runs_multipath` (L95) | not ported | MODEL (see boundary above) |
-| `a_follow_of_the_path_the_peer_is_at_moves_the_peer_and_is_no_transition` (L109) | not ported | MODEL (see boundary above) |
-| `a_follow_of_another_path_leaves_the_peer` (L128) | not ported | MODEL (see boundary above) |
-| `a_frame_at_a_node_with_no_bundle_roams_the_peer_from_any_transport` (L145) | not ported | MODEL (see boundary above) |
+| `a_switch_of_the_active_path_moves_the_peer_there_and_is_no_transition` (L9) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_switch_with_no_peer_held_changes_nothing` (L28) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_frame_from_a_new_address_on_the_one_paths_transport_roams_the_peer` (L36) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_frame_from_another_transport_moves_nothing_at_one_path` (L46) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_frame_from_a_new_address_moves_nothing_while_the_link_holds_several_paths` (L75) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_path_message_from_a_new_address_moves_nothing_on_a_link_that_runs_multipath` (L95) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_follow_of_the_path_the_peer_is_at_moves_the_peer_and_is_no_transition` (L109) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_follow_of_another_path_leaves_the_peer` (L128) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
+| `a_frame_at_a_node_with_no_bundle_roams_the_peer_from_any_transport` (L145) | ported | Original model assertion body in `settle/model_tests/`; independent C judge replay, full state and judgment. |
 ### `tests/candidates.rs`
 
 | Upstream test (attribute line) | Disposition | C coverage / reason |
@@ -264,8 +275,8 @@ hosted CI acceptance.
 | `each_further_silent_session_doubles_the_refusal_up_to_its_cap` (L298) | ported | `test_settle_gates.c`: same-named adapted upstream test |
 | `gate_memory_holds_no_entry_once_an_identitys_state_has_lapsed` (L330) | ported | `test_settle_gates.c`: same-named adapted upstream test |
 | `the_refused_count_goes_with_its_silent_session_record` (L388) | ported | `test_settle_gates.c`: same-named adapted upstream test |
-| `the_default_intervals_are_the_frcs` (L433) | not ported | CORE (see boundary above) |
-| `the_gates_agree_with_the_model_on_every_gate_history` (L625) | not ported | CORE (see boundary above) |
+| `the_default_intervals_are_the_frcs` (L433) | ported | `test_settle_model.c`: independent model defaults compared to gate intervals. |
+| `the_gates_agree_with_the_model_on_every_gate_history` (L625) | ported | All 13 original histories, paired production C gates and independent C judge in differential replay. |
 | `a_redial_is_not_held_by_the_heard_floor` (L732) | ported | `test_settle_gates.c`: same-named adapted upstream test |
 | `the_redial_memory_refuses_a_seen_ephemeral_and_a_full_memory_until_it_ages_out` (L749) | ported | `test_settle_gates.c`: same-named adapted upstream test |
 | `the_swap_stamps_the_dampener_only_for_a_heard_peering_and_clears_the_redial_memory` (L774) | ported | `test_settle_gates.c`: same-named adapted upstream test |

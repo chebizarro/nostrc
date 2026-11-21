@@ -17,6 +17,10 @@ use fips_core::{
 use serde_json::{Value, json};
 use std::{fs, path::Path};
 const PIN: &str = "64f5b4d482cfe14abad108ffc2d92128f7658311";
+#[path = "settle/gate_model_oracle.rs"]
+mod gate_model_oracle;
+#[path = "settle/model_oracle.rs"]
+mod model_oracle;
 #[path = "settle/table_oracle.rs"]
 mod table_oracle;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -459,6 +463,8 @@ pub fn export(out: &Path) -> Result<()> {
     }
     let mut traces = vec![link_trace(), gate_trace()];
     traces.extend(table_oracle::traces());
+    traces.extend(model_oracle::traces());
+    traces.extend(gate_model_oracle::traces());
     for m in [1.3333, 1.5, 2.0, 2.5005] {
         traces.push(leg_trace(m, 1000, None, false, false));
     }
@@ -470,7 +476,7 @@ pub fn export(out: &Path) -> Result<()> {
     }
     traces.push(leg_trace(2.0, 1000, None, true, false));
     traces.push(leg_trace(2.0, 1000, None, false, true));
-    let doc = json!({"schema_version":1,"pin":PIN,"generator":"fips-vectors","generator_version":VERSION,"family":"settle","cases":traces,"gaps":["No independent model judge, joint explorers or legacy simulator equivalence"]});
+    let doc = json!({"schema_version":1,"pin":PIN,"generator":"fips-vectors","generator_version":VERSION,"family":"settle","cases":traces,"gaps":["No join/fault/parity integration, joint explorer or legacy simulator equivalence"]});
     let mut data = serde_json::to_vec(&doc)?;
     data.push(b'\n');
     fs::write(out.join("settle.json"), data)?;
