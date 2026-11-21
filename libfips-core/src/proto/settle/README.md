@@ -53,7 +53,13 @@ reaped link; this can exceed the number of actual deduplicated closes.
   foreign-key machine and returns the unused setup lease; accepted shifts carry
   replay/link-age state before renewing paths. Clear only after host effects.
 
-Not yet ported: parity schedules, mutation switches and explorers/simulators.
+- `parity.c` (test-only): all 46 shared schedule descriptors, transport/mode
+  defaults, typed marks/lines/core overrides, transactional trace reader/formatter,
+  and missing/duplicate/mismatched script scans. The fixed bounds and ASCII text
+  domain are documented in `parity.h`. Generated data is checked against Rust.
+  Reading the committed trace is not a claim of executing a node/world schedule.
+
+Not yet ported: mutation switches and explorers/simulators.
 The D1 rekey dependency is included by the approved normal merge.
 Test-only Rust replant/naming/drive helpers are not exposed. The production
 shell adapters `reap_leg`, `open_link`, `drop_leg`, `unadopt` and refused-count

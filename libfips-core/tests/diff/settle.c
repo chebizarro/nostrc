@@ -550,6 +550,7 @@ static size_t check_model(json_t *trace,bool with_gates)
     for (size_t i=0;i<1024;++i) REQUIRE(!judges[i]); return json_array_size(rows);
 }
 #include "settle_join.h"
+#include "settle_parity.h"
 int main(int argc, char **argv)
 {
     REQUIRE(argc<=2); json_error_t error;
@@ -559,7 +560,7 @@ int main(int argc, char **argv)
     REQUIRE(!strcmp(text(field(root,"pin")),PIN)); REQUIRE(!strcmp(text(field(root,"family")),"settle"));
     REQUIRE(!strcmp(text(field(root,"generator")),"fips-vectors")); REQUIRE(!strcmp(text(field(root,"generator_version")),"0.1.0"));
     REQUIRE(json_is_array(field(root,"gaps")));
-    json_t *cases=field(root,"cases"); REQUIRE(json_is_array(cases) && json_array_size(cases)==160);
+    json_t *cases=field(root,"cases"); REQUIRE(json_is_array(cases) && json_array_size(cases)==161);
     size_t rows=0;
     for (size_t i=0; i<json_array_size(cases); ++i) {
         json_t *trace=json_array_get(cases,i); const char *kind=text(field(trace,"kind"));
@@ -569,6 +570,7 @@ int main(int argc, char **argv)
         else if (!strcmp(kind,"model")) rows+=check_model(trace,false);
         else if (!strcmp(kind,"gate_model")) rows+=check_model(trace,true);
         else if (!strcmp(kind,"join")) rows+=check_join(trace);
+        else if (!strcmp(kind,"parity")) rows+=check_parity(trace);
         else { REQUIRE(!strcmp(kind,"legs")); rows+=check_legs(trace); }
     }
     printf("settle: %zu checked traces, %zu checked steps, 0 skipped, 0 failed\n",json_array_size(cases),rows);

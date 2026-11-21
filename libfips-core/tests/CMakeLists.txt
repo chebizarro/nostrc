@@ -546,8 +546,8 @@ add_dependencies(fips_core_host_test fips_core_path_test fips_core_path_vectors_
 
 # Compile the actual settlement sources here too: GO_ENABLE_TSAN deliberately
 # leaves fips_core uninstrumented, but these sans-IO primitives need TSan proof.
-set(settle_test_sources ../src/proto/settle/params.c ../src/proto/settle/links.c ../src/proto/settle/legs.c ../src/proto/settle/gates.c ../src/proto/settle/table.c ../src/proto/settle/join.c ../src/proto/settle/model/history.c ../src/proto/settle/model/judge.c)
-add_executable(fips_core_settle_test test_settle.c test_settle_gates.c test_settle_table.c test_settle_model.c test_settle_join.c fakes/host.c fakes/rekey.c ${settle_test_sources})
+set(settle_test_sources ../src/proto/settle/params.c ../src/proto/settle/links.c ../src/proto/settle/legs.c ../src/proto/settle/gates.c ../src/proto/settle/table.c ../src/proto/settle/join.c ../src/proto/settle/model/history.c ../src/proto/settle/model/judge.c ../src/proto/settle/parity.c)
+add_executable(fips_core_settle_test test_settle.c test_settle_gates.c test_settle_table.c test_settle_model.c test_settle_join.c test_settle_parity.c fakes/host.c fakes/rekey.c ${settle_test_sources})
 # Join invokes real rekey and bundle code; instrument those dependencies too,
 # including private rekey fixture hooks, rather than relying on the TSan-excluded archive.
 get_target_property(settle_rekey_sources fips_core_rekey_test SOURCES)
@@ -562,7 +562,8 @@ foreach(source IN ITEMS wire set params rules candidate capable select live mach
   target_sources(fips_diff_settle PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src/proto/path/${source}.c")
 endforeach()
 target_link_libraries(fips_core_settle_test PRIVATE fips_core Threads::Threads PkgConfig::FIPS_CORE_SODIUM)
-target_compile_definitions(fips_core_settle_test PRIVATE FIPS_TEST_HOOKS)
+target_compile_definitions(fips_core_settle_test PRIVATE FIPS_TEST_HOOKS
+  FIPS_SETTLE_PARITY_TRACE="${CMAKE_CURRENT_SOURCE_DIR}/../src/proto/settle/upstream/parity.txt")
 set_target_properties(fips_core_settle_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
 apply_warnings(fips_core_settle_test)
 apply_sanitizers(fips_core_settle_test)

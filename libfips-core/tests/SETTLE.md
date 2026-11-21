@@ -8,15 +8,16 @@ Source: `core/src/proto/settle/` at
 Implemented: params, link records/paths/derived index/attribution/close rule,
 handshake legs/answers/resends/deadlines/lease ownership, restart gates,
 input/output vocabulary, production table arbitration and the independent
-model history/judge and the production join adapter. Fault/parity integration
-and dependent world infrastructure are **not implemented yet**.
+model history/judge, the production join adapter and test-only parity
+vocabulary/schedules/trace machinery. Fault integration and dependent world
+infrastructure are **not implemented yet**.
 No fipsd integration, hosted CI, live networking or full settlement convergence
 is claimed. Remaining core work is `nostrc-f12v2.8`; leave `nostrc-f12v2.7` open.
 Pinned upstream specs are in `src/proto/settle/upstream/`, verbatim and expressly
 not a claim that every upstream rule is implemented in this subset.
 
 The complete inventory below contains **369 actual Rust test functions in 36
-files**, including feature-gated slow tests: **163 ported, 17 covered-by, 189 not ported**. Covered-by is a many-to-many behavioral mapping,
+files**, including feature-gated slow tests: **167 ported, 17 covered-by, 185 not ported**. Covered-by is a many-to-many behavioral mapping,
 not a claim that every original assertion/helper was translated. Attribute-line
 numbers identify the pinned sources. An earlier raw substring count of 370
 included the string literal `"#[test]"` in `tests/mod.rs`'s source scanner;
@@ -33,8 +34,8 @@ failed sends, zero resend cap, short host clock and actual slot reuse followed
 by ascending close/lease output. Four pthreads run **independent** caller-owned
 states; shared-object mutation requires caller synchronization.
 
-`FipsDiffSettle` (`diff/settle.c`, `vectors/settle.json`) checks 160 traces and
-1789 trace rows (including construction/cleanup): 192 deterministic mixed link operations with every record, index,
+`FipsDiffSettle` (`diff/settle.c`, `vectors/settle.json`) checks 161 traces and
+2580 trace rows (including construction/cleanup): 192 deterministic mixed link operations with every record, index,
 placement and close snapshot, plus 11 leg traces varying multiplier, resend
 interval, origin cap, answer and failed-send retry. A gate trace checks all six sources, both floors, stamps, replay/silent/redial
 memory, partial forgetting, refusal counts, identity lapse and split clocks.
@@ -71,6 +72,16 @@ D1's completed pin branch was merged normally as `5420a09a0`; full-SHA Cargo
 entries are retained. The workflow target and corpus names match the actual
 settlement targets; no CI line correction was needed.
 
+Parity adds 791 parser/round-trip/core-override rows, all 46 immutable shared
+schedules, the ten unshared-start explanations and derived rekey/path settings.
+All four original parity assertion bodies run in the Rust exporter, with their
+C adaptations in `test_settle_parity.c`. Diagnostic strings become typed bit
+masks. C-local text is NUL-free ASCII, names at most95 bytes, and each trace is
+bounded to8 settings/128 lines/64 overrides; parse/format/capacity failure is
+transactional. The data-only include is generated from the pinned Rust oracle
+by `tests/tools/generate_settle_parity.py` (`--check` detects drift). Parity's
+reader is not itself evidence that either side executed those schedules.
+
 `FIPS_ENABLE_FUZZERS=ON` adds `fips_fuzz_settle`. The core is instrumented with
 `-fsanitize=fuzzer-no-link`. Bounded link/leg operations and all 28 table inputs plus poll/close check
 lease conservation after every step, failure rollback and owner draining.
@@ -96,13 +107,12 @@ replant/naming/drive helpers are not exposed. See the module README for API boun
 
 ## Qualification commands
 
-2026-11-21: each vocabulary/gates, table and independent model layer passes **2/2, zero skipped**
-on macOS arm64 (Homebrew LLVM), separately under ASan+UBSan and TSan, with
-warnings-as-errors. Final qualification of all delivered layers also passes
-**2/2, zero skipped** separately under ASan+UBSan and TSan on Ubuntu 24.04 arm64
-(`clang-18`), using the shared build lock and `-j4`. Both macOS and Linux complete
-20,000 ASan/UBSan fuzz runs clean. The final replay on each platform checks all
-159 traces / 1713 steps (the previous layers); join's final Linux run is pending. with zero skipped or failed.
+2026-11-21: vocabulary/gates, table, independent model, join and parity layers
+pass **2/2, zero skipped** on macOS arm64 (Homebrew LLVM), separately under
+ASan+UBSan and TSan, with warnings-as-errors. The previous layers (through the
+independent model) also qualified on Ubuntu24.04 arm64 (`clang-18`) with2/2 in
+each sanitizer configuration and20,000 clean fuzz runs. The final Linux run for
+join/parity is pending until the remaining layer is finished.
 The TSan test executables compile all production settlement sources directly because
 global CMake deliberately leaves the core archive uninstrumented under TSan.
 No suppression or sanitizer exclusion was added.
@@ -145,12 +155,11 @@ families and shared pin metadata. Scratch builds/drivers are removed at handoff.
 
 ### CI handoff (D1 owns the workflow)
 
-Add `fips_core_settle_test` and `fips_diff_settle` to every sanitizer build list,
-including TSan. The existing TSan `-E '^FipsCore'` excludes the new unit test;
-run `ctest --test-dir build -R '^FipsCoreSettleTest$' --no-tests=error
---output-on-failure` separately there (or narrow the exclusion). Add
-`fips_fuzz_settle` to both ASan fuzz build/run lists and standalone fuzz
-build/run lists. No workflow was edited by D2; local VM/host evidence is not
+Verified after merging D1: both sanitizer build targets are present, including
+TSan; its explicit `FipsCoreSettleTest` run compensates for the broader core
+exclusion, while `FipsDiffSettle` is not excluded. `fips_fuzz_settle` appears in
+both fuzz build/run lists, using the actual `libfips-core/fuzz/corpus/fips_fuzz_settle`
+directory. No workflow correction was needed. Local VM/host evidence is not
 hosted CI acceptance.
 
 ## Complete pinned upstream inventory
@@ -518,10 +527,10 @@ hosted CI acceptance.
 
 | Upstream test (attribute line) | Disposition | C coverage / reason |
 |---|---|---|
-| `a_trace_reads_back_as_it_was_written` (L24) | not ported | WORLD (see boundary above) |
-| `a_script_names_no_node_or_transport_it_does_not_hold` (L82) | not ported | WORLD (see boundary above) |
-| `every_script_has_its_lines_and_every_line_its_script` (L175) | not ported | WORLD (see boundary above) |
-| `a_core_line_names_a_listed_cause` (L251) | not ported | WORLD (see boundary above) |
+| `a_trace_reads_back_as_it_was_written` (L24) | ported | `test_settle_parity.c` +791 pinned parity parser rows. |
+| `a_script_names_no_node_or_transport_it_does_not_hold` (L82) | ported | Native planted-script scans and all46 pinned schedule descriptors. |
+| `every_script_has_its_lines_and_every_line_its_script` (L175) | ported | Native missing/duplicate/orphan/settings/restated-field fixtures and C core overrides. |
+| `a_core_line_names_a_listed_cause` (L251) | ported | Both named causes and all original bad-cause/empty-field plants; atomic parse failure. |
 ### `tests/regress.rs`
 
 | Upstream test (attribute line) | Disposition | C coverage / reason |

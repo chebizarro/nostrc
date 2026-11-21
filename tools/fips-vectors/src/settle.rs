@@ -20,6 +20,7 @@ const PIN: &str = "64f5b4d482cfe14abad108ffc2d92128f7658311";
 #[path = "settle/gate_model_oracle.rs"]
 mod gate_model_oracle;
 mod join_oracle;
+mod parity_oracle;
 #[path = "settle/model_oracle.rs"]
 mod model_oracle;
 #[path = "settle/table_oracle.rs"]
@@ -467,6 +468,7 @@ pub fn export(out: &Path) -> Result<()> {
     traces.extend(model_oracle::traces());
     traces.extend(gate_model_oracle::traces());
     traces.extend(join_oracle::traces());
+    traces.extend(parity_oracle::traces());
     for m in [1.3333, 1.5, 2.0, 2.5005] {
         traces.push(leg_trace(m, 1000, None, false, false));
     }

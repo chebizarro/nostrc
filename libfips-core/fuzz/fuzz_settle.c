@@ -1,5 +1,6 @@
 #include <fips/proto/settle/settle.h>
 #include <fips/proto/settle/join.h>
+#include <fips/proto/settle/parity.h>
 #include "../tests/fakes/host.h"
 #include "../tests/fakes/settle_table.h"
 #include <stdlib.h>
@@ -90,9 +91,25 @@ static void fuzz_join(const uint8_t *data,size_t size)
     }
     free(j);
 }
+static void fuzz_parity(const uint8_t *data,size_t size)
+{
+    if(size>4096)return; const char *text=(const char *)data;
+    fips_parity_line line={0},before=line; char out[512];size_t length;
+    fips_status status=fips_settle_parity_line(text,size,&line);
+    if(status!=FIPS_OK)CHECK(!memcmp(&line,&before,sizeof(line)));
+    else {CHECK(fips_settle_parity_format_line(&line,out,sizeof(out),&length)==FIPS_OK);fips_parity_line again;CHECK(fips_settle_parity_line(out,length,&again)==FIPS_OK);CHECK(again.step==line.step && again.node==line.node);}
+    fips_parity_diff diff={0},old=diff;status=fips_settle_parity_diff(text,size,&diff);
+    if(status!=FIPS_OK)CHECK(!memcmp(&diff,&old,sizeof(diff)));
+    else {CHECK(fips_settle_parity_format_diff(&diff,out,sizeof(out),&length)==FIPS_OK);fips_parity_diff again;CHECK(fips_settle_parity_diff(out,length,&again)==FIPS_OK && again.count==diff.count && again.step==diff.step && again.node==diff.node);}
+    fips_parity_trace *traces=calloc(2,sizeof(*traces));CHECK(traces);size_t count=999;
+    status=fips_settle_parity_read(text,size,traces,2,&count);
+    if(status!=FIPS_OK){CHECK(count==999);const uint8_t *p=(const uint8_t *)traces;for(size_t i=0;i<2*sizeof(*traces);++i)CHECK(!p[i]);}
+    else {CHECK(count<=2);for(size_t i=0;i<count;++i){fips_parity_line lines[FIPS_PARITY_LINES_MAX];size_t n;(void)fips_settle_parity_cored(&traces[i],lines,FIPS_PARITY_LINES_MAX,&n);}}
+    free(traces);
+}
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
-    fuzz_join(data,size); fuzz_table(data,size);
+    fuzz_parity(data,size); fuzz_join(data,size); fuzz_table(data,size);
     fips_settle_links links; fips_settle_link records[4]; fips_settle_path paths[32];
     fips_settle_legs legs; fips_settle_leg slots[4];
     CHECK(fips_settle_links_init(&links,records,4,paths,8)==FIPS_OK);
