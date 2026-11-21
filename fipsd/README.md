@@ -1479,7 +1479,8 @@ control, and drives it with the pinned Rust client (`fipsctl show status`,
 `show peers`, `show transports`, `stats list`). Status is deliberately an
 initialization error until the node owner exists; the other three succeed.
 
-Enable the optional oracle with
+A fresh CMake build discovers the pinned `fipsctl` from the current-pin/platform
+user cache (`libfips-core/UPSTREAM.md`). Alternatively enable the oracle with
 `-DFIPSD_UPSTREAM_CONTROL_DIR=/absolute/read-only/fips`, or supply
 `-DFIPSD_FIPSCTL_EXECUTABLE=/absolute/path/to/pinned/fipsctl`. The test builds
 with `cargo --locked`, writing only to the CMake binary directory's
@@ -2621,7 +2622,9 @@ explicit trace barriers, never warm-up sleeps.
 `FipsdTcpInteropTest` runs `tests/tcp_interop.py` against the real C daemon and
 an independently built pinned Rust daemon. Set CMake's
 `FIPSD_TCP_INTEROP_RUST_BINARY` (or that environment variable at configure time)
-to enable it; otherwise it returns SKIP (77). It verifies authenticated TCP
+to override discovery. A fresh build discovers the current-pin/platform user
+cache described in `libfips-core/UPSTREAM.md`; without either a cache or an
+explicit binary it returns SKIP (77). It verifies authenticated TCP
 links in both control views and clean SIGTERM joins. This is link interop,
 not a cross-language XK/datagram or deployment claim.
 
@@ -3508,10 +3511,13 @@ clang) and TSan (Homebrew clang).
 ## C<->Rust UDP interoperability gate (`nostrc-f66sr.1`)
 
 `tests/udp_interop.py` runs one `fipsd` and one `fips` daemon built from the
-`libfips-core/UPSTREAM.md` pin (`6aa80504`) on loopback UDP, once per role
+`libfips-core/UPSTREAM.md` pin on loopback UDP, once per role
 assignment (C dials Rust, then Rust dials C), for IPv4 (`FipsdInteropUdpTest`)
 and IPv6 (`FipsdInteropUdpV6Test`). Both tests report CTest **skipped** (exit 77,
-`SKIP: ...`) unless `FIPSD_UDP_INTEROP_RUST_BINARY` names the Rust daemon. Every
+`SKIP: ...`) unless `FIPSD_UDP_INTEROP_RUST_BINARY` names the Rust daemon.
+A fresh CMake build discovers it from the current-pin/platform user cache;
+explicit CMake/environment values override that discovery. See
+`libfips-core/UPSTREAM.md` for the durable location and version checks. Every
 step is an observation through one of the two control sockets or a daemon log,
 waited for under a deadline; the only pause is the 100 ms poll between Rust's
 tick-published control snapshots. A failure prints both daemons' complete logs
@@ -3554,16 +3560,18 @@ came up); all four role/family scenarios passed.
 Run it locally:
 
 ```bash
-# Read-only pinned upstream checkout; build only into a scratch target directory.
-CARGO_TARGET_DIR=/tmp/fips-rust-target cargo build --locked --release --bin fips \
-  --manifest-path /path/to/fips/Cargo.toml          # HEAD = libfips-core/UPSTREAM.md pin
-cmake -S . -B build -G Ninja -DBUILD_FIPS=ON \
-  -DFIPSD_UDP_INTEROP_RUST_BINARY=/tmp/fips-rust-target/release/fips   # plus the usual BUILD_* switches
-cmake --build build --target fipsd fipsd_test_tmpdir_run
-ctest --test-dir build -R '^FipsdInteropUdp' --output-on-failure
-# Or one family/role by hand (the harness makes its own temp dir when FIPSD_TEST_TMPDIR is unset):
-python3 fipsd/tests/udp_interop.py --fipsd build/fipsd/fipsd \
-  --rust /tmp/fips-rust-target/release/fips --family 6 --initiator rust
+# Clean source at the UPSTREAM.md pin; writable build is outside any worktree.
+PIN=64f5b4d482cfe14abad108ffc2d92128f7658311
+RUST_TARGET="${XDG_CACHE_HOME:-$HOME/.cache}/nostrc/fips/$PIN/$(uname -s)-$(uname -m)"
+CARGO_TARGET_DIR="$RUST_TARGET" cargo +1.94.1 build --locked --release --bin fips --bin fipsctl \
+  --manifest-path /path/to/clean-pinned-fips/Cargo.toml
+# Add the usual BUILD_* switches. No Rust-binary options needed in a fresh build.
+cmake -S . -B /tmp/fips-interop-build -G Ninja -DBUILD_FIPS=ON
+cmake --build /tmp/fips-interop-build --target fipsd fipsd_test_tmpdir_run fipsd_native_client_tool
+ctest --test-dir /tmp/fips-interop-build -R '^FipsdInteropUdp' --output-on-failure
+# Or one family/role by hand (the harness makes its own temp dir):
+python3 fipsd/tests/udp_interop.py --fipsd /tmp/fips-interop-build/fipsd/fipsd \
+  --rust "$RUST_TARGET/release/fips" --family 6 --initiator rust
 ```
 
 CI runs the gate in the `interop-udp` job of `.github/workflows/fips-ci.yml` on

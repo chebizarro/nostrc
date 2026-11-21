@@ -212,8 +212,10 @@ patched to manufacture a pass. Linux CI is configured to run that example;
 
 Task-owned C build directories, rehearsal/export Cargo trees, capture scratch and
 `/tmp/w26-pin-upstream` are removed after qualification. The clean pinned Rust
-binaries and raw receipts remain only under
-`$ROOT/build-pin-bump/rust-target/{release,qualification}`. No VM directory or
+binaries and raw receipts were initially retained under
+`$ROOT/build-pin-bump/rust-target/{release,qualification}`. The follow-up below
+moves that bundle outside the worktree; the commands above remain historical
+receipts of the original qualification. No VM directory or
 container was created. The read-only reference/user checkouts and sibling-owned
 source areas were not edited. Local commit only; no push or merge.
 **Tracker-hook exception:** the first local commit's existing pre-commit hook
@@ -222,6 +224,74 @@ That automatic export was not staged here or reverted (it may contain sibling
 tracker updates). The final message/receipt amendment disables hooks for that
 one invocation to prevent repeating the cross-checkout export; all required
 static checks were run explicitly. No main-checkout source was edited.
+
+## Durable local Rust interop oracle
+
+The accepted daemon, `fipsctl`, optional example and raw qualification receipts
+now live outside any Git worktree at:
+
+```text
+/Users/bizarro/.cache/nostrc/fips/64f5b4d482cfe14abad108ffc2d92128f7658311/Darwin-arm64/
+  release/fips
+  release/fipsctl
+  release/examples/native-echo
+  qualification/
+```
+
+The convention is `${XDG_CACHE_HOME:-$HOME/.cache}/nostrc/fips/<full-pin>/`
+`<CMAKE_HOST_SYSTEM_NAME>-<CMAKE_HOST_SYSTEM_PROCESSOR>/`. On this host those
+platform values are `Darwin-arm64`. This is a **user-owned local cache**, not
+an installed daemon, source checkout or shipped artifact. Keep older pins;
+there is no mutable `latest` pointer and no fallback to a different pin.
+The previous builds `/tmp/fips-rust-target-harness` and
+`/tmp/fips-rust-target-perffix` still report `6aa80504ba` and were left intact.
+Those old scratch builds had no automatic CMake discovery convention.
+
+A fresh CMake build uses `fipsd/tests/PinnedRustInterop.cmake` to discover
+`release/fips` for both `FIPSD_UDP_INTEROP_RUST_BINARY` and
+`FIPSD_TCP_INTEROP_RUST_BINARY`, and `release/fipsctl` for
+`FIPSD_FIPSCTL_EXECUTABLE`. Cache-discovered programs must report the clean
+current revision in `--version`; wrong, dirty or non-executable cached programs
+fail configuration visibly. Missing programs leave the optional tests unconfigured
+and explicitly skipped, not falsely passing. Precedence is **explicit CMake
+value (including empty) > corresponding environment variable (including empty)
+> current-pin/platform cache > empty**. An explicit `FIPSD_UPSTREAM_CONTROL_DIR`
+keeps the legacy `fipsctl` source-build route unless its executable is also
+explicitly selected. Existing CMake cache values are retained;
+use a fresh build directory after changing the upstream pin.
+`FIPSD_UDP_INTEROP_RUST_ECHO` is auto-discovered only on Linux because of the
+known stale example gate on macOS (`nostrc-f66sr.12`). This does not disable
+native API data-path coverage on macOS.
+
+Build a future accepted pin directly into its own durable directory, using a
+clean disposable source checkout at exactly `NEW` (not the user's checkout):
+
+```bash
+NEW=<full-accepted-40-character-pin>
+SOURCE=/absolute/task-owned/clean-pinned-fips
+RUST_TARGET="${XDG_CACHE_HOME:-$HOME/.cache}/nostrc/fips/$NEW/$(uname -s)-$(uname -m)"
+CARGO_TARGET_DIR="$RUST_TARGET" cargo +1.94.1 build \
+  --manifest-path "$SOURCE/Cargo.toml" --locked --release --bin fips --bin fipsctl
+# Optional on Linux: also build --example native-echo from the same clean pin.
+# Configure a fresh nostrc C build with the normal BUILD_* switches, but no
+# FIPSD_*RUST* or FIPSD_FIPSCTL_EXECUTABLE options/env overrides are required.
+```
+
+Follow-up verification used a genuinely fresh external build directory,
+`/tmp/w26-pin-default-interop.LrOoAf`, with all four Rust/fipsctl environment
+variables unset and no corresponding CMake overrides. Its cache and nine
+registered interop/harness command lines point to the durable new-pin bundle.
+ASan/UBSan `ctest -R '^(FipsdPinnedRustDiscoveryTest|FipsdControlInteropTest|FipsdTcpInteropTest|FipsdInteropUdpTest)$'`
+passed **4/4, zero skipped** (117.96 s); the discovery contract test contains
+**nine passing cases**. This is fresh default-discovery/control/TCP/UDP-v4
+proof, not a rerun of the entire original qualification matrix above. The old
+binaries' SHA-256 hashes were checked unchanged after relocation. Raw follow-up
+receipts join the original bundle in `qualification/pin-followup/`.
+
+Do not remove these accepted-pin binary bundles when removing task worktrees.
+Source clones, C builds and candidate/rehearsal targets remain disposable.
+Version decision: discovery, its contract tests and CI wiring are test-only;
+no shipped component version, release tag or runtime default is changed.
 
 ## Wire and host-interface invariants
 
@@ -461,7 +531,10 @@ submodule work files. Never prune unrelated worktrees/caches.
    matrix on a deliberate model-structure change, never silently drop a case.
    Run `FipsDiffRekeyLegacy` and its integrity negatives at the candidate pin;
    remove copied upstream/target/build directories after verification.
-4. **Run differential sweep and interop.** Run the differential sweep:
+4. **Run differential sweep and interop.** Preserve/build the accepted Rust
+   daemon and `fipsctl` in the pin/platform-qualified user cache described above,
+   not a task worktree or an old pin's target directory. Configure a fresh C
+   build so the current-pin cache defaults are selected. Run the differential sweep:
    `ctest -R '^FipsDiff' -V` in the build directory (see `tests/diff/README.md`).
    Review checked/skipped counts; an all-SKIP family is not parity. Run all
    affected C/Rust comparisons under ASan/UBSan, then two-node C ↔ pinned-candidate Rust UDP interop covering
