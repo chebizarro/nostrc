@@ -7,7 +7,8 @@ administratively. Both ends must declare the link dead (the peer row and link
 row disappear; the 30 s authenticated-silence floor bounds this), the n2-n3
 pair must re-converge on its own, and after the link returns n1's configured
 retry must re-establish the link and the three-node tree must converge again,
-proven end to end by a two-hop n1 -> n3 probe.
+proven end to end by payload delivery over the same application flow and a
+fresh two-hop n1 -> n3 RTT measurement.
 """
 import time
 
@@ -21,7 +22,7 @@ def run(ctx, variant):
     lab.veth(n2ns, 'eth2', '10.90.23.2/24', n3ns, 'eth0', '10.90.23.3/24')
     n2 = mesh.define('n2', 'rust' if variant == 'cr' else 'c', n2ns, '0.0.0.0')
     mesh.start(n2)
-    n1 = mesh.define('n1', 'c', n1ns, '10.90.12.1', peers=[(n2, '10.90.12.2:2121')])
+    n1 = mesh.define('n1', 'c', n1ns, '10.90.12.1', peers=[(n2, '10.90.12.2:2121')], native=True)
     n3 = mesh.define('n3', 'c', n3ns, '10.90.23.3', peers=[(n2, '10.90.23.2:2121')])
     mesh.start(n1, n3)
     full = {n1: [n2], n2: [n1, n3], n3: [n2]}
@@ -29,8 +30,22 @@ def run(ctx, variant):
     mesh.wait_tree({n1: 1, n2: 2, n3: 1}, t.tree)
     chain_filters = {n1: {n2: 2}, n2: {n1: 1, n3: 1}, n3: {n2: 2}}
     mesh.wait_bloom(chain_filters, t.tree)
-    # Control: the two-hop path works before anything flaps.
+    # An application-owned session survives the diagnostic probe. A probe-
+    # owned session is torn down only locally, leaving the remote responder
+    # to start a silence-recovery handshake during the flap instead.
+    flow = mesh.open_flow(n1, n3)
+    try:
+        return flap(ctx, mesh, n1ns, n1, n2, n3, full, chain_filters, flow)
+    finally:
+        flow.close()
+
+
+def flap(ctx, mesh, n1ns, n1, n2, n3, full, chain_filters, flow):
+    t = ctx.timeouts
+    mesh.send_native(flow, n1, n3, b'flap: before', 'pre-flap two-hop datagram')
     baseline = mesh.probe(n1, n3, t.probe)
+    if not baseline['session']['preexisting'] or baseline['cleanup']['session_created_and_torn_down']:
+        raise ctx.Failure('baseline probe did not preserve the application session')
 
     ctx.note('flap: taking n1 eth0 down')
     n1ns.link_down('eth0')
@@ -48,6 +63,7 @@ def run(ctx, variant):
     mesh.wait_tree({n1: 1, n2: 2, n3: 1}, t.tree)
     converged_after = time.monotonic() - up_at
     mesh.wait_bloom(chain_filters, t.tree)
+    mesh.send_native(flow, n1, n3, b'flap: after', 'post-flap two-hop datagram')
     report = mesh.probe(n1, n3, t.probe)
     return {'dead_declared_after_s': round(dead_after, 1), 'link_restored_after_s': round(restored_after, 1),
             'tree_converged_after_s': round(converged_after, 1),

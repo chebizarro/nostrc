@@ -54,7 +54,7 @@ global, so use it for sequential runs.
 
 | Scenario | Topology | What is asserted |
 | --- | --- | --- |
-| `flap` | n1 — n2 — n3 chain; n1 and n3 are fipsd with n2 as a configured `auto_reconnect` peer; n2 is fipsd (`cc`) or Rust (`cr`) | After `ip link set n1/eth0 down` both ends drop the peer and link rows (the 30 s authenticated-silence floor bounds detection), n2–n3 re-converge alone; after `up` n1's configured retry re-establishes the link, the three-node tree and bloom filters converge, and a two-hop n1 → n3 probe completes with an RTT sample |
+| `flap` | n1 — n2 — n3 chain; n1 and n3 are fipsd with n2 as a configured `auto_reconnect` peer; n2 is fipsd (`cc`) or Rust (`cr`) | After `ip link set n1/eth0 down` both ends drop the peer and link rows (the 30 s authenticated-silence floor bounds detection), n2–n3 re-converge alone; after `up` n1's configured retry re-establishes the link, the three-node tree and bloom filters converge, the same native application flow delivers another n1 → n3 datagram, and a fresh two-hop probe completes with an RTT sample |
 | `mtu` | n1 — n2 veth; n2 is fipsd or Rust | With both veth ends at MTU 600 from the start, IK link, tree and the 1 KiB bloom announce complete and each namespace's IPv4 `FragCreates` rises (the datagrams really exceeded the MTU); a probe and, in `cr`, a maximum-payload Rust → C native datagram are delivered; then the MTU is raised to 1500 and lowered to 900 under the live link and the same traffic flows again. The configured transport MTU (`show_transports[].mtu`) and the session `mmp.path_mtu` are recorded |
 | `nat` | `wan` bridge 198.18.0.0/24 with the lab relay (:7777) and STUN (:3478); routers `nata`/`natb` (198.18.0.10/.11 ↔ 172.31.1.0/24, 172.31.2.0/24) with `ip_forward` and an nftables `masquerade` on the wan leg; nodes `na`/`nb` behind them, default route via their router | STUN binding requests from each router's wan tuple, a kind-37195 advert from each node, a kind-21059 signal addressed to each node, the punch's UDP conntrack entry in each router, then a healthy link on both sides whose `remote_addr` is the peer's reflexive tuple, peers cross-matched, tree converged, a probe (XK session) and in `cr` a native datagram through both NATs. A timeout names the last stage reached (`stages` in the failure text) |
 | `netem` | n1 — n2 veth with `netem delay 40ms 10ms loss 5% 25%` on n1's egress from before start; iperf3 UDP 10 Mbit/s n1 → n2 on the same leg when iperf3 is installed | Link and tree form under impairment; with `node.rekey.after_secs: 25` the FMP link rekey (K bit flips on both peer rows) completes within bound and, in `cr` where a Rust native datagram holds an XK session open, the FSP session rekey too; probes and datagrams flow under the new keys; no mismatch/decrypt/bad-state/replay counter rises |
@@ -86,13 +86,15 @@ the standard library); both daemons verify what they receive.
   fipsd's link shows the Rust peer at `198.18.0.11:<ephemeral>`. Stage
   evidence and `remote_addr` are therefore matched on the reflexive
   *address*; fipsd itself punches from its bound tuple.
-- **Open the Rust-initiated session before any C probe.** A C probe tears
-  its own session down locally (as upstream's `probe_teardown` does); a Rust
-  peer left holding that session sends its next native datagrams into it and
-  fipsd drops them as `session.unknown_session` until the Rust side's idle
-  timeout. `mtu.py` and `nat.py` open the native flow first, as
-  `udp_interop.py` does, and `netem.py` reports that counter after a
-  teardown rather than failing on it.
+- **Open the application session before a diagnostic probe.** A probe tears
+  its own session down only locally (as upstream's `probe_teardown` does).
+  The remote peer retains its session: subsequent datagrams can be dropped as
+  `session.unknown_session`, and silence recovery can leave a new responder
+  awaiting msg3 when the next probe starts. Cached discovery is not proof that
+  this handshake has completed. `flap.py` keeps a C-native application flow
+  across the flap and checks payload delivery before and after it; its baseline
+  probe must preserve that session. `mtu.py` and `nat.py` likewise open the
+  native flow first, as `udp_interop.py` does. No probe budget is extended.
 - **fipsd re-runs traversal toward a connected peer on every advert refresh**
   (every `advert_refresh_secs`, the Rust side answers and punches again). It
   is harmless to the established link and is reported, not asserted;

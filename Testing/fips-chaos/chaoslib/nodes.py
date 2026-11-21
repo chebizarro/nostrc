@@ -110,10 +110,12 @@ class Mesh:
         self.control_stalls = []  # 'node command' for every control query that got no reply in time
 
     # -- definition and startup ------------------------------------------------
-    def define(self, name, kind, ns, bind_ip, port=2121, peers=(), nostr=None, rekey_after=None, advertise=False):
+    def define(self, name, kind, ns, bind_ip, port=2121, peers=(), nostr=None, rekey_after=None, advertise=False, native=False):
         if kind == 'rust' and not self.ctx.rust:
             raise Failure('scenario variant needs the Rust daemon but none was supplied')
         node = MeshNode(self, name, kind, ns, bind_ip, port)
+        if native:
+            node.api_path = self.workdir / f'{self.tag}-{name}-api.sock'
         node.peers, node.nostr, node.rekey_after, node.advertise = list(peers), nostr, rekey_after, advertise
         self.nodes.append(node)
         return node
@@ -123,7 +125,7 @@ class Mesh:
         nsec = str(index) * 64
         lines = ['node:', f"  identity: {{nsec: '{nsec}', persistent: false}}",
                  f"  control: {{enabled: true, socket_path: '{node.control}'}}"]
-        if node.kind == 'rust':
+        if node.api_path:
             lines.append(f"  native_api: {{enabled: true, socket_path: '{node.api_path}'}}")
         if node.rekey_after:
             lines.append(f'  rekey: {{after_secs: {node.rekey_after}}}')
