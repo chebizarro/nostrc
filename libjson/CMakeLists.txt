@@ -13,7 +13,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
-declare_component_version(NOSTR_JSON 2 0 1)
+declare_component_version(NOSTR_JSON 2 0 2)
 
 # Specify the C standard
 set(CMAKE_C_STANDARD 11)
@@ -158,6 +158,8 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
 # pkg-config generation for libnostr-json (D-4). The canonical .pc is
 # `libnostr-json.pc`; a one-release compat symlink `nostr_json.pc` keeps old
 # consumers building during the transition.
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/NostrcPkgConfig.cmake")
+nostrc_pkg_config_shared(NOSTR_JSON_PC jansson)
 set(LIBNOSTR_JSON_PKGCONF ${CMAKE_CURRENT_BINARY_DIR}/libnostr-json.pc)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/libnostr-json.pc.in ${LIBNOSTR_JSON_PKGCONF} @ONLY)
 install(FILES ${LIBNOSTR_JSON_PKGCONF} DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)

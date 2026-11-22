@@ -51,5 +51,5 @@ foreach(TEST_SRC ${TEST_SOURCES})
 endforeach()
 
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcNipPackage.cmake")
-declare_component_version(nip04 0 1 0)
-nostrc_install_nip(nip04 nip04 "nostr >= 2.5.1" "openssl libsecp256k1")
+declare_component_version(nip04 0 1 1)
+nostrc_install_nip(nip04 nip04 "nostr >= 2.5.2" "" EXTERNAL_PRIVATE openssl libsecp256k1)

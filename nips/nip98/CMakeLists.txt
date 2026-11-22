@@ -42,5 +42,5 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcNipPackage.cmake")
-declare_component_version(nip98 0 1 0)
-nostrc_install_nip(nostr_nip98 nip98 "nostr >= 2.5.1" "openssl")
+declare_component_version(nip98 0 1 1)
+nostrc_install_nip(nostr_nip98 nip98 "nostr >= 2.5.2" "" EXTERNAL_PRIVATE openssl)

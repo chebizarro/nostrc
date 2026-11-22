@@ -215,8 +215,8 @@ other components and all version/release/tag values are unchanged.
 
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
-| libnostr | `libnostr/` | 2.5.1 | Unreleased | — | `libnostr/CMakeLists.txt` |
-| libjson (libnostr-json) | `libjson/` | 2.0.1 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
+| libnostr | `libnostr/` | 2.5.2 | Unreleased | — | `libnostr/CMakeLists.txt` |
+| libjson (libnostr-json) | `libjson/` | 2.0.2 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
 | libgo | `libgo/` | 0.3.1 | Unreleased | — | `libgo/CMakeLists.txt` |
 | libfips-core | `libfips-core/` | 0.1.0 | Unreleased | — | `libfips-core/CMakeLists.txt` (`declare_component_version`); nostrc-s50dj.6: no bump, additive host-interface APIs fold into the initial pre-release 0.1.0; no published release/tag change |
 | fipsd | `fipsd/` | 0.1.1 | 0.1.0 | `fipsd-v0.1.0` | `fipsd/CMakeLists.txt` (`declare_component_version`); nostrc-s50dj.6: no bump, private OS host adapters fold into initial pre-release 0.1.0 with unchanged skeleton CLI/output; no published release/tag change |
@@ -238,7 +238,7 @@ other components and all version/release/tag values are unchanged.
 | Grotto | `apps/grotto/` | 0.1.3 | 0.1.1-alpha1 (pre-release, 2026-11-07) | `grotto-v0.1.1-alpha1` | `apps/grotto/CMakeLists.txt` (`project` VERSION 0.1.3 + `GROTTO_PRERELEASE` → `GROTTO_VERSION_FULL`), `apps/grotto/meson.build` (`project` full version); About, CLI and daemon consume the full build version; duplicate package values: `apps/grotto/data/org.nostr.Grotto.metainfo.xml`, `apps/grotto/packaging/debian/changelog` (0.1.3~alpha1), `apps/grotto/packaging/rpm/grotto.spec` (upstream_version, Version, Release), `apps/grotto/packaging/archlinux/PKGBUILD` (_version), `flake.nix` (Grotto version), `apps/grotto/packaging/macos/create-dmg.sh`, `apps/grotto/packaging/windows/grotto.nsi`, `apps/grotto/packaging/windows/build-msys2.sh`, `snap/grotto/snapcraft.yaml`, `snap/grotto-daemon/snapcraft.yaml`; macOS Info.plist and this declaration use numeric base 0.1.3; nostrc-q61lq: no bump for test-only sizing-oracle coordinate correction (outer allocation versus content width); product layout/minimum unchanged in unreleased 0.1.2-alpha1; nostrc-lhmuu: no bump for test-only event-driven dismissal of earlier approval toasts and fresh mapped stale-notice assertions, folded into unreleased 0.1.2-alpha1; product focus, notification queue and approval behavior unchanged; nostrc-52nr1: PATCH-class Ubuntu 26.04 approval-dialog initial-focus correction folded into existing unreleased 0.1.2-alpha1 (no additional bump; no default approval action); nostrc-upfhz: PATCH 0.1.1 → 0.1.2 (full development version 0.1.2-alpha1) for the stale generated display catalogue; released/tag columns remain unchanged. grotto-panels stays in its unreleased 0.1.0 wave; Debian manuals are generated from `GROTTO_VERSION_FULL` using `apps/grotto/packaging/debian/grotto{,-daemon}.1.in`. nostrc-u6v55.74: owner-selected full prerelease **0.1.1-alpha1**, tagged `grotto-v0.1.1-alpha1` on 2026-11-07 (first Grotto pre-release); PATCH-class version/packaging corrections folded into this unreleased wave; grotto-panels stays 0.1.0 (no shipped change). |
 | nostr-signer-webext-host | `apps/grotto/native-host/` | 0.2.0 | Unreleased | — | `apps/grotto/native-host/CMakeLists.txt` (`NMH_VERSION`), `apps/grotto/native-host/main_native_host.c` (standalone fallback) |
 | Nostr Shell extension | `gnome/nostr-shell-extension/` | 0.5.0 | Unreleased | — | `gnome/nostr-shell-extension/metadata.json` (`version-name`) |
-| NIP-46 client/provider | `nips/nip46/` | 0.2.1 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer); nostrc-33n89: no bump: lands in unreleased 0.2.0 |
+| NIP-46 client/provider | `nips/nip46/` | 0.2.2 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer); nostrc-33n89: no bump: lands in unreleased 0.2.0 |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.2.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
 | libhanami | `libhanami/` | 0.8.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
 | libporthome | `libporthome/` | 0.7.1 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`); SV-A7 (nostrc-v04jd.5): PATCH for specific fail-closed `PORTHOME_ERR_EPOCH` from the PCS v1 manifest decoder for v2 nodes/nonzero chunk epochs; no wire change. libvault, libhanami and nostr-homed: no bump (unchanged callers/artifacts). |
@@ -249,13 +249,13 @@ other components and all version/release/tag values are unchanged.
 | vaultctl | `tools/vaultctl/` | 0.3.1 | Unreleased | — | `tools/vaultctl/CMakeLists.txt` (`declare_component_version`), `tools/vaultctl/main.c` (`--version`) |
 | libvault | `libvault/` | 0.7.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
 | libblossom | `libblossom/` | 0.3.2 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
-| nip04 | `nips/nip04/` | 0.1.0 | Unreleased | — | `nips/nip04/CMakeLists.txt` (`declare_component_version`; initial installed packaging contract) |
-| nip11 | `nips/nip11/` | 0.1.0 | Unreleased | — | `nips/nip11/CMakeLists.txt` (`declare_component_version`; initial installed packaging contract) |
-| nip17 | `nips/nip17/` | 0.1.0 | Unreleased | — | `nips/nip17/CMakeLists.txt` (`declare_component_version`; initial installed packaging contract) |
-| nip44 | `nips/nip44/` | 0.1.0 | Unreleased | — | `nips/nip44/CMakeLists.txt` (`declare_component_version`; initial installed packaging contract) |
-| nip51 | `nips/nip51/` | 0.1.0 | Unreleased | — | `nips/nip51/CMakeLists.txt` (`declare_component_version`; initial installed packaging contract) |
-| nip78 | `nips/nip78/` | 0.1.1 | Unreleased | — | `nips/nip78/CMakeLists.txt` (`project` VERSION mirrored into `declare_component_version`; shared NIP packaging helper) |
-| nip98 | `nips/nip98/` | 0.1.0 | Unreleased | — | `nips/nip98/CMakeLists.txt` (`declare_component_version`; initial installed packaging contract) |
+| nip04 | `nips/nip04/` | 0.1.1 | Unreleased | — | `nips/nip04/CMakeLists.txt` (`declare_component_version`; initial installed packaging contract) |
+| nip11 | `nips/nip11/` | 0.1.1 | Unreleased | — | `nips/nip11/CMakeLists.txt` (`declare_component_version`; initial installed packaging contract) |
+| nip17 | `nips/nip17/` | 0.1.1 | Unreleased | — | `nips/nip17/CMakeLists.txt` (`declare_component_version`; initial installed packaging contract) |
+| nip44 | `nips/nip44/` | 0.1.1 | Unreleased | — | `nips/nip44/CMakeLists.txt` (`declare_component_version`; initial installed packaging contract) |
+| nip51 | `nips/nip51/` | 0.1.1 | Unreleased | — | `nips/nip51/CMakeLists.txt` (`declare_component_version`; initial installed packaging contract) |
+| nip78 | `nips/nip78/` | 0.1.2 | Unreleased | — | `nips/nip78/CMakeLists.txt` (`project` VERSION mirrored into `declare_component_version`; shared NIP packaging helper) |
+| nip98 | `nips/nip98/` | 0.1.1 | Unreleased | — | `nips/nip98/CMakeLists.txt` (`declare_component_version`; initial installed packaging contract) |
 | nip59 (NIP-59 gift-wrap core) | `nips/nip59/` | 0.2.1 | Unreleased | — | `nips/nip59/CMakeLists.txt` (`project(nip59 VERSION ...)`, mirrored into `declare_component_version`; installed static archive and .pc, existing OBJECT target retained) |
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.1 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.2.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
@@ -1929,3 +1929,17 @@ NIP-78 packaging integration (nostrc-56nz5): PATCH 0.1.0 -> 0.1.1 for the
 common install/.pc convention, private Jansson dependency, static export flags
 and installed version header. API, wire behavior and SOVERSION 0 unchanged.
 Other component versions and release tags unchanged by this integration.
+
+### Mixed static SDK / shared system dependency correction (nostrc-56nz5)
+
+PATCH: libnostr 2.5.1 -> 2.5.2, libnostr-json 2.0.1 -> 2.0.2,
+nip04/nip11/nip17/nip44/nip51/nip98 0.1.0 -> 0.1.1,
+nip46 (core + GLib) 0.2.1 -> 0.2.2, nip78 0.1.1 -> 0.1.2.
+Their installed pkg-config contract now recurses only through nostrc packages;
+external libraries use ordinary shared link flags instead of requiring their
+fully static implementation closure. No runtime API/ABI/wire changes; SONAMEs
+unchanged. libgo remains 0.3.1 (unchanged metadata). No release tags changed.
+
+The test-only test_relay_eose tool installs under the configured bindir instead
+of overwriting its build output (nostrc-kqzht). No independently versioned
+component/API change; BUILD_TESTING=OFF packages still omit the tool.

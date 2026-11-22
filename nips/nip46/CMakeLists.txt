@@ -7,7 +7,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/VersionHelpers.cmake")
 endif()
 # One version for the NIP-46 core and optional GLib client/bunker layer.
-declare_component_version(nip46 0 2 1)
+declare_component_version(nip46 0 2 2)
 
 set(NIP46_INC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
@@ -257,11 +257,11 @@ install(DIRECTORY ${NIP46_INC}/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
   FILES_MATCHING PATTERN "*.h" PATTERN "*_g.h" EXCLUDE)
 
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcNipPackage.cmake")
-nostrc_install_nip(nostr_nip46_core nip46 "nostr >= 2.5.1" "nip04 >= 0.1.0 nip44 >= 0.1.0 libnostr-json")
+nostrc_install_nip(nostr_nip46_core nip46 "nostr >= 2.5.2" "nip04 >= 0.1.1 nip44 >= 0.1.1 libnostr-json >= 2.0.2")
 if(TARGET nostr_nip46_glib)
   set(nip46-glib_VERSION "$CACHE{nip46_VERSION}")
   set(nip46-glib_VERSION_HEADER "${nip46_VERSION_HEADER}")
   set(nip46-glib_VERSION_HEADER_DIR "${nip46_VERSION_HEADER_DIR}")
-  nostrc_install_nip(nostr_nip46_glib nip46-glib "nip46 gio-2.0" "")
+  nostrc_install_nip(nostr_nip46_glib nip46-glib "nip46 >= 0.2.2" "" EXTERNAL_PUBLIC gio-2.0)
   install(FILES ${NIP46_INC}/nostr/nip46/nip46_client_g.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip46)
 endif()

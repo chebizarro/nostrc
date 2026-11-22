@@ -83,5 +83,5 @@ target_include_directories(nip44_vector_demo PRIVATE ${NIP44_INC})
 target_link_libraries(nip44_vector_demo PRIVATE nostr nostr_nip44_core OpenSSL::Crypto)
 
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcNipPackage.cmake")
-declare_component_version(nip44 0 1 0)
-nostrc_install_nip(nostr_nip44_core nip44 "nostr >= 2.5.1" "openssl libsecp256k1")
+declare_component_version(nip44 0 1 1)
+nostrc_install_nip(nostr_nip44_core nip44 "nostr >= 2.5.2" "" EXTERNAL_PRIVATE openssl libsecp256k1)

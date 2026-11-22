@@ -58,34 +58,47 @@ Core/libjson headers remain under `include/nostr`, libgo headers under `include`
 use pkg-config Cflags rather than hardcoding these paths.
 
 All NIP .pc files have `Libs: -L${libdir} -l<library>` and
-`Cflags: -I${includedir}` plus the applicable static export define. Dependencies:
+`Cflags: -I${includedir}` plus applicable static export/public-header flags.
+Every core NIP requires `nostr >= 2.5.2`. Only nostrc-internal packages appear in
+`Requires`/`Requires.private`:
 
-| Package | Library | Requires | Requires.private |
+| Package | Library | Requires.private (nostrc) | Libs.private (external, ordinary flags) |
 | --- | --- | --- | --- |
-| nip04 | nip04 | nostr >= 2.5.1 | openssl, libsecp256k1 |
-| nip11 | nip11 | nostr >= 2.5.1 | libnostr-json, libcurl |
-| nip17 | nostr_nip17_core | nostr >= 2.5.1 | nip44 >= 0.1.0, openssl |
-| nip44 | nostr_nip44_core | nostr >= 2.5.1 | openssl, libsecp256k1 |
-| nip46 | nostr_nip46_core | nostr >= 2.5.1 | nip04 >= 0.1.0, nip44 >= 0.1.0, libnostr-json |
-| nip46-glib (when built) | nostr_nip46_glib | nip46, gio-2.0 | — |
-| nip51 | nostr_nip51_core | nostr >= 2.5.1 | nip44 >= 0.1.0, jansson |
-| nip78 | nostr_nip78_core | nostr >= 2.5.1 | jansson |
-| nip98 | nostr_nip98 | nostr >= 2.5.1 | openssl |
+| nip04 | nip04 | — | openssl, libsecp256k1 |
+| nip11 | nip11 | libnostr-json >= 2.0.2 | libcurl |
+| nip17 | nostr_nip17_core | nip44 >= 0.1.1 | openssl |
+| nip44 | nostr_nip44_core | — | openssl, libsecp256k1 |
+| nip46 | nostr_nip46_core | nip04 >= 0.1.1, nip44 >= 0.1.1, libnostr-json >= 2.0.2 | — |
+| nip46-glib (when built) | nostr_nip46_glib | — | — |
+| nip51 | nostr_nip51_core | nip44 >= 0.1.1 | jansson |
+| nip78 | nostr_nip78_core | — | jansson |
+| nip98 | nostr_nip98 | — | openssl |
 
-These NIP packages need no extra `Libs.private`: their private closure is expressed
-through versioned `Requires.private`. `nostr.pc` supplies libnostrgo >= 0.3.1 publicly and
-libwebsockets/OpenSSL/secp256k1 privately, plus GLib publicly when enabled and the
-optional nostrdb dependencies privately. Its `Libs.private` preserves the resolved
-nsync search directory and the optional nostrdb/flatccrt/platform link flags.
-`libnostr-json.pc` supplies Jansson and a private dependency on nostr >= 2.5.1.
+`nip46-glib` requires nip46 >= 0.2.2; its public GIO flags are in `Libs`/`Cflags`.
+External entries in the table mean the configure-time result of normal
+`pkg-config --libs`, **not** `pkg-config --static`. For example, curl normally
+contributes `-lcurl`; its private GnuTLS/LDAP/etc. implementation libraries are
+resolved by the shared curl library, not requested from the SDK consumer.
+The same policy applies to OpenSSL, GLib, Jansson and the core's external deps.
+This supports static nostrc archives plus shared system libraries on a stock
+distro development environment. A fully static system-library build is not the
+contract of these .pc files.
+
+`nostr.pc` requires libnostrgo >= 0.3.1, adds ordinary public GLib flags when
+enabled, and adds the optional nostrdb archive followed by its external normal
+link dependencies in `Libs.private`. `libnostr-json.pc` has a private dependency
+on nostr >= 2.5.2 and ordinary public Jansson flags.
 
 ```sh
 export PKG_CONFIG_PATH=/my/prefix/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
 cc consumer.c -o consumer $(pkg-config --cflags --libs --static nip11 nip17 nip46 nip51 nip78 nip98)
 ```
 
-Always request `--static` when using any of the static-only NIPs (Meson:
-`dependency('nip17', static: true)`, etc.). For a shared NIP-11/78/98 consumer use
+Request `--static` for the static SDK dependency flags, but select archives
+only for nostrc libraries, not globally for system dependencies. Build-system
+options that prefer static libraries for every `-l` flag do not model this mixed
+contract; the checker demonstrates explicit SDK archive selection.
+For a shared NIP-11/78/98 consumer use
 normal `pkg-config --cflags --libs nip11 nip78 nip98`. For a private non-system prefix,
 configure the application's loader RPATH from `pkg-config --variable=libdir
 libnostr-json`; do not point it at a developer build tree.
@@ -104,10 +117,9 @@ Components own their versions, not the aggregate `nostrcConfig.cmake`.
 
 ## Version and ABI policy
 
-NIP-04/11/17/44/51/98 start their installed contract at 0.1.0; NIP-46 core/GLib
-share 0.2.1. NIP-78 is 0.1.1 for packaging corrections to its initial 0.1.0
-packaging contract, with unchanged API and SOVERSION 0. libnostr is 2.5.1, libnostr-json is 2.0.1 and libgo is 0.3.1 for dependency metadata
-corrections. `declare_component_version` and `apply_versioning` use the same
+NIP-04/11/17/44/51/98 are 0.1.1; NIP-46 core/GLib share 0.2.2; NIP-78
+is 0.1.2. libnostr is 2.5.2, libnostr-json is 2.0.2 and libgo remains 0.3.1.
+These PATCH corrections fix mixed-link dependency metadata without API/ABI changes. `declare_component_version` and `apply_versioning` use the same
 policy as libnostr: full SemVer `VERSION`, major `SOVERSION` for shared libraries
 (e.g. `libnip11.so.0`, `libnostr_nip98.so.0`; Mach-O `.0.dylib` install names).
 Static/OBJECT libraries have version metadata but no SONAME. Follow AGENTS.md's
@@ -116,7 +128,8 @@ ABI/SOVERSION rather than silently replacing an incompatible `.so.0`.
 
 A new NIP can reuse `cmake/NostrcNipPackage.cmake`: declare its component version,
 install its public headers and call
-`nostrc_install_nip(target component "public .pc dependencies" "private .pc dependencies")`.
+`nostrc_install_nip(target component "public nostrc packages" "private nostrc packages"
+EXTERNAL_PUBLIC header-library-packages EXTERNAL_PRIVATE implementation-packages)`.
 Add its name to the aggregate dispatcher's component allowlist. Keep the version
 in the owning module's CMakeLists.txt and VERSION_MANIFEST.md.
 
@@ -136,7 +149,9 @@ python3 tests/packaging/check-nip-install.py --build _build-shared --shared --sa
 The checker installs the build, compiles/runs a tiny consumer outside the source
 include layout using only installed pkg-config flags, checks nonempty versions,
 and checks installed CMake component discovery. When built, NIP-46 GLib is
-also exercised through its installed header and .pc. `--shared` additionally links
+also exercised through its installed header and .pc. The mixed mode explicitly selects installed nostrc `.a` files when available,
+while leaving external libraries on ordinary shared link flags. The checker
+rejects external recursive package requirements. `--shared` additionally links
 NIP-11/78/98 without `--static`. A standalone NIP-78 mode checks its dependency
 closure without other NIPs masking missing link metadata. It removes temporary
 consumer files afterwards.

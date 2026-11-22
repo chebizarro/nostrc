@@ -1,5 +1,5 @@
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
-project(nip78 VERSION 0.1.1 LANGUAGES C)
+project(nip78 VERSION 0.1.2 LANGUAGES C)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
 
@@ -15,7 +15,7 @@ target_link_libraries(nostr_nip78_core PUBLIC nostr PRIVATE PkgConfig::JANSSON)
 
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcNipPackage.cmake")
 declare_component_version(nip78 ${PROJECT_VERSION_MAJOR} ${PROJECT_VERSION_MINOR} ${PROJECT_VERSION_PATCH})
-nostrc_install_nip(nostr_nip78_core nip78 "nostr >= 2.5.1" "jansson")
+nostrc_install_nip(nostr_nip78_core nip78 "nostr >= 2.5.2" "" EXTERNAL_PRIVATE jansson)
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} FILES_MATCHING PATTERN "*.h")
 
 if(BUILD_TESTING)
