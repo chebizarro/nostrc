@@ -33,6 +33,15 @@
 #define SIGNET_KEY_STORE_PRIVATE_H
 
 #include "signet/key_store.h"
+#include "store_connect_private.h"
+
+/* Atomic NIP-46 admission for either backend. Resolution is non-consuming;
+ * the callback must allow before any pairing state changes. Same statuses and
+ * callback restrictions as signet_store_admit_connect_client. */
+int signet_key_store_admit_connect_client(SignetKeyStore *ks, const char *secret,
+                                          const char *client, int64_t now,
+                                          SignetConnectAdmissionFn admit, void *data,
+                                          char **out_agent_id);
 
 /* Cache-only pairing: consumes the pending one-time @connect_secret of the
  * agent that holds it and binds @client_pubkey_hex (64 hex, any case) to
