@@ -180,8 +180,10 @@ class RealCTestDelivery(ScopedDeliveryProject):
             self.assertNotIn(self.token, env, name)
             self.assertNotIn('NIP5F_SIGNER', env, name)
             self.assertNotIn('NOSTR_SIGNER_', env, name)
-        for path in (log, junit, *self.build.rglob('Testing/Temporary/*')):
-            self.assertNotIn(self.token.encode(), path.read_bytes(), str(path))
+        # CMake may place logs below LastTestRun/, not just directly in Temporary.
+        for path in (log, junit, *self.build.rglob('Testing/Temporary/**/*')):
+            if path.is_file():
+                self.assertNotIn(self.token.encode(), path.read_bytes(), str(path))
 
     def test_without_a_resource_spec_ctest_allocates_nothing_and_the_consumer_skips(self):
         log, junit = self.ctest(None, CONSUMER, 'alias')
