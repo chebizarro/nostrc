@@ -1655,7 +1655,10 @@ sync_check_note(GhOnboardingView *self)
 {
   g_autofree gchar *mode = g_settings_get_string(self->config.settings, "network-mode");
   gtk_label_set_text(self->check_note,
-                     g_str_equal(mode, "tor")
+                     g_str_equal(mode, "tor") && !self->config.tor_available
+                       ? _("Groundhog won’t connect to relays while the network setting is Tor, "
+                           "which this version doesn’t support.")
+                       : g_str_equal(mode, "tor")
                        ? _("Checking connects to the ticked relays through Tor. They see neither "
                            "your IP address nor your account.")
                        : _("Checking connects to the ticked relays. They see your IP address, "
