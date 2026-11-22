@@ -287,6 +287,12 @@ MARMOT_TEST_API int mls_leaf_node_sign(MlsLeafNode *node,
                        const uint8_t *group_id, size_t group_id_len,
                        uint32_t leaf_index);
 
+/** A commit-source leaf signed as libmarmot <= 0.3.6 did: its LeafNodeTBS
+ *  without the group_id/leaf_index binding RFC 9420 §7.2 requires.  0 when
+ *  the signature verifies that way (nostrc-3hzu review m3: such a tree is
+ *  refused, but reported as needing an update, not as forged). */
+MARMOT_TEST_API int mls_leaf_node_verify_legacy_commit_signature(const MlsLeafNode *node);
+
 /** Verify node's signature against its own signature_key.  0 when valid. */
 MARMOT_TEST_API int mls_leaf_node_verify_signature(const MlsLeafNode *node,
                                    const uint8_t *group_id, size_t group_id_len,

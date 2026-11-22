@@ -79,6 +79,7 @@ marmot_error_string(MarmotError error)
     /* Welcome */
     case MARMOT_ERR_WELCOME:                 return "welcome error";
     case MARMOT_ERR_WELCOME_INVALID:         return "invalid welcome message";
+    case MARMOT_ERR_WELCOME_LEGACY_TREE:     return "welcome group needs a member's update (legacy tree)";
     case MARMOT_ERR_WELCOME_PREVIOUSLY_FAILED: return "welcome previously failed";
     case MARMOT_ERR_WELCOME_NOT_FOUND:       return "welcome not found";
     case MARMOT_ERR_WELCOME_EXPIRED:         return "welcome expired";

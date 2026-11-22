@@ -1215,6 +1215,12 @@ not read (its validity rules need the frozen unsafe-host set): such a tag is
   older databases on open) and nostrdb (group record version 2) backends;
   0 means unknown (adopted groups, records stored before). Application
   storage backends must persist it too (nostrc-x215).
+- **A Welcome into a group with a legacy ratchet tree has its own error
+  (nostrc-3hzu).** Joining validates every leaf of the received tree (RFC
+  9420 §12.4.3.1). A tree whose commit leaves were signed as libmarmot
+  <= 0.3.6 signed them (no group_id/leaf_index binding) is refused with the
+  new `MARMOT_ERR_WELCOME_LEGACY_TREE` (-77): ask a member of the group to
+  update. Any other invalid leaf stays `MARMOT_ERR_WELCOME_INVALID`.
 - **nostrdb Welcome records keep their outcome across the upgrade
   (nostrc-d1oq).** Welcomes are now stored whole; records written before
   (event JSON only) read back with the outcome their `wproc` marker

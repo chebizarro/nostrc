@@ -890,6 +890,11 @@ welcome_open(Marmot *m, const MarmotWelcome *welcome, const uint8_t *data, size_
         case MARMOT_ERR_VALIDATION:
             *reason = "invalid adopted group state";
             return (MarmotError)rc;
+        case MARMOT_ERR_WELCOME_LEGACY_TREE:
+            /* Review m3 (nostrc-3hzu): genuine, but a member must update the
+             * group (libmarmot <= 0.3.6 commit leaves) before anyone joins. */
+            *reason = "group needs a member's update (legacy ratchet tree)";
+            return MARMOT_ERR_WELCOME_LEGACY_TREE;
         default:
             *reason = "MLS Welcome processing failed";
             return MARMOT_ERR_MLS;

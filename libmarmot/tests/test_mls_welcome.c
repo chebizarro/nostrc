@@ -415,6 +415,59 @@ TEST(test_welcome_validates_member_leaves)
     }
 }
 
+/* Review m3 (nostrc-3hzu): a tree whose commit leaf is signed as libmarmot
+ * <= 0.3.6 signed it -- LeafNodeTBS without the group_id/leaf_index suffix
+ * -- is refused with its own error, so the application can say the group
+ * needs a member's update; a forged signature is still WELCOME_INVALID.
+ * Alice's leaf becomes a commit leaf when she adds Charlie; Charlie re-signs
+ * it (in his copy of the tree) the legacy way and adds Bob. */
+TEST(test_welcome_legacy_tree_has_its_own_error)
+{
+    for (int forged = 0; forged < 2; forged++) {
+        MlsGroup alice, charlie, bob;
+        uint8_t alice_sk[MLS_SIG_SK_LEN];
+        assert(create_alice_group(&alice, alice_sk) == 0);
+        MlsKeyPackage ckp, bkp;
+        MlsKeyPackagePrivate cpriv, bpriv;
+        assert(mls_key_package_create(&ckp, &cpriv, CHARLIE_ID, 32, NULL, 0) == 0);
+        assert(mls_key_package_create(&bkp, &bpriv, BOB_ID, 32, NULL, 0) == 0);
+        MlsAddResult add;
+        assert(mls_group_add_member(&alice, &ckp, &add) == 0);
+        assert(mls_welcome_process(add.welcome_data, add.welcome_len, &ckp, &cpriv,
+                                   NULL, 0, &charlie) == 0);
+        mls_add_result_clear(&add);
+
+        MlsLeafNode *a = &charlie.tree.nodes[mls_tree_leaf_to_node(0)].leaf;
+        assert(a->leaf_node_source == MLS_LEAF_NODE_SOURCE_COMMIT);
+        MlsTlsBuf tbs;
+        assert(mls_tls_buf_init(&tbs, 256) == 0);
+        assert(mls_leaf_node_tbs_serialize(a, charlie.group_id, charlie.group_id_len, 0,
+                                           &tbs) == 0);
+        /* Drop opaque group_id<V> (1-byte length here) and u32 leaf_index. */
+        assert(charlie.group_id_len < 64);
+        tbs.len -= 1 + charlie.group_id_len + 4;
+        assert(mls_crypto_sign_with_label(a->signature, alice_sk, "LeafNodeTBS",
+                                          tbs.data, tbs.len) == 0);
+        mls_tls_buf_free(&tbs);
+        assert(mls_leaf_node_verify_legacy_commit_signature(a) == 0);
+        if (forged) a->signature[5] ^= 1;
+
+        assert(mls_group_add_member(&charlie, &bkp, &add) == 0);
+        int rc = mls_welcome_process(add.welcome_data, add.welcome_len, &bkp, &bpriv,
+                                     NULL, 0, &bob);
+        assert(rc == (forged ? MARMOT_ERR_WELCOME_INVALID : MARMOT_ERR_WELCOME_LEGACY_TREE));
+
+        mls_add_result_clear(&add);
+        mls_key_package_clear(&ckp);
+        mls_key_package_private_clear(&cpriv);
+        mls_key_package_clear(&bkp);
+        mls_key_package_private_clear(&bpriv);
+        mls_group_free(&alice);
+        mls_group_free(&charlie);
+        sodium_memzero(alice_sk, sizeof(alice_sk));
+    }
+}
+
 /* ── Clear tests ───────────────────────────────────────────────────────── */
 
 TEST(test_welcome_clear_null_safe)
@@ -462,6 +515,7 @@ int main(void)
     RUN(test_add_and_welcome_integration);
     RUN(test_welcome_group_info_stays_private);
     RUN(test_welcome_validates_member_leaves);
+    RUN(test_welcome_legacy_tree_has_its_own_error);
 
     printf(" Cleanup:\n");
     RUN(test_welcome_clear_null_safe);
