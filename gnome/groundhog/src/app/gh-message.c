@@ -531,8 +531,11 @@ nip29_group_id_valid(const gchar *id)
   gsize length = id ? strnlen(id, GH_MESSAGE_MAX_GROUP_ID + 1) : 0;
   if (length == 0 || length > GH_MESSAGE_MAX_GROUP_ID)
     return FALSE;
-  for (const gchar *p = id; *p; p++)
-    if (!g_ascii_islower(*p) && !g_ascii_isdigit(*p) && *p != '-' && *p != '_')
+  /* Match NIP-29's opaque IDs, excluding C0/C1 controls and DEL.
+   * C0 includes the room-key separator U+001F. */
+  for (const guchar *p = (const guchar *)id; *p; p++)
+    if (*p < 0x20 || *p == 0x7f ||
+        (*p == 0xc2 && p[1] >= 0x80 && p[1] <= 0x9f))
       return FALSE;
   return TRUE;
 }

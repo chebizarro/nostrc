@@ -34,7 +34,8 @@ gchar *gh_nip29_normalize_relay_url(const gchar *url, GError **error);
 
 /* (normalized relay URL, group id). The same id on two relays is two groups
  * (NIP-29 forks and migrations keep ids). Group ids are limited to the
- * charset nips/nip29 accepts ([a-z0-9-_]); see nostr_group_address_is_valid. */
+ * opaque IDs nips/nip29 accepts (no C0/C1 controls or DEL); see
+ * nostr_group_address_is_valid. */
 typedef struct _GhNip29GroupKey GhNip29GroupKey;
 
 GhNip29GroupKey *gh_nip29_group_key_new(const gchar *relay_url,

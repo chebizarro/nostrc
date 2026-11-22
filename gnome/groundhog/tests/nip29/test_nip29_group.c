@@ -186,7 +186,15 @@ test_group_key_identity(void)
   g_hash_table_add(groups, gh_nip29_group_key_copy(a_alias));
   g_assert_cmpuint(g_hash_table_size(groups), ==, 2);
 
-  static const gchar *const bad_ids[] = { "Pizza", "", "piz za", "pizza'1" };
+  static const gchar *const opaque_ids[] = { "Pizza", "piz za", "pizza'1", "café/東京" };
+  for (gsize i = 0; i < G_N_ELEMENTS(opaque_ids); i++) {
+    g_autoptr(GhNip29GroupKey) opaque = gh_nip29_group_key_new(RELAY_A, opaque_ids[i], &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(opaque);
+    g_assert_cmpstr(gh_nip29_group_key_get_group_id(opaque), ==, opaque_ids[i]);
+  }
+  static const gchar *const bad_ids[] = { "", "Room\nA", "Room\x1f" "A", "Room\x7f" "A",
+                                        "Room\xc2\x85" "A" };
   for (gsize i = 0; i < G_N_ELEMENTS(bad_ids); i++) {
     g_autoptr(GError) id_error = NULL;
     g_assert_null(gh_nip29_group_key_new(RELAY_A, bad_ids[i], &id_error));
@@ -772,7 +780,7 @@ test_template_validation(void)
   EXPECT_ERROR(gh_nip29_template_edit_metadata(key, &ctx, md, NULL, &error),
                GH_NIP29_ERROR_INVALID_GROUP_ID);
   g_clear_pointer(&md->parent, g_free);
-  md->children = g_strsplit("pizza-nyc,Bad Id", ",", -1);
+  md->children = g_strsplit("pizza-nyc,Bad\nId", ",", -1);
   EXPECT_ERROR(gh_nip29_template_edit_metadata(key, &ctx, md, NULL, &error),
                GH_NIP29_ERROR_INVALID_GROUP_ID);
   g_clear_pointer(&md->children, g_strfreev);

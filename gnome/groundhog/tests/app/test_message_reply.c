@@ -23,20 +23,69 @@ static gchar *ACCOUNT;
 #define FAKE_EVENT_ID3 "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 
 static gchar *
-nip29_json_with_tags(NostrTags *tags)
+nip29_json_for_group(NostrTags *tags, const gchar *group_id, gint kind)
 {
   NostrEvent *event = nostr_event_new();
-  nostr_event_set_kind(event, 9);
+  nostr_event_set_kind(event, kind);
   nostr_event_set_pubkey(event, ACCOUNT);
   nostr_event_set_created_at(event, 1700000000);
   nostr_event_set_content(event, "hello");
   NostrTags *full = tags ? tags : nostr_tags_new(0);
-  nostr_tags_append(full, nostr_tag_new("h", "test-group", NULL));
+  nostr_tags_append(full, nostr_tag_new("h", group_id, NULL));
   nostr_event_set_tags(event, full);
   g_assert_cmpint(nostr_event_sign(event, SECRET), ==, 0);
   gchar *json = nostr_event_serialize_compact(event);
   nostr_event_free(event);
   return json;
+}
+
+static gchar *
+nip29_json_with_tags(NostrTags *tags)
+{
+  return nip29_json_for_group(tags, "test-group", 9);
+}
+
+static void
+test_nip29_opaque_group_ids(void)
+{
+  const gchar *ids[] = { "Tnq7x2ZTgrPZWFrC", "Mixed Case/Group: café'東京" };
+  for (guint i = 0; i < G_N_ELEMENTS(ids); i++) {
+    for (gint kind = 9; kind <= 12; kind++) {
+      g_autofree gchar *json = nip29_json_for_group(NULL, ids[i], kind);
+      g_autoptr(GError) error = NULL;
+      g_autoptr(GhMessage) message = gh_message_new_from_nip29_event(
+        ACCOUNT, "wss://nos.lol", json, &error);
+      g_assert_no_error(error);
+      g_assert_nonnull(message);
+      g_assert_cmpstr(gh_message_get_group_id(message), ==, ids[i]);
+      g_autofree gchar *relay = NULL, *id = NULL;
+      g_assert_true(gh_message_nip29_room_split(gh_message_get_room_id(message), &relay, &id));
+      g_assert_cmpstr(relay, ==, "wss://nos.lol");
+      g_assert_cmpstr(id, ==, ids[i]);
+      g_autofree gchar *lower = g_utf8_strdown(ids[i], -1);
+      g_autofree gchar *other_room = gh_message_nip29_room_id(relay, lower);
+      g_assert_cmpstr(gh_message_get_room_id(message), !=, other_room);
+    }
+  }
+}
+
+static void
+test_nip29_invalid_group_ids(void)
+{
+  const gchar *ids[] = { "", "Room\nA", "Room\x1f" "A", "Room\x7f" "A",
+                         "Room\xc2\x80" "A", "Room\xc2\x9f" "A" };
+  g_autofree gchar *too_long = g_strnfill(GH_MESSAGE_MAX_GROUP_ID + 1, 'A');
+  for (guint i = 0; i <= G_N_ELEMENTS(ids); i++) {
+    const gchar *id = i < G_N_ELEMENTS(ids) ? ids[i] : too_long;
+    g_autofree gchar *json = nip29_json_for_group(NULL, id, 9);
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GhMessage) message = gh_message_new_from_nip29_event(
+      ACCOUNT, "wss://nos.lol", json, &error);
+    g_assert_null(message);
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+    g_autofree gchar *room = gh_message_nip29_room_id("wss://nos.lol", id);
+    g_assert_false(gh_message_nip29_room_split(room, NULL, NULL));
+  }
 }
 
 static gchar *
@@ -258,6 +307,8 @@ main(int argc, char **argv)
   ACCOUNT = g_strdup(pub);
   free(pub);
   g_test_init(&argc, &argv, NULL);
+  g_test_add_func("/message/nip29/opaque-group-ids", test_nip29_opaque_group_ids);
+  g_test_add_func("/message/nip29/invalid-group-ids", test_nip29_invalid_group_ids);
   g_test_add_func("/message/reply/nip29-no-reply", test_nip29_no_reply);
   g_test_add_func("/message/reply/nip29-e-marked", test_nip29_reply_e_marked);
   g_test_add_func("/message/reply/nip29-e-bare", test_nip29_reply_e_bare);
