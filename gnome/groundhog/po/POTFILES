@@ -46,6 +46,7 @@ data/ui/gh-requests-view.blp
 data/ui/gh-shortcuts-window.blp
 data/ui/gh-sidebar-page.blp
 data/ui/gh-voice-bubble.blp
+src/app/gh-account-controller.c
 src/app/gh-account-ui.c
 src/app/gh-app-services.c
 src/app/gh-attachment-ui.c
