@@ -506,6 +506,28 @@ bind_inner_author(const char *inner_json, const uint8_t identity[32], char **out
 /* Receiver side: `inner_json` must be an event whose pubkey is the MLS
  * sender's `identity` (else MARMOT_ERR_AUTHOR_MISMATCH, or MARMOT_ERR_EVENT
  * when it is no event); its canonical NIP-01 id goes to `inner_id`. */
+/* nostrc-d13t: the processed-message key of a delivered inner event, per
+ * group: SHA-256("marmot inner-event v1" || u32 len || mls_group_id ||
+ * inner_id).  The same event sent to two groups is delivered in each.
+ * Markers written before this were the bare inner id (global); they are
+ * still honoured, so nothing delivered before an upgrade comes again. */
+static int
+inner_event_key(const MarmotGroupId *gid, const uint8_t inner_id[32], uint8_t out[32])
+{
+    static const char label[] = "marmot inner-event v1";
+    if (!gid || !gid->data || gid->len > UINT32_MAX) return -1;
+    uint8_t len_be[4] = { (uint8_t)(gid->len >> 24), (uint8_t)(gid->len >> 16),
+                          (uint8_t)(gid->len >> 8), (uint8_t)gid->len };
+    crypto_hash_sha256_state st;
+    return (crypto_hash_sha256_init(&st) == 0 &&
+            crypto_hash_sha256_update(&st, (const uint8_t *)label, sizeof(label) - 1) == 0 &&
+            crypto_hash_sha256_update(&st, len_be, sizeof(len_be)) == 0 &&
+            crypto_hash_sha256_update(&st, gid->data, gid->len) == 0 &&
+            crypto_hash_sha256_update(&st, inner_id, 32) == 0 &&
+            crypto_hash_sha256_final(&st, out) == 0)
+               ? 0 : -1;
+}
+
 static MarmotError
 check_inner_author(const char *inner_json, const uint8_t identity[32], uint8_t inner_id[32])
 {
@@ -1100,6 +1122,7 @@ process_group_event_at(Marmot *m, const char *group_event_json,
     uint32_t witness_leaf = UINT32_MAX;    /* ...and its leaf */
     bool have_identity = false;
     uint8_t inner_id[32] = { 0 };          /* canonical id of the inner event */
+    uint8_t inner_key[32] = { 0 };         /* its processed key in this group */
     bool duplicate = false;
 
     /* Only attempt MLS decrypt when the stored MLS epoch matches the epoch
@@ -1193,10 +1216,15 @@ process_group_event_at(Marmot *m, const char *group_event_json,
             : MARMOT_ERR_AUTHOR_MISMATCH;
         /* The same inner event already delivered under another envelope
          * (a replay, or a sender's re-send) is a duplicate. */
+        if (aerr == MARMOT_OK &&
+            inner_event_key(&group->mls_group_id, inner_id, inner_key) != 0)
+            aerr = MARMOT_ERR_INTERNAL;
         if (aerr == MARMOT_OK && m->storage->is_message_processed) {
             bool seen = false;
-            if (m->storage->is_message_processed(m->storage->ctx, inner_id, &seen) ==
-                    MARMOT_OK && seen)
+            if ((m->storage->is_message_processed(m->storage->ctx, inner_key, &seen) ==
+                     MARMOT_OK && seen) ||
+                (m->storage->is_message_processed(m->storage->ctx, inner_id, &seen) ==
+                     MARMOT_OK && seen))
                 duplicate = true;
         }
         if (aerr != MARMOT_OK) {
@@ -1362,9 +1390,10 @@ process_group_event_at(Marmot *m, const char *group_event_json,
                                                      MARMOT_MSG_STATE_PROCESSED,
                                                      NULL);
         }
-        /* ... and under its inner event's id (duplicates, since 0.9.0). */
+        /* ... and under its inner event's id in this group (duplicates,
+         * since 0.9.0; per group since nostrc-d13t). */
         if (err == MARMOT_OK && used_mls && m->storage->save_processed_message)
-            err = m->storage->save_processed_message(m->storage->ctx, inner_id, inner_id,
+            err = m->storage->save_processed_message(m->storage->ctx, inner_key, inner_key,
                                                      msg->processed_at, used_epoch,
                                                      &msg->mls_group_id,
                                                      MARMOT_MSG_STATE_PROCESSED, NULL);

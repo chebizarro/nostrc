@@ -276,6 +276,12 @@ typedef struct {
 
     /** Group state */
     MarmotGroupState state;
+
+    /** A legacy group's MIP-01 marmot_group_data version (nostrc-x215):
+     *  1 means `image_key` is the group image's encryption key itself; 2 or
+     *  later, a seed the image key is derived from.  0: not known (an
+     *  adopted group, or a record stored before 0.12.0).  Since 0.12.0. */
+    uint16_t group_data_version;
 } MarmotGroup;
 
 /** Allocate and zero-initialize a MarmotGroup */

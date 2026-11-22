@@ -112,6 +112,7 @@ group_deep_copy(const MarmotGroup *src)
     g->image_hash = src->image_hash ? xmemdup(src->image_hash, 32) : NULL;
     g->image_key = src->image_key ? xmemdup(src->image_key, 32) : NULL;
     g->image_nonce = src->image_nonce ? xmemdup(src->image_nonce, 12) : NULL;
+    g->group_data_version = src->group_data_version;
     if (src->admin_count > 0 && src->admin_pubkeys) {
         g->admin_pubkeys = malloc(src->admin_count * 32);
         if (g->admin_pubkeys) {

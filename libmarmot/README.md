@@ -1208,8 +1208,13 @@ not read (its validity rules need the frozen unsafe-host set): such a tag is
 - **MIP-01 version 1 is read (nostrc-c7ho).** Both encodings MDK used:
   without `image_upload_key` (MDK before December 2025) and with it empty
   (MDK 0.8). Written back as MDK 0.8 writes it. A v1 `image_key` is the
-  image's encryption key itself, not a v2 seed, and `MarmotGroup` does not
-  carry the version yet (nostrc-x215).
+  image's encryption key itself, not a v2 seed: `MarmotGroup.group_data_version`
+  (new, at the struct's end) says which, set on create, join and every
+  Commit's GroupData (which now also refreshes the record's image fields),
+  and stored by the memory, SQLite (a `group_data_version` column, added to
+  older databases on open) and nostrdb (group record version 2) backends;
+  0 means unknown (adopted groups, records stored before). Application
+  storage backends must persist it too (nostrc-x215).
 - **An invitation survives a storage error (nostrc-w285).**
   `marmot_accept_welcome()` refuses a Welcome for good only on a definitive
   not-found: of its raw data (now `MARMOT_ERR_STORAGE_NOT_FOUND`, was

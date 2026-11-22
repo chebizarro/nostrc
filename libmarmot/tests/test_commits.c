@@ -2871,6 +2871,53 @@ test_inner_event_delivered_once(void)
     trio_clear(&t);
 }
 
+/* nostrc-d13t: the delivered-once rule is per group.  The same inner event
+ * (same NIP-01 id) sent to two groups is delivered in each; within a group
+ * it stays a duplicate. */
+static void
+test_inner_event_dedupe_is_per_group(void)
+{
+    Trio t;
+    trio_init(&t);
+
+    char *bob_kp = key_package(&t.bob);
+    const char *kps[] = { bob_kp };
+    MarmotGroupConfig cfg = {0};
+    cfg.name = "Second";
+    cfg.admin_pubkeys = (uint8_t (*)[32])t.alice.pk;
+    cfg.admin_count = 1;
+    MarmotCreateGroupResult cg;
+    memset(&cg, 0, sizeof(cg));
+    OK(marmot_create_group(t.alice.m, t.alice.pk, kps, 1, &cfg, &cg));
+    MarmotGroupId gid2 = marmot_group_id_new(cg.group->mls_group_id.data,
+                                             cg.group->mls_group_id.len);
+    join(&t.bob, cg.welcome_rumor_jsons[0]);
+    free(bob_kp);
+    marmot_create_group_result_free(&cg);
+
+    const char *inner =
+        "{\"kind\":9,\"content\":\"to both\",\"created_at\":1700000000,\"tags\":[]}";
+    MarmotOutgoingMessage a, b, c;
+    memset(&a, 0, sizeof(a));
+    memset(&b, 0, sizeof(b));
+    memset(&c, 0, sizeof(c));
+    OK(marmot_create_message(t.alice.m, &t.gid, inner, &a));
+    OK(marmot_create_message(t.alice.m, &gid2, inner, &b));
+    OK(marmot_create_message(t.alice.m, &gid2, inner, &c));
+    MarmotError err;
+    CHECK(deliver(&t.bob, a.event_json, &err, NULL) == MARMOT_RESULT_APPLICATION_MESSAGE &&
+          err == MARMOT_OK, "first group: %d", err);
+    CHECK(deliver(&t.bob, b.event_json, &err, NULL) == MARMOT_RESULT_APPLICATION_MESSAGE &&
+          err == MARMOT_OK, "second group too: %d", err);
+    CHECK(deliver(&t.bob, c.event_json, &err, NULL) == MARMOT_RESULT_OWN_MESSAGE &&
+          err == MARMOT_OK, "again in the second group: a duplicate: %d", err);
+    marmot_outgoing_message_free(&a);
+    marmot_outgoing_message_free(&b);
+    marmot_outgoing_message_free(&c);
+    marmot_group_id_free(&gid2);
+    trio_clear(&t);
+}
+
 /* On a storage without transaction hooks (the memory backend), a received
  * message that cannot be stored does not keep its ratchet step: the step is
  * written back, so the same event is read again later instead of being lost
@@ -8881,6 +8928,7 @@ main(int argc, char **argv)
     RUN(test_failed_receive_keeps_the_message);
     RUN(test_member_cannot_post_as_another);
     RUN(test_inner_event_delivered_once);
+    RUN(test_inner_event_dedupe_is_per_group);
     RUN(test_rename_reaches_every_member);
     RUN(test_group_data_relays_follow_commit);
     RUN(test_noop_group_context_commit_is_privileged);
