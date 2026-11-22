@@ -348,6 +348,68 @@ static int build_ndb_filters(const NostrFilter *filters, size_t nfilters,
   *out_filters = arr;
   return 0;
 }
+static void id_to_hex(const unsigned char *id, char hex[65]) {
+  static const char digits[] = "0123456789abcdef";
+  for (int i = 0; i < 32; i++) {
+    hex[2*i] = digits[id[i] >> 4]; hex[2*i+1] = digits[id[i] & 15];
+  }
+  hex[64] = 0;
+}
+
+static const char *note_d(struct ndb_note *note, char packed[65]) {
+  struct ndb_iterator tags;
+  ndb_tags_iterate_start(note, &tags);
+  while (ndb_tags_iterate_next(&tags)) {
+    if (ndb_tag_count(tags.tag) < 2) continue;
+    struct ndb_str key = ndb_iter_tag_str(&tags, 0);
+    if (key.flag == NDB_PACKED_ID || strcmp(key.str, "d") != 0) continue;
+    struct ndb_str value = ndb_iter_tag_str(&tags, 1);
+    if (value.flag == NDB_PACKED_ID) { id_to_hex(value.id, packed); return packed; }
+    return value.str;
+  }
+  return ""; /* NIP-01: an absent d tag is the empty identifier */
+}
+
+/* Resolve replacements inside the iterator's existing read transaction. A
+ * nested ndb_begin_query on the same thread is not supported by LMDB. This
+ * also hides obsolete versions from explicit-id queries and search results. */
+static int note_is_current(struct ndb_txn *txn, struct ndb_note *note) {
+  uint32_t kind = ndb_note_kind(note);
+  bool addressable = kind >= 30000 && kind < 40000;
+  if (!(kind == 0 || kind == 3 || (kind >= 10000 && kind < 20000) || addressable)) return 1;
+  char author[65], packed_d[65];
+  const char *d = addressable ? note_d(note, packed_d) : NULL;
+  id_to_hex(ndb_note_pubkey(note), author);
+  NostrFilter *coordinate = nostr_filter_new();
+  if (!coordinate) return -ENOMEM;
+  nostr_filter_add_author(coordinate, author);
+  nostr_filter_add_kind(coordinate, (int)kind);
+  coordinate->since = ndb_note_created_at(note);
+  if (addressable && *d) nostr_filter_tags_append(coordinate, "d", d, NULL);
+  struct ndb_filter filter;
+  int rc = build_ndb_filter(coordinate, &filter);
+  nostr_filter_free(coordinate);
+  if (rc) return rc;
+  enum { COORDINATE_CAP = 256 };
+  struct ndb_query_result candidates[COORDINATE_CAP];
+  int count = 0;
+  int ok = ndb_query(txn, &filter, 1, candidates, COORDINATE_CAP, &count);
+  ndb_filter_destroy(&filter);
+  if (!ok) return -EIO;
+  for (int i = 0; i < count; i++) {
+    struct ndb_note *other = candidates[i].note;
+    char other_packed[65];
+    if (addressable && strcmp(d, note_d(other, other_packed)) != 0) continue;
+    uint32_t timestamp = ndb_note_created_at(other);
+    if (timestamp > ndb_note_created_at(note) ||
+        (timestamp == ndb_note_created_at(note) &&
+         memcmp(ndb_note_id(other), ndb_note_id(note), 32) < 0)) return 0;
+  }
+  /* Never serve a possibly obsolete version if the coordinate lookup was
+   * truncated. An explicit query error is preferable to false completeness. */
+  return count == COORDINATE_CAP ? -EOVERFLOW : 1;
+}
+
 static void* ndb_query_storage(NostrStorage *st, const NostrFilter *filters, size_t nfilters,
                        size_t limit, uint64_t since, uint64_t until, int *err) {
   (void)since; (void)until;
@@ -389,8 +451,15 @@ static int ndb_query_next(NostrStorage *st, void *itp, NostrEvent *out, size_t *
   (void)st;
   if (!itp || !out || !n || *n == 0) return -EINVAL;
   NDBIter *it = (NDBIter*)itp;
-  if (it->index >= it->count) { *n = 0; return 0; }
-  struct ndb_query_result *qr = &it->results[it->index++];
+  struct ndb_query_result *qr = NULL;
+  while (it->index < it->count) {
+    qr = &it->results[it->index++];
+    int current = note_is_current(&it->txn, qr->note);
+    if (current < 0) { *n = 0; return current; }
+    if (current) break;
+    qr = NULL;
+  }
+  if (!qr) { *n = 0; return 0; }
   /* Convert ndb_note to JSON then to NostrEvent. Escaping can make the JSON
    * larger than the stored note; grow until it fits (bounded). */
   size_t buflen = (size_t)(qr->note_size ? qr->note_size * 2 : 2048);
@@ -431,6 +500,13 @@ static int ndb_count(NostrStorage *st, const NostrFilter *filters, size_t nfilte
   struct ndb_query_result *res = (struct ndb_query_result*)calloc(NDB_COUNT_CAP, sizeof(*res));
   int count = 0;
   rc = res ? ndb_query(&txn, arr, (int)nfilters, res, NDB_COUNT_CAP, &count) : 0;
+  int visible = 0;
+  if (rc) for (int i = 0; i < count; i++) {
+    int current = note_is_current(&txn, res[i].note);
+    if (current < 0) { rc = 0; break; }
+    visible += current;
+  }
+  count = visible;
   free(res);
   for (size_t i = 0; i < nfilters; i++) ndb_filter_destroy(&arr[i]);
   free(arr);
