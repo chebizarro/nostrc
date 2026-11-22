@@ -341,6 +341,11 @@ test_messages_in_epochs(MarmotStorage *s)
     assert(s->messages_in_epochs(s->ctx, &gid, 40, 50, &msgs, &count) == MARMOT_OK);
     assert(count == 0);
     free(msgs);
+    msgs = NULL;
+    count = 7;
+    assert(s->messages_in_epochs(s->ctx, &gid, 4, 2, &msgs, &count) == MARMOT_OK);
+    assert(count == 0);
+    free(msgs);
     marmot_group_id_free(&gid);
     marmot_group_id_free(&other);
 }
@@ -1055,10 +1060,21 @@ run_contract_tests(const char *backend_name, MarmotStorage *s,
  * main — instantiate and test each available backend
  * ──────────────────────────────────────────────────────────────────────── */
 
-int main(void)
+int main(int argc, char **argv)
 {
     int total_backends = 0;
     make_tmp_dir();
+    if (argc == 2 && strcmp(argv[1], "--nostrdb-epochs") == 0) {
+        char path[512];
+        snprintf(path, sizeof(path), "%s/epochs.lmdb", tmp_dir);
+        MarmotStorage *s = marmot_storage_nostrdb_new(NULL, path);
+        assert(s != NULL && s->messages_in_epochs != NULL);
+        TEST(test_messages_in_epochs, "nostrdb", s);
+        marmot_storage_free(s);
+        rm_rf(tmp_dir);
+        return 0;
+    }
+    assert(argc == 1);
 
     printf("libmarmot: Storage contract tests\n");
     printf("  temp dir: %s\n", tmp_dir);
@@ -1101,6 +1117,7 @@ int main(void)
         /* Pass NULL for ndb_handle — still tests the LMDB MLS state layer */
         MarmotStorage *s = marmot_storage_nostrdb_new(NULL, ndb_dir);
         if (s != NULL) {
+            assert(s->messages_in_epochs != NULL);
             run_contract_tests("nostrdb", s, true);
             marmot_storage_free(s);
             total_backends++;
