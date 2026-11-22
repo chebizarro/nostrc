@@ -87,13 +87,13 @@ int nostr_nip49_decrypt_secure(const char *ncryptsec_bech32,
   // KDF
   uint8_t key32[32];
   rc = nip49_kdf_scrypt(pw_nfkc, p.salt, p.log_n, key32);
-  if (rc != 0) { memset(key32, 0, sizeof key32); memset(pw_nfkc, 0, strlen(pw_nfkc)); free(pw_nfkc); return NOSTR_NIP49_ERR_KDF; }
+  if (rc != 0) { secure_wipe(key32, sizeof key32); secure_wipe(pw_nfkc, strlen(pw_nfkc)); free(pw_nfkc); return NOSTR_NIP49_ERR_KDF; }
 
   // Allocate secure buffer for plaintext key
   nostr_secure_buf sb = secure_alloc(32);
   if (!sb.ptr || sb.len != 32) {
-    memset(key32, 0, sizeof key32);
-    memset(pw_nfkc, 0, strlen(pw_nfkc));
+    secure_wipe(key32, sizeof key32);
+    secure_wipe(pw_nfkc, strlen(pw_nfkc));
     free(pw_nfkc);
     secure_free(&sb);
     return NOSTR_NIP49_ERR_ARGS;
@@ -103,8 +103,8 @@ int nostr_nip49_decrypt_secure(const char *ncryptsec_bech32,
   rc = nip49_aead_decrypt_xchacha20poly1305(key32, p.nonce, &p.ad, 1, p.ciphertext, (uint8_t *)sb.ptr);
 
   // Zeroize KDF and password
-  memset(key32, 0, sizeof key32);
-  memset(pw_nfkc, 0, strlen(pw_nfkc));
+  secure_wipe(key32, sizeof key32);
+  secure_wipe(pw_nfkc, strlen(pw_nfkc));
   free(pw_nfkc);
 
   if (rc != 0) { secure_free(&sb); return NOSTR_NIP49_ERR_AEAD; }
@@ -169,11 +169,11 @@ int nostr_nip49_encrypt(const uint8_t privkey32[32],
   // KDF
   uint8_t key32[32];
   rc = nip49_kdf_scrypt(pw_nfkc, p.salt, p.log_n, key32);
-  if (rc != 0) { memset(key32, 0, sizeof key32); memset(pw_nfkc, 0, strlen(pw_nfkc)); free(pw_nfkc); return NOSTR_NIP49_ERR_KDF; }
+  if (rc != 0) { secure_wipe(key32, sizeof key32); secure_wipe(pw_nfkc, strlen(pw_nfkc)); free(pw_nfkc); return NOSTR_NIP49_ERR_KDF; }
 
   // AEAD encrypt
   rc = nip49_aead_encrypt_xchacha20poly1305(key32, p.nonce, &p.ad, 1, privkey32, p.ciphertext);
-  if (rc != 0) { memset(key32, 0, sizeof key32); memset(pw_nfkc, 0, strlen(pw_nfkc)); free(pw_nfkc); return NOSTR_NIP49_ERR_AEAD; }
+  if (rc != 0) { secure_wipe(key32, sizeof key32); secure_wipe(pw_nfkc, strlen(pw_nfkc)); free(pw_nfkc); return NOSTR_NIP49_ERR_AEAD; }
 
   // Serialize and Bech32
   uint8_t buf[91];
@@ -181,8 +181,8 @@ int nostr_nip49_encrypt(const uint8_t privkey32[32],
   rc = nip49_bech32_encode_ncryptsec(buf, out_ncryptsec);
 
   // Zeroize secrets
-  memset(key32, 0, sizeof key32);
-  memset(pw_nfkc, 0, strlen(pw_nfkc));
+  secure_wipe(key32, sizeof key32);
+  secure_wipe(pw_nfkc, strlen(pw_nfkc));
   free(pw_nfkc);
 
   if (rc != 0) return NOSTR_NIP49_ERR_BECH32;
@@ -214,14 +214,14 @@ int nostr_nip49_decrypt(const char *ncryptsec_bech32,
   // KDF
   uint8_t key32[32];
   rc = nip49_kdf_scrypt(pw_nfkc, p.salt, p.log_n, key32);
-  if (rc != 0) { memset(key32, 0, sizeof key32); memset(pw_nfkc, 0, strlen(pw_nfkc)); free(pw_nfkc); return NOSTR_NIP49_ERR_KDF; }
+  if (rc != 0) { secure_wipe(key32, sizeof key32); secure_wipe(pw_nfkc, strlen(pw_nfkc)); free(pw_nfkc); return NOSTR_NIP49_ERR_KDF; }
 
   // AEAD decrypt
   rc = nip49_aead_decrypt_xchacha20poly1305(key32, p.nonce, &p.ad, 1, p.ciphertext, out_privkey32);
 
   // Zeroize secrets
-  memset(key32, 0, sizeof key32);
-  memset(pw_nfkc, 0, strlen(pw_nfkc));
+  secure_wipe(key32, sizeof key32);
+  secure_wipe(pw_nfkc, strlen(pw_nfkc));
   free(pw_nfkc);
 
   if (rc != 0) return NOSTR_NIP49_ERR_AEAD;
