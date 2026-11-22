@@ -52,6 +52,7 @@ struct _GhAppOutbox {
   /* W26 slice B: reactions across all backends. */
   GhReactionStore *reactions;             /* in-memory model, or NULL */
   GhStoreReactions *store_reactions;      /* persistence delegate, or NULL */
+  GhStore *reaction_store;                /* borrowed until unbind_reactions */
   GObject *reactions_outbox;              /* the outbox it was made beside (weak) */
   GhAppOutboxDeleteFunc delete_func;      /* received NIP-09 requests for messages */
   gpointer delete_data;
@@ -348,8 +349,15 @@ nip17_reaction_sink(gpointer data, const GhNip17Message *message,
       gh_reaction_new(target_id, message->rumor_id, message->sender_pubkey,
                       emoji, message->created_at, room_id);
     if (reaction) {
-      gh_reaction_store_admit(self->reactions, reaction, NULL);
+      g_autoptr(GError) store_error = NULL;
+      gh_reaction_store_admit(self->reactions, reaction, &store_error);
       g_object_unref(reaction);
+      if (store_error) {
+        g_propagate_error(error, g_steal_pointer(&store_error));
+        nostr_event_free(inner);
+        g_free(room_id);
+        return FALSE;
+      }
     }
   } else if (kind == 5) {
     /* Deletion: each e-tag names a reaction to remove.
@@ -373,7 +381,12 @@ nip17_reaction_sink(gpointer data, const GhNip17Message *message,
   }
   nostr_event_free(inner);
   g_free(room_id);
-  return TRUE;
+  /* Only after durable admission (including a pending or duplicate reaction).
+   * If recording the verdict fails, retrying is safe and must remain possible.
+   * Deletion callbacks have no failure result, so they cannot yet acknowledge
+   * a wrap this way. */
+  return kind != 7 || gh_store_seen_add(self->reaction_store, GH_STORE_SEEN_WRAP,
+                                       message->wrap_id, error);
 }
 
 static void
@@ -387,6 +400,7 @@ bind_reactions(GhAppOutbox *self, GhStore *store, GObject *outbox)
   /* One reaction store per open account store. */
   self->reactions = gh_reaction_store_new();
   self->store_reactions = gh_store_reactions_new(store);
+  self->reaction_store = store;
 
   g_autoptr(GError) error = NULL;
   if (!gh_store_reactions_attach(self->store_reactions, self->reactions, &error))
@@ -421,6 +435,7 @@ unbind_reactions(gpointer data, GObject *outbox)
     g_clear_object(&self->store_reactions);
   }
   g_clear_object(&self->reactions);
+  self->reaction_store = NULL;
 }
 
 GhReactionStore *
