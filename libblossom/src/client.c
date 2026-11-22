@@ -1914,7 +1914,7 @@ blossom_error_t blossom_client_mirror(blossom_client_t *client,
         free(auth_header);
         return BLOSSOM_ERR_NOMEM;
     }
-    
+
     size_t body_len = 9 + strlen(escaped_url) + 2; /* {"url":""} + NUL */
     char *body = malloc(body_len);
     if (!body) {
