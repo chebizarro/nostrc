@@ -2214,6 +2214,53 @@ test_self_copy_waiting_for_approval(void)
   fixture_down(&f);
 }
 
+typedef struct { Fixture *fixture; guint after; } QueuedSelfCopy;
+static gboolean
+second_self_copy_signing(gpointer data)
+{
+  QueuedSelfCopy *wait = data;
+  Transport *transport = &wait->fixture->transport;
+  for (guint i = wait->after; i < transport->opens->len; i++) {
+    PubOpen *open = g_ptr_array_index(transport->opens, i);
+    if (g_strcmp0(open->p, hex_alice) == 0 && g_strcmp0(open->url, ALICE_INBOX) == 0 &&
+        gh_relay_publish_is_signing_in(open->publish, open->url))
+      return TRUE;
+  }
+  return FALSE;
+}
+
+static void
+test_queued_self_copy_approval(void)
+{
+  Fixture f;
+  fixture_up(&f, NULL, NULL);
+  settle_own(&f, ALICE_INBOX, NULL);
+  script(&f.transport, ALICE_INBOX, ANSWER_AUTH_ACCEPT, TRUE, NULL);
+  fixture_outbox(&f);
+  f.mock.hold = TRUE;
+  g_autoptr(GhOutboxItem) first = send_text(&f, hex_alice, "first queued sign-in");
+  approve_calls(&f, 2);
+  HeldWait held = { &f.mock, 1 };
+  gh_test_spin_until(held_reached, &held);
+  QueuedSelfCopy waiting = { &f, f.transport.opens->len };
+  /* Encryption/sealing of the second message may proceed; the first AUTH
+   * remains held and its relay adapter queues the second AUTH behind it. */
+  f.mock.hold = FALSE;
+  g_autoptr(GhOutboxItem) second = send_text(&f, hex_alice, "second queued sign-in");
+  gh_test_spin_until(second_self_copy_signing, &waiting);
+  drain();
+  g_assert_cmpuint(f.mock.held->len, ==, 1);
+  g_assert_cmpint(gh_outbox_item_get_status(second), ==, GH_MESSAGE_STATUS_WAITING_FOR_SIGNER);
+  g_assert_cmpstr(gh_outbox_item_get_label(second), ==, "Waiting for approval");
+  g_assert_cmpstr(target_description(second, hex_alice, ALICE_INBOX), ==,
+                  gh_message_status_describe_approval());
+  gh_test_signer_release_all(&f.mock);
+  gh_test_spin_until(state_settled, first);
+  gh_test_spin_until(state_settled, second);
+  g_assert_cmpint(gh_outbox_item_get_status(second), ==, GH_MESSAGE_STATUS_SENT);
+  fixture_down(&f);
+}
+
 /* nostrc-qp24.68: the relay's publish deadline bounds the relay, never the
  * user. A note to self to an own inbox that demands sign-in waits for the
  * approval past the deadline (1 s here, 30 s by default), as "Waiting for
@@ -3148,6 +3195,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/outbox/self-copy-jitter", test_ob9_self_copy_jitter);
   g_test_add_func("/groundhog/outbox/self-copy-account-auth", test_self_copy_account_auth);
   g_test_add_func("/groundhog/outbox/self-copy-former-inbox", test_self_copy_former_inbox);
+  g_test_add_func("/groundhog/outbox/queued-self-copy-approval", test_queued_self_copy_approval);
   g_test_add_func("/groundhog/outbox/self-copy-waiting-for-approval",
                   test_self_copy_waiting_for_approval);
   g_test_add_func("/groundhog/outbox/approval-outlives-publish-deadline",

@@ -1035,6 +1035,7 @@ full_group(const MarmotGroupId *gid, const gchar *name)
   g->description = strdup("D\xc3\xa9scription with\ttab, \"quotes\", '\x01' and \xf0\x9f\x90\xb9");
   g->image_hash = c_bytes(32, 1);
   g->image_key = c_bytes(32, 2);
+  g->group_data_version = 2;
   g->image_nonce = c_bytes(12, 3);
   g->admin_count = 3;
   g->admin_pubkeys = (uint8_t (*)[32]) c_bytes(3 * 32, 4);
@@ -1064,6 +1065,7 @@ assert_groups_equal(const MarmotGroup *a, const MarmotGroup *b)
   g_assert_cmpint(a->last_message_processed_at, ==, b->last_message_processed_at);
   g_assert_cmpuint(a->epoch, ==, b->epoch);
   g_assert_cmpint(a->state, ==, b->state);
+  g_assert_cmpuint(a->group_data_version, ==, b->group_data_version);
 }
 
 static void
@@ -1090,6 +1092,7 @@ test_roundtrip_group(void)
   bare->mls_group_id = marmot_group_id_new(gid.data, gid.len);
   memset(bare->nostr_group_id, 0x5a, 32);
   bare->epoch = 3;
+  bare->group_data_version = 1;
   assert_marmot_ok(s->save_group(s->ctx, bare));
   assert_marmot_ok(s->find_group_by_mls_id(s->ctx, &gid, &found));
   assert_groups_equal(bare, found);
@@ -1922,12 +1925,12 @@ test_snapshot_semantics(void)
   GhStore *store = store_open(&account, clock);
   MarmotStorage *s = storage_new(store);
 
-  /* Snapshots copy these tables through explicit column lists (13 columns
-   * fit mls_snapshot_rows' c0..c12). A migration that adds a column here
+  /* Snapshots copy these tables through explicit column lists (14 columns
+   * fit mls_snapshot_rows' c0..c13). A migration that adds a column here
    * must extend snapshot_tables in gh-store-marmot.c, or snapshots would
    * silently drop it: this fails first. */
   static const struct { const gchar *table; gint64 columns; } covered[] = {
-    { "mls_group_info", 13 }, { "mls_group_relays", 3 },
+    { "mls_group_info", 14 }, { "mls_group_relays", 3 },
     { "mls_exporter_secrets", 3 }, { "mls_kv", 3 },
   };
   for (guint i = 0; i < G_N_ELEMENTS(covered); i++) {
@@ -1936,7 +1939,7 @@ test_snapshot_semantics(void)
     g_assert_cmpint(sql_int(store, sql), ==, covered[i].columns);
   }
   g_assert_cmpint(sql_int(store, "SELECT count(*) FROM pragma_table_info('mls_snapshot_rows') "
-                                 "WHERE name GLOB 'c[0-9]*'"), ==, 13);
+                                 "WHERE name GLOB 'c[0-9]*'"), ==, 14);
   MarmotGroupId a = gid_of("group-A");
   MarmotGroupId b = gid_of("group-B");
   MarmotGroupId unknown = gid_of("never saved");
@@ -2244,6 +2247,51 @@ make_committed_store(const TestAccount *account, guint version, const gchar *row
   g_assert_cmpint(sqlite3_exec(db, rows, NULL, NULL, NULL), ==, SQLITE_OK);
   g_assert_cmpint(sqlite3_exec(db, "COMMIT", NULL, NULL, NULL), ==, SQLITE_OK);
   g_assert_cmpint(sqlite3_close(db), ==, SQLITE_OK);
+}
+
+/* A real schema-14 encrypted store and its old snapshot acquire version 0;
+ * new snapshots preserve the exact v1/v2 interpretation across rollback/reopen. */
+static void
+test_group_data_version_migration(void)
+{
+  TestAccount account;
+  test_account_init(&account, ACCOUNT_A);
+  make_committed_store(&account, 14,
+    "INSERT INTO mls_group_info VALUES(CAST('old image' AS BLOB),zeroblob(32),"
+    "'old',NULL,zeroblob(32),zeroblob(32),zeroblob(12),NULL,NULL,0,0,1,0);"
+    "INSERT INTO mls_snapshots VALUES(CAST('old image' AS BLOB),'old',1,X'01');"
+    "INSERT INTO mls_snapshot_rows(group_id,name,tbl,c0,c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11,c12) "
+    "SELECT mls_group_id,'old',1,mls_group_id,nostr_group_id,name,description,image_hash,"
+    "image_key,image_nonce,admin_pubkeys,last_message_id,last_message_at,"
+    "last_message_processed_at,epoch,state FROM mls_group_info;");
+  GhStore *store = store_open_flags(&account, NULL, GH_STORE_OPEN_NONE);
+  MarmotStorage *s = storage_new(store);
+  MarmotGroupId gid = gid_of("old image");
+  MarmotGroup *group = NULL;
+  assert_marmot_ok(s->find_group_by_mls_id(s->ctx, &gid, &group));
+  g_assert_cmpuint(group->group_data_version, ==, 0);
+  group->group_data_version = 1;
+  assert_marmot_ok(s->save_group(s->ctx, group));
+  assert_marmot_ok(s->create_snapshot(s->ctx, &gid, "v1"));
+  group->group_data_version = 2;
+  assert_marmot_ok(s->save_group(s->ctx, group));
+  assert_marmot_ok(s->rollback_snapshot(s->ctx, &gid, "old"));
+  marmot_group_free(group);
+  assert_marmot_ok(s->find_group_by_mls_id(s->ctx, &gid, &group));
+  g_assert_cmpuint(group->group_data_version, ==, 0);
+  assert_marmot_ok(s->rollback_snapshot(s->ctx, &gid, "v1"));
+  marmot_group_free(group);
+  marmot_storage_free(s);
+  gh_store_close(store);
+  store = store_open_flags(&account, NULL, GH_STORE_OPEN_NONE);
+  s = storage_new(store);
+  assert_marmot_ok(s->find_group_by_mls_id(s->ctx, &gid, &group));
+  g_assert_cmpuint(group->group_data_version, ==, 1);
+  marmot_group_free(group);
+  marmot_group_id_free(&gid);
+  marmot_storage_free(s);
+  gh_store_close(store);
+  test_account_clear(&account);
 }
 
 static void
@@ -4480,6 +4528,7 @@ main(int argc, char **argv)
   g_test_add_func("/store-marmot/transaction/caller", test_caller_transaction);
   g_test_add_func("/store-marmot/transaction/disk-full", test_disk_full);
   g_test_add_func("/store-marmot/store-kinds", test_store_kinds);
+  g_test_add_func("/store-marmot/migration/group-data-version", test_group_data_version_migration);
   g_test_add_func("/store-marmot/migration/v1-to-v2", test_migration_v1_to_v2);
   g_test_add_func("/store-marmot/migration/v6-scrubs-messages", test_migration_v6_scrubs_messages);
   g_test_add_func("/store-marmot/migration/v7-to-v8", test_migration_v7_to_v8);

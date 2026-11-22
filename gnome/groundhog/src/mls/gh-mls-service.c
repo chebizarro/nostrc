@@ -2674,6 +2674,7 @@ commit_visible_state(GhMlsGroup *group)
                     state->description ? strlen(state->description) : 0);
   checksum_optional(sum, state->image_hash, 32);
   checksum_optional(sum, state->image_key, 32);
+  checksum_field(sum, &state->group_data_version, sizeof state->group_data_version);
   checksum_optional(sum, state->image_nonce, 12);
   checksum_field(sum, state->nostr_group_id, 32);
   checksum_field(sum, &state->state, sizeof state->state);
@@ -3884,6 +3885,8 @@ struct _Round {
   GhMlsCommitPublish *publish;
   GhRelayPublish *relay;
   GhMlsCommitState state;
+  MarmotMessageResult *applied;
+  size_t n_applied;
   gboolean reported;
   gboolean any_answer;
 };
@@ -3895,6 +3898,7 @@ round_free(Round *round)
     gh_relay_publish_cancel(round->relay);
     gh_relay_publish_unref(round->relay);
   }
+  marmot_message_results_free(round->applied, round->n_applied);
   gh_mls_commit_publish_free(round->publish);
   g_free(round);
 }
@@ -3961,6 +3965,14 @@ round_report(Round *round)
     group->last_committer = g_strdup(group->service->account);
     group->last_committer_leaf = G_MAXUINT32;   /* our own leaf is proven */
   }
+  /* Deferred Commits compete at our pending epoch. The last applied result
+   * describes the selected branch, whose new devices the refresh will see. */
+  if (round->state == GH_MLS_COMMIT_CLEARED && round->n_applied) {
+    const MarmotMessageResult *selected = &round->applied[round->n_applied - 1];
+    g_free(group->last_committer);
+    group->last_committer = g_strdup(selected->commit.committer_pubkey_hex);
+    group->last_committer_leaf = selected->commit.committer_leaf;
+  }
   after_commit(group);
   complete_waiters(group, error);
 }
@@ -3979,8 +3991,9 @@ round_update(GhRelayPublish *publish, const GhRelayPublishResult *result, gpoint
   round->any_answer = TRUE;
   g_autoptr(GError) error = NULL;
   GhMlsCommitState state = GH_MLS_COMMIT_PENDING;
-  if (!gh_mls_commit_record_answer(self->store, self->marmot, self->storage, round->publish,
-                                   result->url, accepted, result->message, &state, &error)) {
+  if (!gh_mls_commit_record_answer_with_results(self->store, self->marmot, self->storage,
+        round->publish, result->url, accepted, result->message, &state, &round->applied,
+        &round->n_applied, &error)) {
     g_message("Groundhog could not record a group relay's answer: %s", error->message);
     return;
   }

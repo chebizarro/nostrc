@@ -3154,6 +3154,83 @@ test_unproven_invitee(void)
   world_down(&w);
 }
 
+typedef struct { App *app; GhMlsGroup *group; } DeferredWait;
+static gboolean
+deferred_commit_kept(gpointer data)
+{
+  DeferredWait *wait = data;
+  const gchar *hex_id = gh_mls_group_get_group_id(wait->group);
+  g_autofree guint8 *bytes = g_malloc(strlen(hex_id) / 2);
+  g_assert_true(nostr_hex2bin(bytes, hex_id, strlen(hex_id) / 2));
+  MarmotGroupId gid = { bytes, strlen(hex_id) / 2 };
+  size_t order[16], n = 0;
+  return marmot_commit_deferred_replay_order(gh_mls_service_get_marmot(wait->app->service),
+                                            &gid, order, G_N_ELEMENTS(order), &n) == MARMOT_OK && n > 0;
+}
+
+/* The winning local Commit is refused after Bob's losing Add was deferred.
+ * The round's clear applies that Add: its new unproven device belongs to
+ * Bob's authorship, not our rejected change or an unknown committer. */
+static void
+test_deferred_add_attributed(void)
+{
+  World w;
+  world_legacy_only = TRUE;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Before deferred Add", (const guint[]){ BOB }, 1);
+  GhMlsGroup *gb = join(bob, ALICE);
+  const gchar *admins[] = { hex[ALICE], hex[BOB], NULL };
+  OpWait promoted = { 0 };
+  gh_mls_service_set_admins_async(alice->service, ga, admins, NULL, on_changed, &promoted);
+  change(alice, &promoted);
+  spin_until(became_admin, gb, "Bob promoted");
+  wait_epoch(gb, (gint)gh_mls_group_get_epoch(ga));
+  g_autofree gchar *kp = inject_legacy_key_package(&w, CAROL);
+  accept_contact(bob, CAROL);
+  w.g.withhold_new = TRUE;
+  w.g.hold_oks = TRUE;
+  PendingWait attempted = { ga, &w.g, w.g.events };
+  OpWait ours = { 0 };
+  gh_mls_service_update_metadata_async(alice->service, ga, "Refused local change", NULL,
+                                       NULL, on_changed, &ours);
+  spin_until(pending_and_tried, &attempted, "our local Commit at the relay");
+  g_autofree gchar *our_id = pending_commit_id(alice, ga);
+  OpWait added = { 0 };
+  const gchar *people[] = { hex[CAROL], NULL };
+  attempted = (PendingWait){ gb, &w.g, w.g.events };
+  gh_mls_service_add_members_async(bob->service, gb, people, NULL, on_changed, &added);
+  spin_until(pending_and_tried, &attempted, "Bob's Add at the relay");
+  g_autofree gchar *bob_id = pending_commit_id(bob, gb);
+  wire_relay_release(&w.g, bob_id);
+  DeferredWait deferred = { alice, ga };
+  spin_until(deferred_commit_kept, &deferred, "Bob's Add retained behind ours");
+  for (guint i = 0; i < w.g.held_oks->len; i++) {
+    WireHeldOk *held = g_ptr_array_index(w.g.held_oks, i);
+    if (g_str_equal(held->id, our_id))
+      wire_send_ok(held->connection, held->id, FALSE, "blocked: local Commit refused");
+  }
+  spin_until(op_done, &ours, "our refused round completed");
+  g_assert_error(ours.error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_REFUSED);
+  g_clear_error(&ours.error);
+  wait_members(ga, 3);
+  assert_identity(ga, CAROL, GH_MLS_MEMBER_UNVERIFIED, BOB);
+  w.g.withhold_new = FALSE;
+  wire_relay_release_oks(&w.g);
+  spin_until(op_done, &added, "Bob's completed Add");
+  g_assert_no_error(added.error);
+  g_assert_true(added.ok);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  app_restart(alice);
+  ga = gh_mls_service_lookup(alice->service, room);
+  wait_members(ga, 3);
+  assert_identity(ga, CAROL, GH_MLS_MEMBER_UNVERIFIED, BOB);
+  world_down(&w);
+}
+
 typedef struct {
   gboolean done;
   GhMlsMemberIdentity identity;
@@ -5210,6 +5287,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/account-proof-enrollment",
                   test_account_proof_enrollment);
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
+  g_test_add_func("/groundhog/mls-service/deferred-add-attributed", test_deferred_add_attributed);
   g_test_add_func("/groundhog/mls-service/unproven-member-identity",
                   test_unproven_member_identity);
   g_test_add_func("/groundhog/mls-service/own-commit-echo-before-ok",
