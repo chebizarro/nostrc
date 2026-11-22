@@ -318,6 +318,44 @@ typedef struct NostrPoolCallbackInfo {
  * Since: 2.4
  */
 NOSTR_API bool nostr_simple_pool_get_callback_info(NostrSimplePool *pool, NostrPoolCallbackInfo *out);
+
+typedef struct NostrPoolSubscription NostrPoolSubscription;
+typedef void (*NostrPoolEventFunc)(NostrPoolSubscription *, NostrIncomingEvent *, void *);
+typedef void (*NostrPoolStateFunc)(NostrPoolSubscription *, NostrRelay *, const char *state,
+                                   const char *reason, const NostrPoolCallbackInfo *, void *);
+/* Open is nonblocking: copies filters/URLs and uses the pool's background dial
+ * and recovery-window policy. Call start() on the pool to deliver callbacks.
+ * Each handle has independent event-ID deduplication and reconnect ownership.
+ * Event callbacks take ownership of incoming->event; other arguments are borrowed.
+ * Callbacks run on the pool worker, not under pool_mutex. */
+NOSTR_API NostrPoolSubscription *nostr_simple_pool_subscription_open(
+    NostrSimplePool *, const char **urls, size_t url_count, const NostrFilters *,
+    bool unique, NostrPoolEventFunc, NostrPoolStateFunc, void *user_data);
+/* Idempotent; sends CLOSE for this handle's live REQs, drops held recovery and
+ * queued events, and waits for its callbacks already executing on another thread.
+ * May be called from its own callback. No callback starts after close returns.
+ * Replace by closing the old handle and opening a new one; closed handles cannot
+ * be reopened. Free releases the caller's ownership and also closes the handle.
+ * Do not race free with other uses of the same handle, or pool destruction with
+ * any pool/handle API. Pool destruction detaches surviving closed handles. */
+NOSTR_API void nostr_pool_subscription_close(NostrPoolSubscription *);
+NOSTR_API void nostr_pool_subscription_free(NostrPoolSubscription *);
+
+typedef struct NostrPoolRelaySnapshot {
+    char *url;                         /* owned by snapshot */
+    NostrRelayConnectionState connection_state;
+    NostrRelayAuthStatus auth;
+    uint64_t reconnect_after_ms;
+    uint64_t closed_backoff_ms;
+    bool browned;
+} NostrPoolRelaySnapshot;
+/* Copies the relay membership under pool_mutex and reads synchronized relay
+ * state. Each field is an observation, not a transaction across relay threads.
+ * No borrowed relay pointers; safe to retain across reconnect/pool destruction.
+ * Returns false on allocation failure; outputs NULL/0 on failure or empty pool. */
+NOSTR_API bool nostr_simple_pool_snapshot_relays(NostrSimplePool *,
+    NostrPoolRelaySnapshot **out, size_t *count);
+NOSTR_API void nostr_simple_pool_snapshot_relays_free(NostrPoolRelaySnapshot *, size_t count);
 NOSTR_API bool nostr_simple_pool_set_recovery_window(NostrSimplePool *, unsigned seconds);
 NOSTR_API void nostr_simple_pool_subscribe(NostrSimplePool *pool, const char **urls, size_t url_count, NostrFilters filters, bool unique);
 /**
