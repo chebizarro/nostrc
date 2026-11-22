@@ -135,6 +135,36 @@ assert_error(const GhTestKeyResult *result, gint code)
   g_assert_null(result->key);
 }
 
+/* Registered only for the hermetic bus, never an ambient developer service. */
+static void
+test_session_default(void)
+{
+  ensure_keyring();
+  GError *error = NULL;
+  g_autoptr(SecretService) service = secret_service_get_sync(SECRET_SERVICE_OPEN_SESSION, NULL, &error);
+  g_assert_no_error(error);
+  g_autoptr(SecretCollection) previous = secret_collection_for_alias_sync(service,
+    SECRET_COLLECTION_DEFAULT, SECRET_COLLECTION_NONE, NULL, &error);
+  g_assert_no_error(error);
+  g_autoptr(SecretCollection) session = secret_collection_for_alias_sync(service,
+    SECRET_COLLECTION_SESSION, SECRET_COLLECTION_NONE, NULL, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(session);
+  g_assert_true(secret_service_set_alias_sync(service, SECRET_COLLECTION_DEFAULT, session, NULL, &error));
+  g_assert_no_error(error);
+  g_autoptr(GhStoreKey) key = new_libsecret_store_key();
+  g_autofree gchar *account = random_account();
+  for (guint interactive = 0; interactive < 2; interactive++) {
+    GhTestKeyResult result = gh_test_lookup_or_create(key, account,
+      interactive ? GH_STORE_KEY_FLAGS_INTERACTIVE : GH_STORE_KEY_FLAGS_NONE, NULL);
+    assert_error(&result, GH_STORE_KEY_ERROR_FAILED);
+    gh_test_key_result_clear(&result);
+  }
+  assert_no_items(account);
+  g_assert_true(secret_service_set_alias_sync(service, SECRET_COLLECTION_DEFAULT, previous, NULL, &error));
+  g_assert_no_error(error);
+}
+
 static void
 test_round_trip(void)
 {
@@ -436,6 +466,8 @@ main(int argc, char **argv)
   gboolean kc6 = session || keyring_program != NULL;
   if (!session)
     g_test_add_func("/store-key/kc4/bus-without-secret-service", test_bus_without_secret_service);
+  if (kc6 && !session)
+    g_test_add_func("/store-key/kc6/session-default", test_session_default);
   if (kc6) {
     g_test_add_func("/store-key/kc6/round-trip", test_round_trip);
     g_test_add_func("/store-key/kc6/locked-background", test_locked_background);

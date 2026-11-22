@@ -12,6 +12,7 @@ struct _FakeSecret {
   gboolean locked;
   gboolean unlock_accepted;
   gboolean store_fails;
+  gboolean session_default;
   gboolean ignore_query;
   gboolean ignore_cancel;
   gboolean hold;
@@ -172,6 +173,10 @@ fake_run(GTask *task)
     break;
   }
   case FAKE_SECRET_STORE: {
+    if (self->session_default) {
+      return_error(task, GH_STORE_KEY_ERROR_FAILED, "fake: default keyring is temporary");
+      break;
+    }
     if (self->store_fails) {
       return_error(task, GH_STORE_KEY_ERROR_FAILED, "fake: store refused");
       break;
@@ -494,3 +499,5 @@ gh_test_remove_tree(const gchar *path)
   }
   g_remove(path);
 }
+
+void fake_secret_set_session_default(FakeSecret *self, gboolean temporary) { self->session_default = temporary; }
