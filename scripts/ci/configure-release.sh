@@ -32,6 +32,7 @@ fi
 
 cmake -S "$root" -B "$root/$build" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib \
   -DBUILD_APPS=ON \
   -DBUILD_GROUNDHOG=OFF \
   -DSIGNET_ENABLE=OFF \
