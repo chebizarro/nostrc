@@ -2924,7 +2924,8 @@ test_gui_group_files(void)
   gh_mls_attachments_set_service(files_a, alice->service);
   gh_mls_attachments_set_service(files_b, bob->service);
 
-  /* The picture section of a legacy group: honest, and nothing to do. */
+  /* This legacy group has no picture. Reading is supported now, but its
+   * editing actions must remain unavailable. */
   window_files = files_a;
   GhWindow *window = app_window(alice, NULL);
   window_files = NULL;
@@ -2932,7 +2933,7 @@ test_gui_group_files(void)
   g_assert_true(gh_window_open_item(window, conversation));
   GhMlsGroupInfoDialog *info = show_info(window, conversation);
   g_assert_cmpstr(gh_mls_group_info_dialog_get_picture_status(info), ==,
-                  "Groundhog can’t show or change the picture of this older kind of group.");
+                  "No picture");
   g_assert_false(gh_mls_group_info_dialog_get_picture_shown(info));
   const gchar *picture_actions[] = { "mls-group.set-picture", "mls-group.show-picture",
                                       "mls-group.remove-picture" };

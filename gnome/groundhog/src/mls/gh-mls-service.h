@@ -904,7 +904,8 @@ gboolean gh_mls_service_get_components(GhMlsService *self, GhMlsGroup *group,
  * (copied, wiped after); NULL or !present removes the picture. One admin
  * Commit, published then merged, as update_metadata (finish:
  * gh_mls_service_change_finish()); GH_MLS_SERVICE_ERROR_UNSUPPORTED for a
- * legacy group, which libmarmot gives no picture. */
+ * legacy group (MIP-01 picture editing is not supported; its pictures are
+ * read through the version-aware media path). */
 void gh_mls_service_set_image_async(GhMlsService *self, GhMlsGroup *group,
                                     const MarmotGroupBlossomImage *image,
                                     GCancellable *cancellable, GAsyncReadyCallback callback,

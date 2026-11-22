@@ -2674,6 +2674,7 @@ commit_visible_state(GhMlsGroup *group)
                     state->description ? strlen(state->description) : 0);
   checksum_optional(sum, state->image_hash, 32);
   checksum_optional(sum, state->image_key, 32);
+  checksum_field(sum, &state->group_data_version, sizeof state->group_data_version);
   checksum_optional(sum, state->image_nonce, 12);
   checksum_field(sum, state->nostr_group_id, 32);
   checksum_field(sum, &state->state, sizeof state->state);

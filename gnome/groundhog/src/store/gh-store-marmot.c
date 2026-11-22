@@ -604,7 +604,7 @@ read_relays(GhStoreMarmot *self, sqlite3_stmt *stmt, int col, char ***out, size_
 #define GROUP_COLUMNS                                                           \
   "mls_group_id, nostr_group_id, name, description, image_hash, image_key, "  \
   "image_nonce, admin_pubkeys, last_message_id, last_message_at, "            \
-  "last_message_processed_at, epoch, state"
+  "last_message_processed_at, epoch, state, group_data_version"
 
 #define MESSAGE_COLUMNS                                                         \
   "id, mls_group_id, pubkey, kind, created_at, processed_at, content, "       \
@@ -639,6 +639,7 @@ group_from_row(GhStoreMarmot *self, sqlite3_stmt *stmt, MarmotGroup **out)
   g->last_message_processed_at = sqlite3_column_int64(stmt, 10);
   g->epoch = (uint64_t) sqlite3_column_int64(stmt, 11);
   g->state = (MarmotGroupState) sqlite3_column_int(stmt, 12);
+  g->group_data_version = (uint16_t)sqlite3_column_int(stmt, 13);
 out:
   if (err != MARMOT_OK) {
     marmot_group_free(g);
@@ -880,14 +881,15 @@ ghm_save_group(void *ctx, const MarmotGroup *group)
   sqlite3_stmt *stmt = NULL;
   TRY(prepare(self,
     "INSERT INTO mls_group_info (" GROUP_COLUMNS ") "
-    "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) "
+    "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) "
     "ON CONFLICT (mls_group_id) DO UPDATE SET nostr_group_id = excluded.nostr_group_id, "
     "name = excluded.name, description = excluded.description, "
     "image_hash = excluded.image_hash, image_key = excluded.image_key, "
     "image_nonce = excluded.image_nonce, admin_pubkeys = excluded.admin_pubkeys, "
     "last_message_id = excluded.last_message_id, last_message_at = excluded.last_message_at, "
     "last_message_processed_at = excluded.last_message_processed_at, "
-    "epoch = excluded.epoch, state = excluded.state", &stmt));
+    "epoch = excluded.epoch, state = excluded.state, "
+    "group_data_version = excluded.group_data_version", &stmt));
   BIND(bind_bytes(stmt, 1, group->mls_group_id.data, group->mls_group_id.len));
   BIND(bind_bytes(stmt, 2, group->nostr_group_id, 32));
   BIND(bind_text(stmt, 3, group->name));
@@ -901,6 +903,7 @@ ghm_save_group(void *ctx, const MarmotGroup *group)
   BIND(sqlite3_bind_int64(stmt, 11, group->last_message_processed_at));
   BIND(sqlite3_bind_int64(stmt, 12, (sqlite3_int64) group->epoch));
   BIND(sqlite3_bind_int64(stmt, 13, group->state));
+  BIND(sqlite3_bind_int(stmt, 14, group->group_data_version));
   TRY(step_done(self, stmt, "Saving an MLS group"));
 out:
   sqlite3_finalize(stmt);
@@ -1765,11 +1768,11 @@ typedef struct {
                         MLS_GROUP_LEAVING_LABEL "', '" MLS_GROUP_REMOVED_LABEL "') AND key = ?1"
 
 static const SnapshotTable snapshot_tables[] = {
-  { SNAPSHOT_INSERT "c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12) "
+  { SNAPSHOT_INSERT "c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13) "
     "SELECT ?1, ?2, 1, " GROUP_COLUMNS " FROM mls_group_info WHERE mls_group_id = ?1",
     "DELETE FROM mls_group_info WHERE mls_group_id = ?1",
     "INSERT INTO mls_group_info (" GROUP_COLUMNS ") "
-    "SELECT c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12" SNAPSHOT_SOURCE "1" },
+    "SELECT c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13" SNAPSHOT_SOURCE "1" },
   { SNAPSHOT_INSERT "c0, c1, c2) SELECT ?1, ?2, 2, mls_group_id, relay_url, position "
     "FROM mls_group_relays WHERE mls_group_id = ?1",
     "DELETE FROM mls_group_relays WHERE mls_group_id = ?1",
