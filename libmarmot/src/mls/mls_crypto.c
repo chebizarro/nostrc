@@ -78,18 +78,20 @@ mls_crypto_hkdf_expand(uint8_t *out, size_t out_len,
     size_t n = (out_len + MLS_HASH_LEN - 1) / MLS_HASH_LEN;
     if (n > 255) return -1;
 
-    uint8_t t_prev[MLS_HASH_LEN];
+    uint8_t t_prev[MLS_HASH_LEN] = {0};
+    uint8_t t_curr[MLS_HASH_LEN] = {0};
+    int rc = -1;
     size_t t_prev_len = 0;
     size_t offset = 0;
 
     for (size_t i = 1; i <= n; i++) {
         unsigned int hmac_len = MLS_HASH_LEN;
-        uint8_t t_curr[MLS_HASH_LEN];
 
         /* Build input: T(i-1) || info || uint8(i) */
+        if (info_len > SIZE_MAX - t_prev_len - 1) goto out;
         size_t in_len = t_prev_len + info_len + 1;
         uint8_t *in_buf = malloc(in_len);
-        if (!in_buf) return -1;
+        if (!in_buf) goto out;
 
         size_t pos = 0;
         if (t_prev_len > 0) {
@@ -103,9 +105,11 @@ mls_crypto_hkdf_expand(uint8_t *out, size_t out_len,
         in_buf[pos] = (uint8_t)i;
 
         if (!HMAC(EVP_sha256(), prk, MLS_KDF_EXTRACT_LEN, in_buf, in_len, t_curr, &hmac_len)) {
+            sodium_memzero(in_buf, in_len);
             free(in_buf);
-            return -1;
+            goto out;
         }
+        sodium_memzero(in_buf, in_len);
         free(in_buf);
 
         size_t copy_len = out_len - offset;
@@ -117,7 +121,11 @@ mls_crypto_hkdf_expand(uint8_t *out, size_t out_len,
         t_prev_len = MLS_HASH_LEN;
     }
 
-    return 0;
+    rc = 0;
+out:
+    sodium_memzero(t_curr, sizeof(t_curr));
+    sodium_memzero(t_prev, sizeof(t_prev));
+    return rc;
 }
 
 int

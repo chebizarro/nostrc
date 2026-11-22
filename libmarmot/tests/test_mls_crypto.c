@@ -75,6 +75,26 @@ static void test_hkdf_expand(void)
     assert(memcmp(out1, out3, sizeof(out1)) != 0);
 }
 
+/* RFC 5869 test case 1 exercises a partial final block. */
+static void test_hkdf_rfc5869(void)
+{
+    uint8_t ikm[22], salt[13], info[10], prk[32], out[42], expected[42];
+    memset(ikm, 0x0b, sizeof(ikm));
+    for (size_t i = 0; i < sizeof(salt); i++) salt[i] = (uint8_t)i;
+    for (size_t i = 0; i < sizeof(info); i++) info[i] = (uint8_t)(0xf0 + i);
+    assert(sodium_hex2bin(expected, sizeof(expected),
+        "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf"
+        "34007208d5b887185865", 84, NULL, NULL, NULL) == 0);
+    assert(mls_crypto_hkdf_extract(prk, salt, sizeof(salt), ikm, sizeof(ikm)) == 0);
+    assert(mls_crypto_hkdf_expand(out, sizeof(out), prk, info, sizeof(info)) == 0);
+    assert(memcmp(out, expected, sizeof(out)) == 0);
+    assert(mls_crypto_hkdf_expand(NULL, 0, prk, NULL, 0) == 0);
+    assert(mls_crypto_hkdf_expand(out, 1, prk, info, SIZE_MAX) == -1);
+    assert(mls_crypto_hkdf_expand(out, 255 * MLS_HASH_LEN + 1, prk, NULL, 0) == -1);
+    sodium_memzero(prk, sizeof(prk));
+    sodium_memzero(out, sizeof(out));
+}
+
 /* ── ExpandWithLabel ──────────────────────────────────────────────────── */
 
 static void test_expand_with_label(void)
@@ -423,6 +443,7 @@ int main(void)
     TEST(test_sha256_abc);
     TEST(test_hkdf_deterministic);
     TEST(test_hkdf_expand);
+    TEST(test_hkdf_rfc5869);
     TEST(test_expand_with_label);
     TEST(test_aead_roundtrip);
     TEST(test_aead_tamper_detection);
