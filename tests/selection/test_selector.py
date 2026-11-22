@@ -150,6 +150,19 @@ class PolicyTests(unittest.TestCase):
         d2 = plan(source_identity={"kind": "dirty", "sha": "a" * 40, "snapshot_digest": "two"})
         self.assertNotEqual(d1["plan_id"], d2["plan_id"])
 
+    def test_nip78_source_and_fixture_select_only_its_checks(self):
+        p = s.load_inventory(ROOT / "tests/selection/inventory.json")
+        for path in ("nips/nip78/src/nip78.c", "nips/nip78/tests/test_nip78.c",
+                     "nips/nip78/include/nostr/nip78/nip78.h", "nips/nip78/nip78.pc.in"):
+            with self.subTest(path=path):
+                result = plan(p, paths=(path,))
+                self.assertEqual(result["effective_mode"], "affected")
+                self.assertEqual(result["selected_checks"],
+                                 ["root.asan.nip78", "supported.nips.nip78"])
+        for check in ("root.asan.nip78", "supported.nips.nip78"):
+            for tests in p["checks"][check]["ctest_tests"].values():
+                self.assertEqual(tests, ["test_nip78", "test_nip78_signer"])
+
     def test_checked_inventory_golden_cases(self):
         p = s.load_inventory(ROOT / "tests/selection/inventory.json")
         cases = s.read_json(ROOT / "tests/selection/golden/selection.json")

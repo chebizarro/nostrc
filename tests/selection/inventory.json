@@ -22237,6 +22237,90 @@
         "{source}/tests/fixtures/beads-reconcile.json"
       ],
       "build_targets": []
+    },
+    "supported.nips.nip78": {
+      "nodes": [
+        "execution.core",
+        "execution.grotto",
+        "execution.groundhog",
+        "nip78",
+        "nip78.test_inputs",
+        "nip44"
+      ],
+      "profiles": [
+        "core.linux",
+        "grotto.linux",
+        "grotto.linux.asan_ubsan",
+        "groundhog.linux",
+        "groundhog.mdk011",
+        "groundhog.mdk08"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "core.linux": [
+          "test_nip78",
+          "test_nip78_signer"
+        ],
+        "grotto.linux": [
+          "test_nip78",
+          "test_nip78_signer"
+        ],
+        "grotto.linux.asan_ubsan": [
+          "test_nip78",
+          "test_nip78_signer"
+        ],
+        "groundhog.linux": [
+          "test_nip78",
+          "test_nip78_signer"
+        ],
+        "groundhog.mdk011": [
+          "test_nip78",
+          "test_nip78_signer"
+        ],
+        "groundhog.mdk08": [
+          "test_nip78",
+          "test_nip78_signer"
+        ]
+      },
+      "build_targets": [
+        "test_nip78",
+        "test_nip78_signer"
+      ],
+      "runtime_inputs": []
+    },
+    "root.asan.nip78": {
+      "build_targets": [
+        "test_nip78",
+        "test_nip78_signer"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip78",
+          "test_nip78_signer"
+        ],
+        "core.linux.asan": [
+          "test_nip78",
+          "test_nip78_signer"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.core",
+        "nip78",
+        "nip78.test_inputs",
+        "nip44"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
     }
   },
   "coverage_gaps": [
@@ -25176,6 +25260,23 @@
       ],
       "depends_on": [],
       "rationale": "Internal read-only beads/git reconciliation tool and fixture regression; no build or runtime component impact."
+    },
+    "nip78": {
+      "id": "nip78",
+      "depends_on": [
+        "libnostr"
+      ],
+      "owner_paths": [
+        "nips/nip78"
+      ],
+      "rationale": "Pure unsigned application data codec links libnostr; content is opaque and no crypto or transport dependency is required."
+    },
+    "nip78.test_inputs": {
+      "id": "nip78.test_inputs",
+      "depends_on": [],
+      "owner_paths": [
+        "nips/nip78/tests"
+      ]
     }
   },
   "path_rules": [
@@ -30199,7 +30300,8 @@
         "nip37",
         "nip51",
         "nip56",
-        "nip58"
+        "nip58",
+        "nip78"
       ],
       "reason": "Checked tag, address, JSON and unsigned-event helpers shared only by these codecs."
     },
@@ -30226,6 +30328,30 @@
       ],
       "effect": "impact",
       "reason": "Reconciliation implementation, executable regression and fixture select only their portable Python/Git check."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip78"
+      ],
+      "prefix": "nips/nip78",
+      "reason": "Portable codec ownership; reverse impact selects consumers without prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip78.test_inputs"
+      ],
+      "prefix": "nips/nip78/tests",
+      "reason": "Portable codec ownership; reverse impact selects consumers without prerequisite tests."
+    },
+    {
+      "prefix": "nips/nip78/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
     }
   ],
   "profiles": {

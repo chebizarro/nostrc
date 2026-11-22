@@ -615,60 +615,64 @@ bool nostr_nip17_validate_seal(NostrEvent *seal, NostrEvent *rumor) {
 
 /* ---- DM Relay Preferences (Kind 10050) ---- */
 
-NostrEvent *nostr_nip17_create_dm_relay_list(const char **relays,
-                                              const char *sk_hex) {
-    if (!relays || !sk_hex) {
+NostrEvent *nostr_nip17_build_dm_relay_list_unsigned(const char **relays,
+                                                     const char *author,
+                                                     int64_t created_at) {
+    if (!relays || !relays[0] || !author || strlen(author) != 64 ||
+        strspn(author, "0123456789abcdef") != 64 || created_at < 0) {
+        errno = EINVAL;
         return NULL;
     }
-
-    /* Get public key from secret key */
-    char *pubkey = nostr_key_get_public(sk_hex);
-    if (!pubkey) return NULL;
-
     NostrEvent *event = nostr_event_new();
-    if (!event) {
-        free(pubkey);
-        return NULL;
-    }
-
+    if (!event) { errno = ENOMEM; return NULL; }
     nostr_event_set_kind(event, NOSTR_KIND_DM_RELAY_LIST);
-    nostr_event_set_pubkey(event, pubkey);
+    nostr_event_set_pubkey(event, author);
     nostr_event_set_content(event, "");
-    nostr_event_set_created_at(event, get_current_time());
+    nostr_event_set_created_at(event, created_at);
+    if (!nostr_event_get_pubkey(event) || !nostr_event_get_content(event) ||
+        strcmp(nostr_event_get_pubkey(event), author)) goto no_memory;
 
-    free(pubkey);
-
-    /* Count relays and create tags */
-    size_t count = 0;
-    while (relays[count]) count++;
-
-    if (count == 0) {
-        nostr_event_free(event);
-        return NULL;
-    }
-
-    /* Create tags array */
-    NostrTags *tags = nostr_tags_new(0);
-    if (!tags) {
-        nostr_event_free(event);
-        return NULL;
-    }
-
-    for (size_t i = 0; i < count; i++) {
+    NostrTags *tags = nostr_event_get_tags(event);
+    if (!tags) goto no_memory;
+    for (size_t i = 0; relays[i]; i++) {
+        if (!*relays[i]) {
+            nostr_event_free(event);
+            errno = EINVAL;
+            return NULL;
+        }
         NostrTag *tag = nostr_tag_new("relay", relays[i], NULL);
-        if (tag) {
-            nostr_tags_append(tags, tag);
+        if (!tag) goto no_memory;
+        if (nostr_tag_size(tag) != 2 || !nostr_tag_get(tag, 0) ||
+            !nostr_tag_get(tag, 1) || strcmp(nostr_tag_get(tag, 0), "relay") ||
+            strcmp(nostr_tag_get(tag, 1), relays[i])) {
+            nostr_tag_free(tag);
+            goto no_memory;
+        }
+        nostr_tags_append(tags, tag);
+        if (nostr_tags_size(tags) != i + 1) {
+            nostr_tag_free(tag);
+            goto no_memory;
         }
     }
+    return event;
+no_memory:
+    nostr_event_free(event);
+    errno = ENOMEM;
+    return NULL;
+}
 
-    nostr_event_set_tags(event, tags);
-
-    /* Sign the event */
-    if (nostr_event_sign(event, sk_hex) != 0) {
+NostrEvent *nostr_nip17_create_dm_relay_list(const char **relays,
+                                           const char *sk_hex) {
+    if (!sk_hex) { errno = EINVAL; return NULL; }
+    char *pubkey = nostr_key_get_public(sk_hex);
+    if (!pubkey) return NULL;
+    NostrEvent *event = nostr_nip17_build_dm_relay_list_unsigned(
+        relays, pubkey, get_current_time());
+    free(pubkey);
+    if (event && nostr_event_sign(event, sk_hex) != 0) {
         nostr_event_free(event);
         return NULL;
     }
-
     return event;
 }
 
