@@ -431,15 +431,6 @@ msg_restore_inboxes(Msg *msg)
   }
 }
 
-static gboolean
-msg_has_targetless(Msg *msg)
-{
-  for (guint i = 0; i < msg->entry->events->len; i++)
-    if (event_targetless(g_ptr_array_index(msg->entry->events, i)))
-      return TRUE;
-  return FALSE;
-}
-
 /* A targetless recipient whose inbox is not known to be absent (its lookup
  * failed, or was not made this session): the outbox looks again on retry. */
 static gboolean
@@ -1713,9 +1704,9 @@ msg_eval(Msg *msg)
       round_start_legs(msg, FALSE); /* a leg's not_before came */
   } else {
     gint64 now = now_unix(msg->outbox);
-    /* A recipient without message relays is looked up again on a retry
-     * (automatic while its lookup failed, the user's when it had none). */
-    gboolean lookup = msg_lookup_pending(msg) || (msg->manual && msg_has_targetless(msg));
+    /* Manual retry refreshes recipients even when every old target finally
+     * refused; an automatic retry only repeats an unresolved lookup. */
+    gboolean lookup = msg_lookup_pending(msg) || (msg->manual && !msg->targets_fresh);
     if (!msg->policy_resuming && entry->state == GH_STORE_OUTBOX_WAITING_RETRY && entry->next_attempt_at > now)
       msg_schedule(msg, entry->next_attempt_at);
     else if (!msg_has_due(msg, msg->manual) && !msg->inbox_changed && !lookup)
