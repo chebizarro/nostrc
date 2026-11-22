@@ -306,7 +306,24 @@ retention or a separate archival copy under independently controlled credentials
 that the host cannot undo; prove that mechanism in the restore drill.
 See [Spaces access permissions](https://docs.digitalocean.com/products/spaces/how-to/manage-access/).
  Enable `signet-backup.timer` only after a successful manual
-`backup.sh`, verified upload and fresh-host restore. Failed uploads leave local
+`backup.sh`, verified upload and fresh-host restore. `ops.py backup` downloads
+all three uploaded objects (`store.db`, `config.tar.gz`, `checksums.json`) and
+compares their byte lengths and SHA-256 hashes before recording off-host success.
+It does not treat an ETag or successful upload exit as content verification.
+The Spaces credential therefore needs read access as well as upload access.
+A mismatch or failed read leaves the previous success receipt unchanged and
+removes the temporary read-back files. This verifies retrieval at backup time,
+not retention or recovery on a fresh host.
+
+The hermetic S3 regression uses the real AWS CLI against a loopback-only fake
+endpoint, with fixture credentials (no cloud access):
+
+```sh
+python3 signet/tests/test_backup_upload.py /absolute/path/to/aws
+```
+
+Run `backup.sh` against the intended live Spaces bucket and perform the fresh-host
+restore drill before enabling the timer. Failed uploads leave local
 staging and the previous successful reference intact; alert, do not report an
 off-host backup. Monitor staging disk use and remove only confirmed-off-host
 staging older than the chosen local retention (recommended seven days). Audit
@@ -401,9 +418,19 @@ or editing receipts bypasses the rule and is unsupported.
   is source restricted, use reviewed DNS-01-capable Caddy with a narrowly scoped
   DNS secret and a newly pinned digest; never open enrollment just for issuance.
   No supported HTTP-session consumer exists for this launch: keep it disabled.
-* CTAP: add `--profile ctap` **and** passkeys; configure virtual_ctap and the actual
-  UHID group in deploy.env. Missing `/dev/uhid` fails preflight. No privileged mode.
-  A Droplet UHID device is not an authenticator attached to a remote browser.
+* CTAP remains **unsupported and refused by the daemon**, including when
+  `/dev/uhid` is available. Do not enable `virtual_ctap` or advertise the overlay.
+  UHID output reports contain no trustworthy caller credentials; a channel ID,
+  RP ID or group name is not caller identity. The adapter requires an explicit
+  owner group and a per-ceremony policy/consent backend, and denies credential
+  operations without approval for the exact agent, operation, RP and
+  clientDataHash. The daemon installs no such backend and has no INI/env bypass.
+  Before a supported profile can be enabled, supply a reviewed credential-bearing
+  broker or trusted out-of-band consent backend and qualify it on real Linux HID.
+  Its deployment must restrict the **generated hidraw node** to root and the
+  explicit owner group (0660, no extra ACL grants); restricting `/dev/uhid` or
+  adding the daemon to a UHID group does not restrict HID callers. Never use
+  privileged mode. A Droplet UHID device is not a remote browser authenticator.
 
 Caddy avoids a separate renewal daemon. nginx/DOCR are alternatives, not maintained
 second deployment routes. DOCR read-only short-lived login and manual GC are owner
