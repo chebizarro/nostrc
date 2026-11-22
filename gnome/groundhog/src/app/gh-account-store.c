@@ -32,6 +32,8 @@ typedef struct {
   GBytes *key;
   gchar *store_id;
   gboolean create;
+  GPtrArray *legacy_paths;  /* captured on owner context; worker never dereferences self */
+  GThread *owner_thread;
   GhStore *store;           /* the result until handed over */
   gboolean corrupt;
 } OpenJob;
@@ -139,6 +141,7 @@ open_job_free(gpointer data)
   g_free(job->store_id);
   g_free(job->account);
   g_free(job->data_dir);
+  g_clear_pointer(&job->legacy_paths, g_ptr_array_unref);
   g_free(job);
 }
 
@@ -285,9 +288,8 @@ legacy_paths(GhAccountStore *self, const gchar *account)
  * still hold (W13 review B1). The store's first session asks for the initial
  * backfill window and stores whatever the relays still have. */
 static void
-import_legacy(GhAccountStore *self)
+import_legacy(GhStoreConversations *conversations, GPtrArray *paths)
 {
-  g_autoptr(GPtrArray) paths = legacy_paths(self, self->account);
   for (guint i = 0; i < paths->len; i++) {
     const gchar *path = g_ptr_array_index(paths, i);
     g_autoptr(GError) error = NULL;
@@ -296,7 +298,7 @@ import_legacy(GhAccountStore *self)
       if (g_unlink(path) != 0 && errno != ENOENT)
         g_message("Groundhog could not delete the old DM inbox checkpoint: %s",
                   g_strerror(errno));
-    } else if (!gh_store_conversations_import_seen_file(self->conversations, path, &stats,
+    } else if (!gh_store_conversations_import_seen_file(conversations, path, &stats,
                                                         &error)) {
       /* A refused file (planted, foreign, malformed) stays where it is; the
        * inbox then only asks the signer again about wraps it rejected. */
@@ -320,8 +322,6 @@ bind_store(GhAccountStore *self, GhStore *store, gboolean corrupt)
   /* Social state binds before restoration/network startup, sharing the exact
    * policy which attach() installs with the persistence delegate. */
   g_signal_emit(self, signals[SIGNAL_STORE_BOUND], 0);
-  if (!corrupt && !ephemeral)
-    import_legacy(self);
   gboolean restored = gh_store_conversations_attach(self->conversations, self->model, 0,
                                                        &error);
   if (!restored) {
@@ -407,6 +407,15 @@ open_worker(GTask *task, gpointer source, gpointer data, GCancellable *cancellab
   }
   /* The key leaves memory as soon as the store is keyed. */
   g_clear_pointer(&job->key, g_bytes_unref);
+  if (job->store && !job->corrupt) {
+    /* Exclusive ownership from open through migration, then a single handoff
+     * to on_opened(). No model, inbox, signals or owner-context objects enter
+     * this interval. Account switches/shreds still serialize through self->op. */
+    g_assert(g_thread_self() != job->owner_thread);
+    g_autoptr(GhStoreConversations) conversations = gh_store_conversations_new(job->store);
+    import_legacy(conversations, job->legacy_paths);
+    gh_store_conversations_close(conversations);
+  }
   /* Before the result reaches the owner, who may then exit (nostrc-vpha). */
   gh_store_thread_release_crypto();
   if (job->store)
@@ -449,6 +458,8 @@ start_worker(GhAccountStore *self, Op *op, GBytes *key, const gchar *store_id)
   job->key = g_bytes_ref(key);
   job->store_id = g_strdup(store_id);
   job->create = !op->exists;
+  job->legacy_paths = legacy_paths(self, op->account);
+  job->owner_thread = g_thread_self();
   g_signal_emit(self, signals[SIGNAL_STORE_OPENING], 0, op->account);
   GTask *task = g_task_new(self, NULL, on_opened, op);
   g_task_set_source_tag(task, start_worker);

@@ -27,7 +27,9 @@ G_BEGIN_DECLS
  *     the store) and deletes them with its <pubkey>.checkpoint, unread
  *     (ST-12): their message keys and checkpoint covered messages that were
  *     only ever in memory, so the first session fetches whatever the relays
- *     still hold (W13 review B1);
+ *     still hold (W13 review B1). Steps 2-3 run under exclusive worker
+ *     ownership before handing the store to the main context; no model or
+ *     receive grant is bound during migration;
  *  4. attaches GhStoreConversations as the conversation model's persistence
  *     delegate, restoring the stored rooms;
  *  5. makes the account's per-store service (the durable outbox, G06) with

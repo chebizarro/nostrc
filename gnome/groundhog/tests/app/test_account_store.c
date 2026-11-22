@@ -1212,6 +1212,26 @@ test_pseudonymous_names(void)
   g_assert_null(gh_nip17_seen_file_name("npub1nope"));
 }
 
+typedef struct {
+  GThread *main_thread;
+  gint imports;
+} ImportThreadProbe;
+
+/* Observe the existing production import-completion log, emitted on the
+ * thread that executed the real encrypted-store transaction. */
+static void
+assert_import_worker(const gchar *domain, GLogLevelFlags level, const gchar *message,
+                     gpointer data)
+{
+  ImportThreadProbe *probe = data;
+  if (g_str_has_prefix(message, "Groundhog imported ")) {
+    g_assert_true(g_thread_self() != probe->main_thread);
+    g_atomic_int_inc(&probe->imports);
+  } else {
+    g_log_default_handler(domain, level, message, NULL);
+  }
+}
+
 /* ST-12 via the app (W13 review B1). The memory-only inbox's plaintext files
  * (Groundhog 0.6.0's <pubkey>.seen and .checkpoint; a store-less build's
  * <acct>.seen) held keys of messages it kept in memory only. Only their
@@ -1244,8 +1264,12 @@ test_legacy_import(void)
   write_private(mark_path, mark);
   write_private(pseudonymous_path, pseudonymous);
 
+  ImportThreadProbe probe = { .main_thread = g_thread_self() };
+  guint log_handler = g_log_set_handler(NULL, G_LOG_LEVEL_DEBUG, assert_import_worker, &probe);
   stack_up(&f);
   g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  g_log_remove_handler(NULL, log_handler);
+  g_assert_cmpint(g_atomic_int_get(&probe.imports), ==, 2);
   g_assert_cmpuint(gh_test_count_files(f.state_dir), ==, 0);
   g_assert_true(store_seen(&f, GH_STORE_SEEN_REJECTED_WRAP, rejected));
   g_assert_true(store_seen(&f, GH_STORE_SEEN_REJECTED_WRAP, rejected2));
