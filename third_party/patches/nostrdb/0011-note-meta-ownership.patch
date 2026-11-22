@@ -1,0 +1,10 @@
+--- a/src/nostrdb.c
++++ b/src/nostrdb.c
+@@ -7238,6 +7238,7 @@
+ 				break;
+ 			case NDB_WRITER_NOTE_META:
+ 				ndb_writer_set_note_meta(&txn, msg->note_meta.note_id, msg->note_meta.metadata);
++				free(msg->note_meta.metadata);
+ 				break;
+ 
+ 			case NDB_WRITER_NOTE:

@@ -110,7 +110,10 @@ int nostr_nip5f_client_connect(const char *socket_path, void **out_conn) {
 #endif
   struct sockaddr_un addr; memset(&addr, 0, sizeof(addr)); addr.sun_family = AF_UNIX;
   size_t maxlen = sizeof(addr.sun_path)-1;
-  strncpy(addr.sun_path, resolved, maxlen); addr.sun_path[maxlen] = '\0';
+  if (strlen(resolved) > maxlen) {
+    close(fd); free(resolved); free(c); errno = ENAMETOOLONG; return -1;
+  }
+  memcpy(addr.sun_path, resolved, strlen(resolved) + 1);
   free(resolved);
   if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
     close(fd); free(c); return -1;
@@ -150,7 +153,7 @@ int nostr_nip5f_client_connect(const char *socket_path, void **out_conn) {
 int nostr_nip5f_client_close(void *conn) {
   if (!conn) return 0;
   struct Nip5fConn *c = (struct Nip5fConn*)conn;
-  if (c->fd > 0) close(c->fd);
+  if (c->fd >= 0) close(c->fd);
   free(c);
   return 0;
 }

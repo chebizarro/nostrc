@@ -291,7 +291,7 @@ static void run_case(FixtureMode mode, char *ids[4]) {
     char url[64];
     snprintf(url, sizeof(url), "ws://127.0.0.1:%d", fx.port);
     Error *err = NULL;
-    NostrRelay *relay = nostr_relay_new(go_context_background(), url, &err);
+    NostrRelay *relay = nostr_relay_new(NULL, url, &err);
     CHECK(relay && !err);
     CHECK(nostr_relay_connect(relay, &err));
     CHECK(nostr_relay_wait_established(relay, 10000, &err));

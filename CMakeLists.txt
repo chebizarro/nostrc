@@ -366,6 +366,9 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
   endif()
 endif()
 
+# Resolve this option before libjson tests inspect it on the first configure.
+option(NOSTR_WITH_GLIB "Enable GLib integration layer in libnostr (fails if requested but unavailable)" ON)
+
 # Layer 0 foundations precede Layer 1 libnostr.
 add_subdirectory(libgo)
 add_subdirectory(libjson)
@@ -414,7 +417,7 @@ option(BUILD_LIBHANAMI "Build libhanami (Blossom + libgit2 integration)" ON)
 # file system, so Linux silently skipped it (nostrc-ig0z). No EXISTS guard:
 # with the option on, a missing directory must fail configure, not drop
 # nostr_testing and every test gated on TARGET nostr_testing.
-option(BUILD_TESTING_FRAMEWORK "Build the mock relay testing framework" ON)
+option(BUILD_TESTING_FRAMEWORK "Build the mock relay testing framework" ${BUILD_TESTING})
 if(BUILD_TESTING_FRAMEWORK)
   add_subdirectory(Testing)
 endif()

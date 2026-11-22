@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <time.h>
 #include <unistd.h>
+#include <errno.h>
+#include <sys/un.h>
 #include "nostr/nip5f/nip5f.h"
 #include "nostr-event.h"
 #include "nostr-keys.h"
@@ -33,6 +35,16 @@ static int test_with_unauthorized_client(void);
 
 int main(void) {
   int failures = 0;
+  char overlong[sizeof(((struct sockaddr_un *)0)->sun_path) + 1];
+  memset(overlong, 'x', sizeof(overlong) - 1);
+  overlong[sizeof(overlong) - 1] = '\0';
+  void *connection = NULL;
+  errno = 0;
+  if (nostr_nip5f_client_connect(overlong, &connection) != -1 || errno != ENAMETOOLONG) {
+    fprintf(stderr, "overlong socket path was not rejected with ENAMETOOLONG\n");
+    return 1;
+  }
+
 
   printf("Running NIP-5F loopback tests...\n");
 

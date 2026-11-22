@@ -95,6 +95,12 @@ static int find_or_add_counter(const char *name)
 
 static void snapshot_free_internals(NostrMetricsSnapshot *snap)
 {
+    for (size_t i = 0; i < snap->counter_count; i++)
+        free((void *)snap->counters[i].name);
+    for (size_t i = 0; i < snap->gauge_count; i++)
+        free((void *)snap->gauges[i].name);
+    for (size_t i = 0; i < snap->histogram_count; i++)
+        free((void *)snap->histograms[i].name);
     free(snap->counters);
     free(snap->gauges);
     free(snap->histograms);
@@ -328,12 +334,6 @@ static void *collector_thread(void *arg)
 void nostr_metrics_snapshot_free(NostrMetricsSnapshot *snap)
 {
     if (!snap) return;
-    for (size_t i = 0; i < snap->counter_count; i++)
-        free((void *)snap->counters[i].name);
-    for (size_t i = 0; i < snap->gauge_count; i++)
-        free((void *)snap->gauges[i].name);
-    for (size_t i = 0; i < snap->histogram_count; i++)
-        free((void *)snap->histograms[i].name);
     snapshot_free_internals(snap);
 }
 

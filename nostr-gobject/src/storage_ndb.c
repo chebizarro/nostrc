@@ -1263,7 +1263,11 @@ int storage_ndb_write_note_counts(const unsigned char id32[32],
 
   /* ndb_set_note_meta takes ownership of buf via the writer thread.
    * Do NOT free buf here — the writer thread reads it asynchronously. */
-  return ndb_set_note_meta(ndb, id32, meta) ? 0 : -1;
+  if (!ndb_set_note_meta(ndb, id32, meta)) {
+    free(buf);
+    return -1;
+  }
+  return 0;
 }
 
 /* Increment a specific count field for a note in ndb_note_meta.

@@ -492,3 +492,19 @@ if(NOSTR_TESTING_INSTALL)
         DESTINATION ${CMAKE_INSTALL_DATADIR}/nostr/testing
     )
 endif()
+
+# Exercise REQ filtering with json-glib loaded before jansson (nostrc-7xp1).
+pkg_check_modules(MOCK_JSON_GLIB QUIET IMPORTED_TARGET json-glib-1.0)
+if(TARGET PkgConfig::MOCK_JSON_GLIB)
+  add_executable(test_mock_relay_json_glib tests/test_mock_relay_json_glib.c)
+  target_link_libraries(test_mock_relay_json_glib PRIVATE
+    PkgConfig::MOCK_JSON_GLIB nostr_testing nostr nostr_json)
+  if(COMMAND apply_sanitizers)
+    apply_sanitizers(test_mock_relay_json_glib)
+  endif()
+  add_test(NAME MockRelayJsonGlib COMMAND test_mock_relay_json_glib)
+  set_tests_properties(MockRelayJsonGlib PROPERTIES TIMEOUT 30)
+else()
+  add_test(NAME MockRelayJsonGlib COMMAND ${CMAKE_COMMAND} -E echo "SKIP: json-glib unavailable")
+  set_tests_properties(MockRelayJsonGlib PROPERTIES SKIP_REGULAR_EXPRESSION "SKIP:")
+endif()

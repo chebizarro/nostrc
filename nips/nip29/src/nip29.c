@@ -21,10 +21,10 @@ static char *nip29_strndup(const char *s, size_t n) {
 static bool group_id_is_valid(const char *id) {
     if (!id || *id == '\0') return false;
     for (const unsigned char *p = (const unsigned char *)id; *p; ++p) {
-        if ((*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9') || *p == '-' || *p == '_') {
-            continue;
-        }
-        return false;
+        /* Preserve opaque, case-sensitive IDs, excluding C0/C1 controls and
+         * DEL. C0 also includes the room-key separator (U+001F). */
+        if (*p < 0x20 || *p == 0x7f ||
+            (*p == 0xc2 && p[1] >= 0x80 && p[1] <= 0x9f)) return false;
     }
     return true;
 }
@@ -34,7 +34,7 @@ bool nostr_group_address_parse(const char *raw, nostr_group_address_t *out) {
     memset(out, 0, sizeof(*out));
 
     const char *sep = strchr(raw, '\'');
-    if (!sep || sep == raw || sep[1] == '\0' || strchr(sep + 1, '\'')) {
+    if (!sep || sep == raw || sep[1] == '\0') {
         return false;
     }
 

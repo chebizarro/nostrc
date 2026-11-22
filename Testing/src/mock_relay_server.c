@@ -18,6 +18,7 @@
 #include <pthread.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <nsync.h>
@@ -73,8 +74,8 @@ struct NostrMockRelayServer {
 
     /* Service thread */
     pthread_t service_thread;
-    volatile int running;
-    volatile int should_stop;
+    atomic_int running;
+    atomic_int should_stop;
 
     /* Thread safety */
     nsync_mu mutex;
@@ -165,6 +166,8 @@ NostrMockRelayServerConfig nostr_mock_server_config_default(void) {
 NostrMockRelayServer *nostr_mock_server_new(const NostrMockRelayServerConfig *config) {
     NostrMockRelayServer *server = calloc(1, sizeof(NostrMockRelayServer));
     if (!server) return NULL;
+    atomic_init(&server->running, 0);
+    atomic_init(&server->should_stop, 0);
 
     /* Apply config or defaults */
     NostrMockRelayServerConfig cfg = config ? *config : nostr_mock_server_config_default();
@@ -1107,10 +1110,12 @@ static bool filter_matches_event_json(const char *filter_json, const char *event
 
     /* Check tag filters (#e, #p, etc.) */
     json_t *event_tags = json_object_get(event, "tags");
-    const char *key;
-    json_t *value;
-    json_object_foreach(filter, key, value) {
-        if (key[0] == '#' && strlen(key) == 2 && json_is_array(value)) {
+    /* Tag filters have one ASCII byte after '#'. Look them up directly:
+     * jansson's json_object_iter_next collides with json-glib's public ABI. */
+    for (unsigned int c = 1; c < 128; c++) {
+        char key[] = { '#', (char)c, '\0' };
+        json_t *value = json_object_get(filter, key);
+        if (json_is_array(value)) {
             char tag_key[2] = { key[1], '\0' };
 
             /* Check if event has any matching tag */

@@ -19,19 +19,20 @@
 #include "../libnostr/src/relay-private.h"
 
 static GoContext *ctx_with_timeout_ms(int ms) {
-    GoContext *bg = go_context_background();
     struct timespec now; clock_gettime(CLOCK_REALTIME, &now);
     struct timespec d = now;
     d.tv_sec += ms / 1000;
     long add = (long)(ms % 1000) * 1000000L;
     d.tv_nsec += add;
     if (d.tv_nsec >= 1000000000L) { d.tv_sec += 1; d.tv_nsec -= 1000000000L; }
-    return go_with_deadline(bg, d);
+    return go_with_deadline(NULL, d);
 }
 
 static NostrFilters *make_min_filters(void) {
     NostrFilters *fs = nostr_filters_new();
-    nostr_filters_add(fs, nostr_filter_new());
+    NostrFilter *filter = nostr_filter_new();
+    nostr_filters_add(fs, filter);
+    nostr_filter_free(filter);
     return fs;
 }
 

@@ -31,7 +31,7 @@ static void test_relay_connect_error_path_discards_connection(void) {
     assert(setenv("NOSTR_TEST_MODE", "1", 1) == 0);
 
     Error *err = NULL;
-    NostrRelay *relay = nostr_relay_new(go_context_background(), "wss://audit.invalid", &err);
+    NostrRelay *relay = nostr_relay_new(NULL, "wss://audit.invalid", &err);
     assert(relay != NULL);
     assert(err == NULL);
 

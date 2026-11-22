@@ -12,6 +12,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include <nostr-gobject-1.0/nostr_relay.h>
+#include <nostr-gobject-1.0/nostr_pool.h>
 #include <nostr-relay.h>
 #include "nostr/testing/mock_relay_server.h"
 
@@ -222,7 +223,6 @@ test_state_changed_every_transition(void)
   }
   g_assert_cmpuint(log.off_thread, ==, 0);
   g_assert_cmpuint(log.connected_notifies, >=, 2); /* up, then down */
-
   g_signal_handlers_disconnect_by_data(relay, &log);
   g_object_unref(relay);
   g_array_unref(log.pairs);
@@ -257,6 +257,85 @@ test_teardown_keeps_fd0(void)
   nostr_mock_server_free(server);
 }
 
+static gpointer
+disconnect_from_worker(gpointer data)
+{
+  gnostr_relay_disconnect(data);
+  return NULL;
+}
+
+static void
+test_worker_disconnect_emits_on_main(void)
+{
+  NostrMockRelayServerConfig cfg = nostr_mock_server_config_default();
+  NostrMockRelayServer *server = nostr_mock_server_new(&cfg);
+  g_assert_cmpint(nostr_mock_server_start(server), ==, 0);
+  GNostrRelay *relay = g_object_new(GNOSTR_TYPE_RELAY, "url",
+                                    nostr_mock_server_get_url(server), NULL);
+  nostr_relay_set_auto_reconnect(gnostr_relay_get_core_relay(relay), false);
+  StateLog log = { .pairs = g_array_new(FALSE, FALSE, sizeof(gint)),
+                   .main_thread = g_thread_self() };
+  g_signal_connect(relay, "state-changed", G_CALLBACK(on_state_changed), &log);
+  g_autoptr(GError) error = NULL;
+  gint64 elapsed = 0;
+  g_assert_true(connect_bounded(relay, &error, &elapsed));
+  g_assert_no_error(error);
+  gint up = wait_for_emission(&log, 0, GNOSTR_RELAY_STATE_CONNECTED,
+                              GNOSTR_RELAY_STATE_CONNECTED);
+  g_assert_cmpint(up, >=, 0);
+  GThread *worker = g_thread_new("disconnect", disconnect_from_worker, relay);
+  g_thread_join(worker);
+  g_assert_cmpint(wait_for_emission(&log, (guint)up + 1,
+      GNOSTR_RELAY_STATE_DISCONNECTED, GNOSTR_RELAY_STATE_DISCONNECTED), >, up);
+  g_assert_cmpuint(log.off_thread, ==, 0);
+  g_signal_handlers_disconnect_by_data(relay, &log);
+  g_object_unref(relay);
+  nostr_mock_server_free(server);
+  g_array_unref(log.pairs);
+}
+
+static void
+ignore_multi_event(GNostrPoolMultiSub *sub, const gchar *url, const gchar *json, gpointer data)
+{
+  (void)sub; (void)url; (void)json; (void)data;
+}
+
+static void
+test_multi_sub_outlives_pool(void)
+{
+  NostrMockRelayServerConfig cfg = nostr_mock_server_config_default();
+  NostrMockRelayServer *server = nostr_mock_server_new(&cfg);
+  g_assert_cmpint(nostr_mock_server_start(server), ==, 0);
+  GNostrRelay *relay = g_object_new(GNOSTR_TYPE_RELAY, "url",
+                                    nostr_mock_server_get_url(server), NULL);
+  g_autoptr(GError) error = NULL;
+  gint64 elapsed = 0;
+  g_assert_true(connect_bounded(relay, &error, &elapsed));
+  g_assert_no_error(error);
+  GNostrPool *pool = gnostr_pool_new();
+  g_assert_true(gnostr_pool_add_relay_object(pool, relay));
+  NostrFilters *filters = nostr_filters_new();
+  NostrFilter *filter = nostr_filter_new();
+  int kind = 1;
+  nostr_filter_set_kinds(filter, &kind, 1);
+  g_assert_true(nostr_filters_add(filters, filter));
+  nostr_filter_free(filter);
+  g_test_expect_message("gnostr-pool", G_LOG_LEVEL_WARNING, "Multi-sub: subscribed to relay *");
+  GNostrPoolMultiSub *sub = gnostr_pool_subscribe_multi(pool, filters,
+      ignore_multi_event, NULL, NULL, NULL, &error);
+  g_test_assert_expected_messages();
+  g_assert_no_error(error);
+  g_assert_nonnull(sub);
+  g_object_add_weak_pointer(G_OBJECT(pool), (gpointer *)&pool);
+  g_object_unref(pool);
+  g_assert_null(pool);
+  gnostr_pool_multi_sub_close(sub);
+  nostr_filters_free(filters);
+  gnostr_relay_disconnect(relay);
+  g_object_unref(relay);
+  nostr_mock_server_free(server);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -271,5 +350,7 @@ main(int argc, char **argv)
   g_test_add_func("/relay/connect/teardown-keeps-fd0", test_teardown_keeps_fd0);
   g_test_add_func("/relay/state/every-transition-emitted",
                   test_state_changed_every_transition);
+  g_test_add_func("/pool/multi-sub/outlives-pool", test_multi_sub_outlives_pool);
+  g_test_add_func("/relay/state/worker-disconnect-main", test_worker_disconnect_emits_on_main);
   return g_test_run();
 }

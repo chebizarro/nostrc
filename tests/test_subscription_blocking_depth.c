@@ -68,7 +68,9 @@ int main(void) {
     assert(relay && err == NULL);
 
     NostrFilters *fs = nostr_filters_new();
-    nostr_filters_add(fs, nostr_filter_new());
+    NostrFilter *filter = nostr_filter_new();
+    nostr_filters_add(fs, filter);
+    nostr_filter_free(filter);
     NostrSubscription *sub = nostr_relay_prepare_subscription(relay, ctx, fs);
     assert(sub);
     atomic_store(&sub->priv->live, true);

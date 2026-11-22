@@ -66,6 +66,7 @@
 #include "channel.h"
 #include "error.h"
 #include "nostr-filter.h"
+#include "nostr-envelope.h"
 #include "nostr-relay.h"
 #include "nostr-subscription.h"
 #include "select.h"
@@ -388,6 +389,14 @@ static void test_destroy_frees_unread_results(void) {
     CHECK(count);
     *count = 7;
     CHECK(go_channel_send(sub->priv->count_result, count) == 0);
+    /* A late COUNT after the consumer closes must release the rejected value. */
+    go_channel_close(sub->priv->count_result);
+    NostrCountEnvelope late = {
+        .base = { .type = NOSTR_ENVELOPE_COUNT },
+        .subscription_id = (char *)nostr_subscription_get_id_const(sub),
+        .count = 9,
+    };
+    nostr_relay_dispatch_control_envelope(relay, (NostrEnvelope *)&late);
     nostr_subscription_free(sub);
     nostr_filters_free(filters);
     nostr_relay_free(relay);
