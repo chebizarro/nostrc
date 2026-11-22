@@ -347,7 +347,11 @@ static void test_supersede_and_cancel(Fx *f, gconstpointer d) {
   ingest(f, v1, 0, NOW, rk, TRUE, FALSE, NULL, NOW);
   route2(f, v1, NOW);
   ingest(f, v2, 0, NOW + 5, rk, TRUE, FALSE, NULL, NOW + 5);
-  g_assert_cmpint(nsr_outbox_supersede(f->ob, rk, v2, NOW + 5, NOW + 5), ==, 1);
+  g_autoptr(GPtrArray) changed = NULL;
+  g_assert_cmpint(nsr_outbox_supersede(f->ob, rk, v2, NOW + 5, NOW + 5, &changed), ==, 1);
+  g_assert_cmpuint(changed->len, ==, 1);
+  g_assert_cmpstr(changed->pdata[0], ==, v1);
+  g_clear_pointer(&changed, g_ptr_array_unref);
   ASSERT_STATE(f, v1, "superseded");
   ASSERT_STATE(f, v2, "new");
   /* a late result for a cancelled target does not revive it (the OK is
@@ -355,14 +359,21 @@ static void test_supersede_and_cancel(Fx *f, gconstpointer d) {
   g_assert_cmpint(nsr_outbox_record(f->ob, &f->cfg, v1, "wss://a.example", NSR_OUTBOX_ACKED, "",
                                     0.5, NOW + 6, NULL, NULL), ==, -1);
   /* an older version never supersedes a newer one */
-  g_assert_cmpint(nsr_outbox_supersede(f->ob, rk, v1, NOW, NOW + 6), ==, 0);
+  g_assert_cmpint(nsr_outbox_supersede(f->ob, rk, v1, NOW, NOW + 6, &changed), ==, 0);
+  g_assert_null(changed);
 
   char *n = id_n(12);
   ingest(f, n, 1, NOW, NULL, TRUE, FALSE, NULL, NOW);
-  g_assert_cmpint(nsr_outbox_cancel_ref(f->ob, "otherpk", n, FALSE, NOW), ==, 0); /* not author */
-  g_assert_cmpint(nsr_outbox_cancel_ref(f->ob, PK, n, FALSE, NOW), ==, 1);
+  g_assert_cmpint(nsr_outbox_cancel_ref(f->ob, "otherpk", n, FALSE, NOW, &changed), ==, 0); /* not author */
+  g_assert_null(changed);
+  g_assert_cmpint(nsr_outbox_cancel_ref(f->ob, PK, n, FALSE, NOW, &changed), ==, 1);
+  g_assert_cmpuint(changed->len, ==, 1);
+  g_assert_cmpstr(changed->pdata[0], ==, n);
+  g_clear_pointer(&changed, g_ptr_array_unref);
   ASSERT_STATE(f, n, "cancelled");
-  g_assert_cmpint(nsr_outbox_cancel_ref(f->ob, PK, rk, TRUE, NOW), ==, 1); /* v2 by coordinate */
+  g_assert_cmpint(nsr_outbox_cancel_ref(f->ob, PK, rk, TRUE, NOW, &changed), ==, 1); /* v2 by coordinate */
+  g_assert_cmpuint(changed->len, ==, 1);
+  g_assert_cmpstr(changed->pdata[0], ==, v2);
   /* delivery records by coordinate */
   char *v3 = id_n(13);
   ingest(f, v3, 0, NOW + 9, rk, TRUE, FALSE, NULL, NOW + 9);

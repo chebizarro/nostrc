@@ -116,13 +116,16 @@ int nsr_outbox_set_final(NsrOutbox *ob, const char *id, const char *state,
 
 /* Unsettled events with the same replace key and an older created_at (or
  * same created_at, lower id) than @created_at become `superseded`; their
- * pending targets `cancelled`. Returns the number superseded. */
+ * pending targets `cancelled`. Returns the number superseded, or -1.
+ * Optional @affected_ids receives owned IDs only after a successful commit
+ * (NULL for no changes or failure); free with g_ptr_array_unref(). */
 int nsr_outbox_supersede(NsrOutbox *ob, const char *replace_key, const char *keep_id,
-                         int64_t created_at, int64_t now);
+                         int64_t created_at, int64_t now, GPtrArray **affected_ids);
 /* NIP-09: unsettled events by @pubkey whose id (or coordinate, when
- * @is_coordinate) is @ref become `cancelled`. Returns the number. */
+ * @is_coordinate) is @ref become `cancelled`. Returns the number, or -1.
+ * @affected_ids follows the ownership/commit contract of supersede(). */
 int nsr_outbox_cancel_ref(NsrOutbox *ob, const char *pubkey, const char *ref,
-                          gboolean is_coordinate, int64_t now);
+                          gboolean is_coordinate, int64_t now, GPtrArray **affected_ids);
 /* Relays that acknowledged @ref (event id or coordinate), from delivery
  * records that outlive pruned outbox rows (kept ~400 days). GStrv. */
 GStrv nsr_outbox_acked_relays(NsrOutbox *ob, const char *ref, gboolean is_coordinate);

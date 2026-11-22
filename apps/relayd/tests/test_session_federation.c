@@ -40,17 +40,24 @@ typedef struct {
   GCond cond;
   GHashTable *state;   /* id -> event state */
   GHashTable *reasons; /* "id|relay" -> last reason */
+  GHashTable *settled_notices; /* id -> count of event-wide cancellation/supersession notices */
 } Obs;
 
 static Obs obs;
 
 static void on_progress(const char *id, const char *relay, const char *tstate, const char *reason,
                         const char *estate, void *ud) {
-  (void)ud; (void)tstate;
+  (void)ud;
   g_mutex_lock(&obs.lock);
   if (estate && *estate) g_hash_table_replace(obs.state, g_strdup(id), g_strdup(estate));
-  if (relay && *relay)
+  if (relay)
     g_hash_table_replace(obs.reasons, g_strdup_printf("%s|%s", id, relay), g_strdup(reason));
+  if (relay && !*relay && estate &&
+      (!strcmp(estate, "cancelled") || !strcmp(estate, "superseded"))) {
+    g_assert_cmpstr(tstate, ==, "cancelled");
+    guint count = GPOINTER_TO_UINT(g_hash_table_lookup(obs.settled_notices, id));
+    g_hash_table_replace(obs.settled_notices, g_strdup(id), GUINT_TO_POINTER(count + 1));
+  }
   g_cond_broadcast(&obs.cond);
   g_mutex_unlock(&obs.lock);
 }
@@ -72,6 +79,16 @@ static char *wait_state(const char *id, const char *want, int timeout_s) {
   char *s = g_strdup(g_hash_table_lookup(obs.state, id));
   g_mutex_unlock(&obs.lock);
   return s;
+}
+
+/* Call after stopping the engine so duplicate notices cannot race the assertion. */
+static void assert_settled_notice(const char *id, const char *state, const char *detail) {
+  g_autofree char *key = g_strdup_printf("%s|", id);
+  g_mutex_lock(&obs.lock);
+  g_assert_cmpstr(g_hash_table_lookup(obs.state, id), ==, state);
+  g_assert_cmpstr(g_hash_table_lookup(obs.reasons, key), ==, detail);
+  g_assert_cmpuint(GPOINTER_TO_UINT(g_hash_table_lookup(obs.settled_notices, id)), ==, 1);
+  g_mutex_unlock(&obs.lock);
 }
 
 static gboolean wait_reason(const char *id, const char *relay, int timeout_s) {
@@ -500,6 +517,53 @@ static void test_auth_prompt_does_not_stall(void) {
   drop_outbox();
 }
 
+/* NIP-09 cancellation reports each affected event, even with repeated references. */
+static void test_deletion_notifies_per_event(void) {
+  FakeRelay *S = fake_relay_start(FAKE_SILENT, 0);
+  g_assert_nonnull(S);
+  Key acct = key_new(), other = key_new();
+  nsr_fed_config_defaults(&s_cfg);
+  g_assert_cmpint(nsr_fed_config_apply(&s_cfg, "federation_accounts", acct.pk), ==, 1);
+  NostrPublishSignerVTable vt = {vt_sign, NULL};
+  s_signer = nostr_publish_signer_new_from_vtable(&vt, &acct);
+  fresh_outbox("nsr-fed-delete-XXXXXX");
+  NsrOutbox *ob = NULL;
+  NsrFederation *fed = engine_up(&ob);
+  g_autofree char *tags = g_strdup_printf("[[\"r\",\"%s\"]]", S->url);
+  g_autofree char *rl = offer(fed, mk(&acct, 10002, tags, ""));
+  g_autofree char *note = offer(fed, mk(&acct, 1, "[]", "queued note"));
+  g_autofree char *article = offer(fed, mk(&acct, 30023, "[[\"d\",\"draft\"]]", "queued article"));
+  g_assert_true(fake_wait_id(S, note, 1, 20));
+  g_assert_true(fake_wait_id(S, article, 1, 20));
+
+  g_autofree char *refs = g_strdup_printf(
+      "[[\"e\",\"%s\"],[\"e\",\"%s\"],[\"a\",\"30023:%s:draft\"],[\"a\",\"30023:%s:draft\"]]",
+      note, note, acct.pk, acct.pk);
+  g_autofree char *foreign = offer(fed, mk(&other, 5, refs, ""));
+  g_assert_cmpint(nsr_outbox_event_status(ob, foreign, NULL, NULL, NULL), ==, -1);
+  ASSERT_TARGET(ob, note, S->url, "pending");
+  ASSERT_TARGET(ob, article, S->url, "pending");
+
+  g_autofree char *deletion = offer(fed, mk(&acct, 5, refs, ""));
+  g_autofree char *note_state = wait_state(note, "cancelled", 20);
+  g_autofree char *article_state = wait_state(article, "cancelled", 20);
+  g_assert_cmpstr(note_state, ==, "cancelled");
+  g_assert_cmpstr(article_state, ==, "cancelled");
+  ASSERT_TARGET(ob, note, S->url, "cancelled");
+  ASSERT_TARGET(ob, article, S->url, "cancelled");
+  nsr_federation_free(fed);
+  const char *detail = "deleted by the author (NIP-09) before forwarding";
+  assert_settled_notice(note, "cancelled", detail);
+  assert_settled_notice(article, "cancelled", detail);
+  nsr_outbox_close(ob);
+  nostr_publish_signer_unref(s_signer);
+  s_signer = NULL;
+  fake_relay_stop(S);
+  free(acct.sk); free(acct.pk);
+  free(other.sk); free(other.pk);
+  drop_outbox();
+}
+
 /* nostrc-jedb: pending deliveries follow a relay-list change. */
 static void test_retarget_on_relay_list_change(void) {
   FakeRelay *S = fake_relay_start(FAKE_SILENT, 0);
@@ -536,12 +600,13 @@ static void test_retarget_on_relay_list_change(void) {
   g_assert_cmpstr(why, ==, "dropped from the relay list");
   g_free(why);
   ASSERT_TARGET(ob, note, S->url, "cancelled");
-  char *rl1_state = NULL; /* superseded by rl2 (not signalled: see nostrc-z1my) */
-  g_assert_cmpint(nsr_outbox_event_status(ob, rl1, &rl1_state, NULL, NULL), ==, 0);
+  char *rl1_state = wait_state(rl1, "superseded", 20);
   g_assert_cmpstr(rl1_state, ==, "superseded");
   g_free(rl1_state);
 
   nsr_federation_free(fed);
+  g_autofree char *detail = g_strdup_printf("superseded by %s", rl2);
+  assert_settled_notice(rl1, "superseded", detail);
   nsr_outbox_close(ob);
   nostr_publish_signer_unref(s_signer);
   s_signer = NULL;
@@ -730,12 +795,15 @@ int main(int argc, char **argv) {
   g_cond_init(&obs.cond);
   obs.state = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
   obs.reasons = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+  obs.settled_notices = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   g_test_add_func("/federation/engine", test_federation);
+  g_test_add_func("/federation/deletion-notifies-per-event", test_deletion_notifies_per_event);
   g_test_add_func("/federation/retarget-on-relay-list-change", test_retarget_on_relay_list_change);
   g_test_add_func("/federation/auth-prompt-does-not-stall", test_auth_prompt_does_not_stall);
   g_test_add_func("/federation/account-probe-does-not-stall", test_account_probe_does_not_stall);
   int rc = g_test_run();
   g_hash_table_unref(obs.state);
   g_hash_table_unref(obs.reasons);
+  g_hash_table_unref(obs.settled_notices);
   return rc;
 }
