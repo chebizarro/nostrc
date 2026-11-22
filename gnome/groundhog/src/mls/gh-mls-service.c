@@ -132,6 +132,7 @@ struct _GhMlsGroup {
   gint64 cursor;             /* everything before it was processed */
   gint64 newest;             /* newest accepted created_at this session (bounded) */
   GQueue backfill;           /* Stored: backfill of every relay, applied oldest first */
+  GHashTable *backfill_ids;   /* ids retained by this buffer, beyond the scope seen window */
   guint backfill_seq;
   GHashTable *backfilling;   /* url -> gint64*: relays delivering a backfill round that has
                               * not ended, and when each last delivered (monotonic) */
@@ -1063,6 +1064,7 @@ gh_mls_group_finalize(GObject *object)
   if (self->retained_source)
     g_source_remove(self->retained_source);
   g_queue_clear_full(&self->backfill, stored_free);
+  g_hash_table_unref(self->backfill_ids);
   if (self->quiet_source)
     g_source_remove(self->quiet_source);
   g_hash_table_unref(self->backfilling);
@@ -1131,6 +1133,7 @@ gh_mls_group_init(GhMlsGroup *self)
   self->waiters = g_ptr_array_new_with_free_func(g_object_unref);
   g_queue_init(&self->held);
   g_queue_init(&self->backfill);
+  self->backfill_ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->backfilling = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
   self->held_ids = g_hash_table_new(g_str_hash, g_str_equal);
   self->junk_ids = g_hash_table_new(g_str_hash, g_str_equal);
@@ -2239,6 +2242,7 @@ group_unsubscribe(GhMlsGroup *group)
   /* Not read yet, so nothing moved the cursor past them: the next
    * subscription fetches them again. */
   g_queue_clear_full(&group->backfill, stored_free);
+  g_hash_table_remove_all(group->backfill_ids);
   group->backfill_bytes = 0;
   g_hash_table_remove_all(group->backfilling);
   if (group->quiet_source) {
@@ -3150,6 +3154,7 @@ flush_backfill(GhMlsGroup *group)
 {
   GList *mine = group->backfill.head;
   g_queue_init(&group->backfill);
+  g_hash_table_remove_all(group->backfill_ids);
   group->backfill_bytes = 0;
   mine = g_list_sort(mine, stored_older_first);
   g_object_ref(group);   /* a Commit may change the subscription meanwhile */
@@ -3273,6 +3278,10 @@ touch_backfilling(GhMlsGroup *group, const gchar *url)
 static void
 keep_backfill(GhMlsGroup *group, const GhRelayUpdate *update)
 {
+  if (update->event_id && g_hash_table_contains(group->backfill_ids, update->event_id))
+    return;
+  if (update->event_id)
+    g_hash_table_add(group->backfill_ids, g_strdup(update->event_id));
   Stored *stored = g_new0(Stored, 1);
   stored->json = g_strdup(update->event_json);
   stored->url = g_strdup(update->url);

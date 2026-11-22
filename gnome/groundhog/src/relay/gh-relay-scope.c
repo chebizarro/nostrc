@@ -6,6 +6,18 @@
 
 #define GH_MAX_RELAYS 16
 #define GH_SEEN_LIMIT 4096
+#ifdef GH_RELAY_TEST_HOOKS
+static guint test_seen_limit = GH_SEEN_LIMIT;
+
+void
+gh_relay_scope_test_set_seen_limit(guint limit)
+{
+  test_seen_limit = limit ? limit : GH_SEEN_LIMIT;
+}
+#define SCOPE_SEEN_LIMIT test_seen_limit
+#else
+#define SCOPE_SEEN_LIMIT GH_SEEN_LIMIT
+#endif
 
 /* One filter's part of the current answer, while paging (nostrc-cpwf). */
 typedef struct {
@@ -547,7 +559,7 @@ deliver_event(GhRelayScope *scope, GhEndpoint *endpoint, const gchar *event_json
     return;
   g_hash_table_add(scope->seen, g_strdup(id));
   g_queue_push_tail(&scope->seen_order, g_strdup(id));
-  if (g_queue_get_length(&scope->seen_order) > GH_SEEN_LIMIT) {
+  if (g_queue_get_length(&scope->seen_order) > SCOPE_SEEN_LIMIT) {
     gchar *oldest = g_queue_pop_head(&scope->seen_order);
     g_hash_table_remove(scope->seen, oldest);
     g_free(oldest);

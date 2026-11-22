@@ -2194,12 +2194,16 @@ test_catch_up_two_relays_partial(void)
       wire_relay_inject(&w.h, copy);
   }
 
+  /* Force scope seen-set eviction while the group buffer still owns the ids. */
+  gh_relay_scope_test_set_seen_limit(2);
+  gh_mls_service_set_backfill_limit(bob->service, 350, 0);
   set_online(bob, TRUE);
   TextsWait all = { bob, room, backlog.texts, 0 };
   spin_until(texts_listed, &all, "every message of the backlog");
   wait_epoch(gb, (gint)gh_mls_group_get_epoch(ga));
   g_assert_cmpstr(gh_mls_group_get_name(gb), ==, "Backlog 3");
   wait_live(gb);
+  g_assert_false(gh_mls_group_get_history_incomplete(gb));
   g_assert_cmpint(gh_mls_group_get_unreadable(gb), <=, base);   /* nothing of the backlog */
   CursorWait moved = { gb, newest };
   spin_until(cursor_reached, &moved, "the cursor past the backlog");
@@ -2207,6 +2211,7 @@ test_catch_up_two_relays_partial(void)
   g_assert_cmpuint(paged_reqs(&w.h), >=, 3);
   send_text(alice, ga, "after the two-relay catch-up");
   wait_stored_text(bob, room, "after the two-relay catch-up");
+  gh_relay_scope_test_set_seen_limit(0);
   backlog_clear(&backlog);
   world_down(&w);
 }

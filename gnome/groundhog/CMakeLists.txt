@@ -337,6 +337,7 @@ if (TARGET nostr_gobject AND TARGET nostr)
   target_link_libraries(groundhog-relay PUBLIC nostr_gobject nostr groundhog-diagnostics)
   target_compile_options(groundhog-relay PRIVATE -Wall -Wextra -Werror)
   if (BUILD_TESTING)
+    target_compile_definitions(groundhog-relay PRIVATE GH_RELAY_TEST_HOOKS=1)
     add_executable(test-groundhog-relay tests/relay/test_relay_scope.c)
     target_link_libraries(test-groundhog-relay PRIVATE groundhog-relay)
     target_compile_options(test-groundhog-relay PRIVATE -Wall -Wextra -Werror)
@@ -2360,7 +2361,7 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
       groundhog-account-relays nostr_nip17_core nostr_nip59_core nostrc-test-bus
       PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
     target_compile_options(test-groundhog-mls-service PRIVATE -Wall -Wextra -Werror)
-    target_compile_definitions(test-groundhog-mls-service PRIVATE GH_MLS_TEST_HOOKS=1
+    target_compile_definitions(test-groundhog-mls-service PRIVATE GH_MLS_TEST_HOOKS=1 GH_RELAY_TEST_HOOKS=1
       ${GROUNDHOG_MLS_SERVICE_DEFS})
     groundhog_store_link_sqlcipher_first(test-groundhog-mls-service)
     add_dependencies(test-groundhog-mls-service groundhog-test-schemas)
