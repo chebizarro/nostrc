@@ -25,8 +25,7 @@
 #include <errno.h>
 
 #if __has_include("nostrdb.h")
-#include "nostrdb.h"
-#include "lmdb.h"
+#include "nostrdb_headers.h"
 #define HAVE_NOSTRDB 1
 #else
 #define HAVE_NOSTRDB 0
