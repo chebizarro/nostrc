@@ -124,7 +124,13 @@ static void live_wire_diag_locked(SignetRelayPool *rp,const char *code) {
 
 static void signet_pool_event_middleware(NostrIncomingEvent *incoming, void *user_data) {
   SignetRelayPool *rp = (SignetRelayPool *)user_data;
-  if (!rp || !incoming || !incoming->event || !rp->on_event) return;
+  if (!incoming || !incoming->event) return;
+  /* SimplePool transfers this reference even when dispatch is rejected. */
+  if (!rp || !rp->on_event) {
+    nostr_event_free(incoming->event);
+    incoming->event = NULL;
+    return;
+  }
 
   /* NPA-01: Verify Schnorr signature before dispatching.
    * Relays are untrusted — they can inject or modify event JSON.
@@ -133,6 +139,8 @@ static void signet_pool_event_middleware(NostrIncomingEvent *incoming, void *use
     char *bad_id = nostr_event_get_id(incoming->event);
     g_warning("[signetd] dropping event %s: invalid signature", bad_id ? bad_id : "(null)");
     free(bad_id);
+    nostr_event_free(incoming->event);
+    incoming->event = NULL;
     return;
   }
 
@@ -165,6 +173,8 @@ static void signet_pool_event_middleware(NostrIncomingEvent *incoming, void *use
 
   free((void *)ev.event_json);
   free(event_id);
+  nostr_event_free(incoming->event);
+  incoming->event = NULL;
 }
 
 /* ----------------------- NIP-42 auth callback ----------------------------- */

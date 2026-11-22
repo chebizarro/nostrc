@@ -625,6 +625,10 @@ static gboolean wire_deadline(gpointer data) {
 static void wire_event(const SignetRelayEventView *event, void *data) {
   Wire *w = data;
   if (event->kind == 12345) {
+    CHECK(event->event_id_hex && strlen(event->event_id_hex) == 64);
+    CHECK(event->pubkey_hex && strlen(event->pubkey_hex) == 64);
+    CHECK(event->content && !strcmp(event->content, "signed-reply-fixture"));
+    CHECK(event->event_json && strstr(event->event_json, "signed-reply-fixture"));
     SignetReplyAckStats stats = {0};
     signet_relay_pool_get_reply_ack_stats(w->pool, &stats);
     CHECK(stats.accepted == 1); /* OK precedes EVENT on this same connection */
