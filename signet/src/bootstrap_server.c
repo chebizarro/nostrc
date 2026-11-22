@@ -98,8 +98,21 @@ static bool signet_bootstrap_is_tls(SignetBootstrapServer *bs, struct MHD_Connec
 
 /* ----------------------------- JSON helpers ------------------------------- */
 
+static char *json_response(JsonObject *object) {
+  JsonNode *root = json_node_new(JSON_NODE_OBJECT);
+  json_node_take_object(root, object);
+  JsonGenerator *gen = json_generator_new();
+  json_generator_set_root(gen, root);
+  char *out = json_generator_to_data(gen, NULL);
+  g_object_unref(gen);
+  json_node_unref(root);
+  return out;
+}
+
 static char *json_error(const char *message) {
-  return g_strdup_printf("{\"error\":\"%s\"}", message);
+  JsonObject *o = json_object_new();
+  json_object_set_string_member(o, "error", message);
+  return json_response(o);
 }
 
 static void signet_sha256_hex(const char *input, char out_hex[crypto_hash_sha256_BYTES * 2 + 1]) {
@@ -297,9 +310,10 @@ handle_bootstrap(SignetBootstrapServer *bs, struct MHD_Connection *conn,
                      json_error("token already used"));
   }
 
-  char *resp_json = g_strdup_printf(
-      "{\"uri\":\"%s\",\"pubkey\":\"%s\"}",
-      bunker_uri ? bunker_uri : "", pubkey_hex);
+  JsonObject *response = json_object_new();
+  json_object_set_string_member(response, "uri", bunker_uri ? bunker_uri : "");
+  json_object_set_string_member(response, "pubkey", pubkey_hex);
+  char *resp_json = json_response(response);
 
   signet_agent_record_clear(&rec);
   g_free(bunker_uri);
@@ -328,7 +342,9 @@ handle_challenge(SignetBootstrapServer *bs, struct MHD_Connection *conn) {
     return send_json(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
                      json_error("failed to issue challenge"));
 
-  char *resp_json = g_strdup_printf("{\"challenge\":\"%s\"}", challenge);
+  JsonObject *response = json_object_new();
+  json_object_set_string_member(response, "challenge", challenge);
+  char *resp_json = json_response(response);
   g_free(challenge);
 
   return send_json(conn, MHD_HTTP_OK, resp_json);
@@ -354,6 +370,9 @@ handle_auth(SignetBootstrapServer *bs, struct MHD_Connection *conn,
   int64_t now = signet_now_unix();
   char *agent_id = NULL;
   char *pubkey_hex = NULL;
+
+  if (!bs->fleet || !bs->fleet->get_agent_pubkey)
+    return send_json(conn, MHD_HTTP_SERVICE_UNAVAILABLE, json_error("fleet registry unavailable"));
 
   SignetAuthResult ar = signet_auth_verify(
       bs->challenges, bs->fleet, body, now, &agent_id, &pubkey_hex);
@@ -390,9 +409,12 @@ handle_auth(SignetBootstrapServer *bs, struct MHD_Connection *conn,
   signet_sha256_hex(session_hex, session_token_hash);
 
   int64_t expires_at = now + SIGNET_SESSION_TTL_S;
-  char *meta = g_strdup_printf(
-      "{\"session_token_hash\":\"%s\",\"transport\":\"http\",\"auth_method\":\"keypair\",\"pubkey\":\"%s\"}",
-      session_token_hash, pubkey_hex ? pubkey_hex : "");
+  JsonObject *metadata = json_object_new();
+  json_object_set_string_member(metadata, "session_token_hash", session_token_hash);
+  json_object_set_string_member(metadata, "transport", "http");
+  json_object_set_string_member(metadata, "auth_method", "keypair");
+  json_object_set_string_member(metadata, "pubkey", pubkey_hex ? pubkey_hex : "");
+  char *meta = json_response(metadata);
 
   if (signet_store_issue_lease(bs->store, lease_id, "session", agent_id,
                                now, expires_at, meta) != 0) {
@@ -404,11 +426,13 @@ handle_auth(SignetBootstrapServer *bs, struct MHD_Connection *conn,
   }
   g_free(meta);
 
-  char *resp_json = g_strdup_printf(
-      "{\"session_token\":\"%s\",\"lease_id\":\"%s\",\"agent_id\":\"%s\",\"pubkey\":\"%s\","
-      "\"expires_at\":%" PRId64 "}",
-      session_hex, lease_id, agent_id ? agent_id : "", pubkey_hex ? pubkey_hex : "",
-      expires_at);
+  JsonObject *response = json_object_new();
+  json_object_set_string_member(response, "session_token", session_hex);
+  json_object_set_string_member(response, "lease_id", lease_id);
+  json_object_set_string_member(response, "agent_id", agent_id ? agent_id : "");
+  json_object_set_string_member(response, "pubkey", pubkey_hex ? pubkey_hex : "");
+  json_object_set_int_member(response, "expires_at", expires_at);
+  char *resp_json = json_response(response);
 
   g_free(agent_id);
   g_free(pubkey_hex);

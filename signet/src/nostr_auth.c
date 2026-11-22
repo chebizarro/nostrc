@@ -208,6 +208,11 @@ SignetAuthResult signet_auth_verify(SignetChallengeStore *cs,
     /* Check pubkey matches agent_id. */
     if (fleet->get_agent_pubkey) {
       char *expected = fleet->get_agent_pubkey(agent_id, fleet->user_data);
+      if (!expected || !expected[0]) {
+        g_free(expected);
+        nostr_event_free(evt);
+        return SIGNET_AUTH_ERR_NOT_IN_FLEET;
+      }
       if (expected) {
         bool match = (g_ascii_strcasecmp(expected, pubkey) == 0);
         g_free(expected);

@@ -28,14 +28,15 @@ static int http_connect(const char *ip, unsigned short port) {
   return fd;
 }
 
-static int http_get(unsigned short port, const char *path, const char *headers,
-                    char *response, size_t size) {
+static int http_request(unsigned short port, const char *method, const char *path,
+                        const char *headers, const char *body, char *response, size_t size) {
   int fd = http_connect("127.0.0.1", port);
   CHECK(fd >= 0);
-  char request[2048];
+  char request[12288];
   int n = snprintf(request, sizeof(request),
-                   "GET %s HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n%s\r\n",
-                   path, headers ? headers : "");
+                   "%s %s HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n"
+                   "Content-Length: %zu\r\n%s\r\n%s",
+                   method, path, body ? strlen(body) : 0, headers ? headers : "", body ? body : "");
   CHECK(n > 0 && (size_t)n < sizeof(request));
   CHECK(send(fd, request, (size_t)n, 0) == n);
   size_t used = 0;
@@ -51,5 +52,13 @@ static int http_get(unsigned short port, const char *path, const char *headers,
   int status = 0;
   CHECK(sscanf(response, "HTTP/%*s %d", &status) == 1);
   return status;
+}
+static inline int http_get(unsigned short port, const char *path, const char *headers,
+                           char *response, size_t size) {
+  return http_request(port, "GET", path, headers, NULL, response, size);
+}
+static inline int http_post(unsigned short port, const char *path, const char *headers,
+                            const char *body, char *response, size_t size) {
+  return http_request(port, "POST", path, headers, body, response, size);
 }
 #endif
