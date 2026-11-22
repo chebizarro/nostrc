@@ -13,6 +13,7 @@
 #include "nostr-event.h"
 #include "nostr-keys.h"
 #include "nostr-kinds.h"
+#include "nostr-tag.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -426,6 +427,47 @@ static void test_create_dm_relay_list(void) {
     printf("  OK: DM relay list event created correctly\n");
 }
 
+static void test_unsigned_dm_relay_list(void) {
+    const char *relays[] = {"wss://nos.lol", "wss://relay.nostr.band", "wss://nos.lol", NULL};
+    NostrEvent *signed_event = nostr_nip17_create_dm_relay_list(relays, ALICE_SK);
+    assert(signed_event);
+    NostrEvent *event = nostr_nip17_build_dm_relay_list_unsigned(
+        relays, ALICE_PK, nostr_event_get_created_at(signed_event));
+    assert(event && !nostr_event_get_sig(event));
+    char before[65], after[65];
+    assert(nostr_event_compute_id(event, before) == NOSTR_EVENT_VALIDATION_OK);
+    assert(nostr_event_compute_id(signed_event, after) == NOSTR_EVENT_VALIDATION_OK);
+    assert(!strcmp(before, after));
+    /* External-signer fake: only the caller sees the secret. */
+    assert(!nostr_event_sign(event, ALICE_SK));
+    assert(nostr_event_check_signature(event));
+    assert(nostr_event_compute_id(event, after) == NOSTR_EVENT_VALIDATION_OK);
+    assert(!strcmp(before, after));
+    NostrDmRelayList *parsed = nostr_nip17_parse_dm_relay_list(event);
+    assert(parsed && parsed->count == 3);
+    for (size_t i = 0; i < parsed->count; i++) assert(!strcmp(parsed->relays[i], relays[i]));
+    nostr_nip17_free_dm_relay_list(parsed);
+    nostr_event_free(event);
+    nostr_event_free(signed_event);
+    const char *empty[] = {NULL}, *bad[] = {"", NULL};
+    assert(!nostr_nip17_build_dm_relay_list_unsigned(NULL, ALICE_PK, 0));
+    assert(!nostr_nip17_build_dm_relay_list_unsigned(empty, ALICE_PK, 0));
+    assert(!nostr_nip17_build_dm_relay_list_unsigned(bad, ALICE_PK, 0));
+    assert(!nostr_nip17_build_dm_relay_list_unsigned(relays, NULL, 0));
+    assert(!nostr_nip17_build_dm_relay_list_unsigned(relays, "bad", 0));
+    assert(!nostr_nip17_build_dm_relay_list_unsigned(relays, ALICE_PK, -1));
+    assert(!nostr_nip17_create_dm_relay_list(relays, NULL));
+    event = nostr_nip17_build_dm_relay_list_unsigned(relays, ALICE_PK, 0);
+    assert(event);
+    nostr_event_set_kind(event, 1);
+    assert(!nostr_nip17_parse_dm_relay_list(event));
+    nostr_event_set_kind(event, NOSTR_KIND_DM_RELAY_LIST);
+    nostr_event_set_tags(event, nostr_tags_new(0));
+    nostr_tags_append(nostr_event_get_tags(event), nostr_tag_new("relay", NULL));
+    assert(!nostr_nip17_parse_dm_relay_list(event));
+    nostr_event_free(event);
+}
+
 static void test_parse_dm_relay_list(void) {
     printf("Testing DM relay list parsing...\n");
 
@@ -569,6 +611,7 @@ int main(void) {
 
     /* DM relay preferences tests */
     test_create_dm_relay_list();
+    test_unsigned_dm_relay_list();
     test_parse_dm_relay_list();
     test_dm_relay_list_roundtrip();
     test_get_dm_relays_defaults();
