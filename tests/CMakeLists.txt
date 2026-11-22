@@ -582,10 +582,16 @@ set_tests_properties(concurrency_subscription_shutdown PROPERTIES
 if(GO_ENABLE_ASAN AND NOT GO_ENABLE_TSAN)
   add_test(NAME concurrency_subscription_shutdown_asan
     COMMAND test_concurrency_subscription_shutdown)
+  set(_shutdown_asan_options "detect_leaks=1:halt_on_error=1")
+  if(APPLE)
+    # Apple's ASan runtime has no LeakSanitizer. Keep its memory-safety checks;
+    # the Linux route above must retain explicit leak detection.
+    set(_shutdown_asan_options "halt_on_error=1")
+  endif()
   set_tests_properties(concurrency_subscription_shutdown_asan PROPERTIES
     TIMEOUT 90
     LABELS "concurrency;shutdown;asan"
-    ENVIRONMENT "NOSTR_TEST_MODE=1;ASAN_OPTIONS=detect_leaks=1:halt_on_error=1"
+    ENVIRONMENT "NOSTR_TEST_MODE=1;ASAN_OPTIONS=${_shutdown_asan_options}"
   )
 endif()
 

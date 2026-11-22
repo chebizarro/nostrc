@@ -16,6 +16,9 @@
 G_BEGIN_DECLS
 
 typedef struct _GNostrSubscription GNostrSubscription;
+#include "nostr-subscription.h"
+typedef void (*GNostrSubscriptionMonitorHook)(NostrSubscription *sub, gboolean finished);
+NOSTR_GOBJECT_API void gnostr_subscription_test_set_monitor_hook(GNostrSubscriptionMonitorHook hook);
 
 /* Events waiting for the main loop; *eose_queued (nullable) is set to
  * whether an EOSE marker is waiting too. */
