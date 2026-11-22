@@ -557,7 +557,7 @@ jobs:
           mkdir -p flatpak-build
           flatpak-builder --user --arch=${{ matrix.arch }} --force-clean --repo=repo flatpak-build apps/grotto/flatpak/org.nostr.Grotto.yaml
           # x86_64 keeps its historical name; other arches get a suffix.
-          name="grotto${{ matrix.arch != 'x86_64' && format('-{0}', matrix.arch) || '' }}.flatpak"
+          name="grotto-${{ matrix.arch }}.flatpak"
           flatpak build-bundle --arch=${{ matrix.arch }} repo "$name" org.nostr.Grotto \
             --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
           mkdir -p dist

@@ -53,7 +53,7 @@ NOTARIZE=false
 SKIP_DMG=false
 
 # DMG configuration
-DMG_NAME="GnostrSigner"
+DMG_NAME="Grotto"
 DMG_VOLUME_NAME="Grotto"
 DMG_BACKGROUND=""  # Placeholder for background image
 DMG_ICON_SIZE=128
