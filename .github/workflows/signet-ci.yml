@@ -76,8 +76,11 @@ jobs:
         if: matrix.passkeys == 'OFF' && matrix.sqlcipher == 'OFF'
         run: |
           source signet/deploy/versions.env
+          docker build -f signet/deploy/Dockerfile.caddy \
+            --build-arg CADDY_BUILDER_IMAGE="$CADDY_BUILDER_IMAGE" \
+            --build-arg CADDY_IMAGE="$CADDY_IMAGE" -t sec-signet-caddy .
           docker run --rm --network none -e SIGNET_ENROLLMENT_HOST=enroll.example.org \
-            -v "$PWD/signet/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" "$CADDY_IMAGE" \
+            -v "$PWD/signet/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" sec-signet-caddy \
             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
       - name: Install dependencies

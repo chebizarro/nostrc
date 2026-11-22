@@ -25,6 +25,7 @@
 
 struct SignetChallengeStore {
   GHashTable *challenges;  /* challenge_hex → SignetChallenge* */
+  GQueue issuance_order; /* borrowed records, oldest first, including same-second issues */
   GMutex mu;
   GSource *cleanup_source;
   gint refs; /* caller + source callback; destruction waits for active dispatch */
@@ -40,19 +41,21 @@ static void signet_challenge_free(gpointer p) {
 
 /* Caller holds cs->mu. Clock rollback also invalidates outstanding proofs. */
 static void signet_challenge_cleanup_locked(SignetChallengeStore *cs, int64_t now) {
-  GHashTableIter iter;
-  gpointer value;
-  g_hash_table_iter_init(&iter, cs->challenges);
-  while (g_hash_table_iter_next(&iter, NULL, &value)) {
-    SignetChallenge *ch = value;
-    if (now < ch->issued_at || now - ch->issued_at >= SIGNET_CHALLENGE_TTL_S)
-      g_hash_table_iter_remove(&iter);
+  for (GList *it = cs->issuance_order.head; it;) {
+    GList *next = it->next;
+    SignetChallenge *ch = it->data;
+    if (ch->consumed || now < ch->issued_at || now - ch->issued_at >= SIGNET_CHALLENGE_TTL_S) {
+      g_hash_table_remove(cs->challenges, ch->challenge_hex);
+      g_queue_delete_link(&cs->issuance_order, it);
+    }
+    it = next;
   }
 }
 
 static void signet_challenge_store_unref(gpointer data) {
   SignetChallengeStore *cs = data;
   if (!g_atomic_int_dec_and_test(&cs->refs)) return;
+  g_queue_clear(&cs->issuance_order);
   g_hash_table_destroy(cs->challenges);
   g_mutex_clear(&cs->mu);
   g_free(cs);
@@ -97,17 +100,22 @@ char *signet_challenge_issue(SignetChallengeStore *cs,
   g_mutex_lock(&cs->mu);
   signet_challenge_cleanup_locked(cs, now);
   unsigned int per_agent = 0;
-  GHashTableIter iter;
-  gpointer value;
-  g_hash_table_iter_init(&iter, cs->challenges);
-  while (g_hash_table_iter_next(&iter, NULL, &value)) {
-    SignetChallenge *ch = value;
-    if (strcmp(ch->agent_id, agent_id) == 0) per_agent++;
+  SignetChallenge *oldest_for_agent = NULL;
+  for (GList *it = cs->issuance_order.head; it; it = it->next) {
+    SignetChallenge *ch = it->data;
+    if (strcmp(ch->agent_id, agent_id) == 0) {
+      if (!oldest_for_agent) oldest_for_agent = ch;
+      per_agent++;
+    }
   }
-  if (g_hash_table_size(cs->challenges) >= SIGNET_CHALLENGE_MAX_TOTAL ||
-      per_agent >= SIGNET_CHALLENGE_MAX_PER_AGENT) {
-    g_mutex_unlock(&cs->mu);
-    return NULL;
+  SignetChallenge *evict = NULL;
+  if (per_agent >= SIGNET_CHALLENGE_MAX_PER_AGENT)
+    evict = oldest_for_agent;
+  else if (g_hash_table_size(cs->challenges) >= SIGNET_CHALLENGE_MAX_TOTAL)
+    evict = g_queue_peek_head(&cs->issuance_order);
+  if (evict) {
+    g_queue_remove(&cs->issuance_order, evict);
+    g_hash_table_remove(cs->challenges, evict->challenge_hex);
   }
 
   /* Generate 32 random bytes → 64-char hex. */
@@ -128,6 +136,7 @@ char *signet_challenge_issue(SignetChallengeStore *cs,
   ch->consumed = false;
 
   g_hash_table_replace(cs->challenges, g_strdup(hex), ch);
+  g_queue_push_tail(&cs->issuance_order, ch);
   g_mutex_unlock(&cs->mu);
 
   return hex;

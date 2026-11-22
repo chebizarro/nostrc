@@ -139,6 +139,10 @@ int main(void) {
   CHECK(redeem(port, wrong_pk, ev, response) == 403);
   check_standing_secret(store); free(wrong_pk); g_free(ch); g_free(ev);
 
+  /* An anonymous flood must not prevent the honest client obtaining its own
+   * fresh proof and completing the real bootstrap path below. */
+  for (int i = 0; i < 40; i++)
+    CHECK(http_get(port, "/challenge?agent_id=bootstrap-agent", HEADERS, response, sizeof(response)) == 200);
   CHECK(http_get(port, "/challenge?agent_id=bootstrap-agent", HEADERS, response, sizeof(response)) == 200);
   JsonParser *parser = parse_response(response);
   JsonObject *obj = json_node_get_object(json_parser_get_root(parser));

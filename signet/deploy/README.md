@@ -412,6 +412,13 @@ or editing receipts bypasses the rule and is unsupported.
   Before first activation, add `-f .../signet/deploy/compose.bootstrap.yml
   --profile bootstrap` to the pull command and pull **both signetd and caddy**.
   Upgrades automatically pull and inspect every enabled supervised image.
+  The stock pinned Caddy image is NOT bootstrap-compatible: `rate_limit` is a
+  nonstandard module. Build `signet/deploy/Dockerfile.caddy` with the digest-pinned
+  `CADDY_BUILDER_IMAGE` and `CADDY_IMAGE` arguments from `versions.env`, publish and
+  scan that image, then pass its digest via `make-bundle.py --caddy-image`.
+  CI builds that recipe and validates this Caddyfile; stock Caddy fails closed.
+  The `/challenge` limit is 20 requests per minute per direct peer IP (not an
+  attacker-supplied forwarding header); NAT-shared clients share the budget.
   Caddy alone binds public TCP 443 as root with only NET_BIND_SERVICE; admin API,
   HTTP redirect listener and HTTP/3 are disabled. Only three enrollment routes
   proxy to loopback; X-Forwarded-Proto is overwritten. TLS-ALPN-01 uses 443. If 443

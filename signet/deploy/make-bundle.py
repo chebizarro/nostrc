@@ -11,9 +11,10 @@ root = Path(__file__).resolve().parents[2]
 p = argparse.ArgumentParser()
 p.add_argument('--default-image', required=True)
 p.add_argument('--passkeys-image', required=True)
+p.add_argument('--caddy-image', help='published rate-limit-enabled image digest; required before enabling bootstrap')
 p.add_argument('--output', type=Path, required=True)
 a = p.parse_args()
-for image in (a.default_image, a.passkeys_image):
+for image in (a.default_image, a.passkeys_image, *([a.caddy_image] if a.caddy_image else [])):
     if not re.fullmatch(r'[a-z0-9./:_-]+@sha256:[0-9a-f]{64}', image):
         raise SystemExit('bundle requires published digests, not tags')
 dirty = subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain',
@@ -22,6 +23,8 @@ if dirty.strip():
     raise SystemExit('refusing to bind uncommitted deployment files to a source commit')
 identity = json.loads(subprocess.check_output(['python3', str(root / 'signet/deploy/check-release.py')], text=True))
 pins = dict(line.split('=', 1) for line in (root / 'signet/deploy/versions.env').read_text().splitlines() if line and not line.startswith('#'))
+if a.caddy_image:
+    pins['CADDY_IMAGE'] = a.caddy_image
 out = a.output / identity['sha']
 out.mkdir(parents=True, exist_ok=False)
 (out / 'signet').mkdir()

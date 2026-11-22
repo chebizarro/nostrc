@@ -87,8 +87,8 @@ it must bind the token hash to an already-provisioned `agent_id` and the client'
 
 1. Fetch `GET /challenge?agent_id=<id>` over the configured TLS proxy. IDs must be
    provisioned, nonempty, and at most 128 bytes. Challenges expire after 30 seconds.
-   The store refuses (HTTP 429) above four outstanding entries per agent or 1,024
-   globally, without evicting live proofs. Issuance and a five-second main-loop
+   The store replaces the oldest pending proof above four per agent or 1,024
+   globally; consumed proofs do not occupy those budgets. Issuance and a five-second main-loop
    cleanup source prune expired entries, even during idle periods.
 2. Sign a `SIGNET_AUTH_KIND` event with the bootstrap private key, empty content,
    and tags `[["challenge", "<hex>"], ["agent", "<id>"],

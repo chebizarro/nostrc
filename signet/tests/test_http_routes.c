@@ -61,7 +61,7 @@ static void challenge_route_limits(unsigned short port, const char *agent) {
   for (int i = 0; i < 4; i++)
     CHECK(http_get(port, path, "X-Forwarded-Proto: https\r\n", response, sizeof(response)) == 200);
   for (int i = 0; i < 12; i++)
-    CHECK(http_get(port, path, "X-Forwarded-Proto: https\r\n", response, sizeof(response)) == 429);
+    CHECK(http_get(port, path, "X-Forwarded-Proto: https\r\n", response, sizeof(response)) == 200);
   g_free(path); g_free(escaped);
 }
 

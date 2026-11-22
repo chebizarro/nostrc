@@ -206,13 +206,13 @@ static void test_challenge_limits(void) {
   for (int i = 0; i < 4; i++) {
     char *ch = signet_challenge_issue(cs, "limited", now); CHECK(ch); g_free(ch);
   }
-  CHECK(!signet_challenge_issue(cs, "limited", now));
+  char *replacement = signet_challenge_issue(cs, "limited", now); CHECK(replacement); g_free(replacement);
   for (int i = 4; i < 1024; i++) {
     char *id = g_strdup_printf("agent-%d", i);
     char *ch = signet_challenge_issue(cs, id, now); CHECK(ch);
     g_free(ch); g_free(id);
   }
-  CHECK(!signet_challenge_issue(cs, "over-global-limit", now));
+  replacement = signet_challenge_issue(cs, "over-global-limit", now); CHECK(replacement); g_free(replacement);
   CHECK(!signet_challenge_issue(cs, "", now));
   char too_long[130]; memset(too_long, 'x', sizeof(too_long) - 1);
   too_long[sizeof(too_long) - 1] = 0;
@@ -223,6 +223,29 @@ static void test_challenge_limits(void) {
   CHECK(ch); g_free(ch);
   signet_challenge_store_free(cs);
   printf("test_challenge_limits: PASS\n");
+}
+
+static void test_challenge_replacement(void) {
+  SignetChallengeStore *cs = signet_challenge_store_new();
+  char *sk = nostr_key_generate_private(); CHECK(sk);
+  const int64_t now = 1700000000;
+  char *challenges[5];
+  for (int i = 0; i < 5; i++) {
+    /* Same second: eviction must follow issuance order, not hash-table order. */
+    challenges[i] = signet_challenge_issue(cs, "honest", now); CHECK(challenges[i]);
+  }
+  char *ev = build_auth_event(sk, SIGNET_AUTH_KIND, challenges[0], "honest", "signet-auth", now);
+  CHECK(signet_auth_verify(cs, NULL, ev, now, NULL, NULL) == SIGNET_AUTH_ERR_CHALLENGE_MISMATCH);
+  g_free(ev);
+  ev = build_auth_event(sk, SIGNET_AUTH_KIND, challenges[1], "honest", "signet-auth", now);
+  CHECK(signet_auth_verify(cs, NULL, ev, now, NULL, NULL) == SIGNET_AUTH_OK); g_free(ev);
+  /* A consumed entry must not evict another pending proof on the next issue. */
+  char *next = signet_challenge_issue(cs, "honest", now); CHECK(next); g_free(next);
+  ev = build_auth_event(sk, SIGNET_AUTH_KIND, challenges[2], "honest", "signet-auth", now);
+  CHECK(signet_auth_verify(cs, NULL, ev, now, NULL, NULL) == SIGNET_AUTH_OK); g_free(ev);
+  for (int i = 0; i < 5; i++) g_free(challenges[i]);
+  free(sk); signet_challenge_store_free(cs);
+  puts("test_challenge_replacement: PASS");
 }
 
 static gboolean cleanup_watchdog(gpointer data) {
@@ -374,6 +397,7 @@ static void test_null_safety(void) {
 int main(void) {
   test_null_safety();
   test_challenge_limits();
+  test_challenge_replacement();
   test_challenge_periodic_cleanup();
   test_challenge_issue();
   test_challenge_different_agents();
