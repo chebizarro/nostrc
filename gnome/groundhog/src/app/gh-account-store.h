@@ -133,6 +133,8 @@ guint64 gh_account_store_get_generation(GhAccountStore *self);
 const gchar *gh_account_store_get_account(GhAccountStore *self);
 /* Borrowed; non-NULL only in OPEN, EPHEMERAL and CORRUPT. */
 GhStore *gh_account_store_get_store(GhAccountStore *self);
+/* Production GhNotifierLastSeenFunc: read only the matching open account. */
+gint64 gh_account_store_notifier_last_seen(gpointer data, const gchar *account);
 GhStoreConversations *gh_account_store_get_conversations(GhAccountStore *self);
 /* The create_outbox object, only in OPEN and EPHEMERAL. */
 GObject *gh_account_store_get_outbox(GhAccountStore *self);

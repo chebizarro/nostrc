@@ -738,6 +738,26 @@ gh_account_store_get_store(GhAccountStore *self)
   return self->store;
 }
 
+/* N1 (nostrc-qp24.84): the account's last-seen marker is the DM inbox's
+ * checkpoint in its encrypted store, read when the model binds it (before
+ * this session's inbox moves it). None without an open store of that
+ * account. */
+gint64
+gh_account_store_notifier_last_seen(gpointer data, const gchar *account)
+{
+  GhAccountStore *account_store = GH_ACCOUNT_STORE(data);
+  GhStore *store = gh_account_store_get_store(account_store);
+  gint64 since = 0;
+  g_autoptr(GError) error = NULL;
+  if (!store || g_strcmp0(gh_store_get_account_pubkey(store), account) != 0)
+    return 0;
+  if (!gh_store_get_cursor(store, GH_ACCOUNT_STORE_INBOX_CURSOR, "", &since, &error)) {
+    g_message("Groundhog could not read when messages were last received: %s", error->message);
+    return 0;
+  }
+  return since;
+}
+
 GhStoreConversations *
 gh_account_store_get_conversations(GhAccountStore *self)
 {
