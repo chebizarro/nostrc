@@ -1373,75 +1373,33 @@ void signet_relay_pool_get_reply_ack_stats(SignetRelayPool *rp, SignetReplyAckSt
 }
 
 int signet_relay_pool_handle_event_json(SignetRelayPool *rp, const char *event_json) {
-  if (!rp || !event_json) return -1;
-  if (!rp->on_event) return -1;
-
-  JsonParser *p = json_parser_new();
-  if (!p) return -1;
-
-  GError *err = NULL;
-  if (!json_parser_load_from_data(p, event_json, -1, &err)) {
-    if (err) g_error_free(err);
-    g_object_unref(p);
+  if (!rp || !event_json || !rp->on_event) return -1;
+  NostrEvent *event = nostr_event_new();
+  if (!event) return -1;
+  if (!nostr_event_deserialize_compact(event, event_json, NULL) ||
+      !nostr_event_check_signature(event)) {
+    nostr_event_free(event);
     return -1;
   }
-
-  JsonNode *root = json_parser_get_root(p);
-  if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
-    g_object_unref(p);
+  char *id = nostr_event_get_id(event);
+  if (!id) {
+    nostr_event_free(event);
     return -1;
   }
-
-  JsonObject *o = json_node_get_object(root);
-  if (!o) {
-    g_object_unref(p);
-    return -1;
-  }
-
-  /* Verify the Schnorr signature before dispatching. This helper is a
-   * direct parse+dispatch path that does NOT pass through the subscription
-   * middleware (which verifies at relay_pool.c:85), so without this check a
-   * forged/unsigned event could reach higher layers. Fail closed on any
-   * event that does not deserialize or whose signature is invalid. */
-  {
-    NostrEvent *vevt = nostr_event_new();
-    if (vevt) {
-      bool sig_ok = nostr_event_deserialize_compact(vevt, event_json, NULL) &&
-                    nostr_event_check_signature(vevt);
-      nostr_event_free(vevt);
-      if (!sig_ok) {
-        g_object_unref(p);
-        return -1;
-      }
-    }
-  }
-
-  /* Extract minimal fields. */
-  int kind = 0;
-  int64_t created_at = 0;
-  const char *id = NULL;
-  const char *pubkey = NULL;
-  const char *content = NULL;
-
-  if (json_object_has_member(o, "kind")) kind = (int)json_object_get_int_member(o, "kind");
-  if (json_object_has_member(o, "created_at")) created_at = (int64_t)json_object_get_int_member(o, "created_at");
-  if (json_object_has_member(o, "id")) id = json_object_get_string_member(o, "id");
-  if (json_object_has_member(o, "pubkey")) pubkey = json_object_get_string_member(o, "pubkey");
-  if (json_object_has_member(o, "content")) content = json_object_get_string_member(o, "content");
-
   SignetRelayEventView ev = {0};
-  ev.kind = kind;
-  ev.created_at = created_at;
+  ev.kind = nostr_event_get_kind(event);
+  ev.created_at = nostr_event_get_created_at(event);
   ev.event_id_hex = id;
-  ev.pubkey_hex = pubkey;
-  ev.content = content;
+  ev.pubkey_hex = nostr_event_get_pubkey(event);
+  ev.content = nostr_event_get_content(event);
+  ev.event_json = event_json;
 
   gpointer previous_pool = g_private_get(&callback_pool);
   g_private_set(&callback_pool, rp);
   rp->on_event(&ev, rp->user_data);
   g_private_set(&callback_pool, previous_pool);
-
-  g_object_unref(p);
+  free(id);
+  nostr_event_free(event);
   return 0;
 }
 

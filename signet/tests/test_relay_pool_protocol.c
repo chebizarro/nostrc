@@ -85,6 +85,8 @@ static void test_event_cb(const SignetRelayEventView *ev, void *user_data) {
   EventCtx *ctx = (EventCtx *)user_data;
   ctx->event_count++;
   ctx->last_kind = ev->kind;
+  CHECK(ev->event_json && ev->event_json[0] == '{');
+  CHECK(ev->live_since == 0); /* direct injection never claims relay admission */
 }
 
 static void test_sig_verification_valid(void) {
