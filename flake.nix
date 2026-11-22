@@ -15,7 +15,7 @@
         # must stay OFF (a testing build refuses to install). From a git
         # checkout build with `nix build '.?submodules=1#groundhog'`: the
         # nostrdb and nsync submodules are part of the source.
-        desktopVersion = "0.13.0";
+        desktopVersion = "0.13.1";
         desktopCmakeFlags = [
           "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
           "-DCMAKE_INSTALL_LIBDIR=lib"
@@ -70,7 +70,7 @@
           };
           grotto = pkgs.stdenv.mkDerivation {
             pname = "grotto";
-            version = "0.1.2-alpha1";
+            version = "0.1.3-alpha1";
             src = ./.;
             nativeBuildInputs = desktopNativeBuildInputs;
             buildInputs = desktopBuildInputs;

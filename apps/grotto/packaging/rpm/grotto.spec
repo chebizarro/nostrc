@@ -1,9 +1,9 @@
 # Native Grotto; build from a complete checkout/archive with submodules.
 # Requires GTK >=4.14, libadwaita >=1.5, GLib >=2.80 (not RHEL 9/Fedora 38).
 %global app_id org.nostr.Grotto
-%global upstream_version 0.1.2-alpha1
+%global upstream_version 0.1.3-alpha1
 Name:           grotto
-Version:        0.1.2
+Version:        0.1.3
 Release:        0.1.alpha1%{?dist}
 Summary:        Nostr identity management and signing service
 License:        MIT
@@ -114,6 +114,9 @@ appstreamcli validate --no-net %{buildroot}%{_datadir}/metainfo/%{app_id}.metain
 %{_datadir}/doc/nostr-signer-webext-host/
 
 %changelog
+* Sat Nov 21 2026 Biz <chebizarro@protonmail.com> - 0.1.3-0.1.alpha1
+- Correct package upgrades and refresh software kind display data.
+
 * Tue Oct 27 2026 Grotto Maintainers - 0.1.1-1
 - Fix the alternate Meson frontend's Groundhog executable-side link closure
 

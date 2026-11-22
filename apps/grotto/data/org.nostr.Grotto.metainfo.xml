@@ -66,6 +66,11 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.1.3-alpha1" type="development" date="2026-11-21">
+      <description>
+        <p>Correct package upgrades and refresh software kind display labels.</p>
+      </description>
+    </release>
     <release version="0.1.2-alpha1" type="development" date="2026-11-12">
       <description>
         <p>Refresh the signing kind catalogue from the shared kind registry.</p>

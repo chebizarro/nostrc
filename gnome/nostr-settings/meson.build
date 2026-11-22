@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-project('nostr-settings', 'c', version: '0.1.0', meson_version: '>=0.59',
+project('nostr-settings', 'c', version: '0.1.1', meson_version: '>=0.59',
   default_options: ['c_std=gnu11', 'warning_level=2', 'werror=true'])
 cc = meson.get_compiler('c')
 deps = [dependency('glib-2.0', version: '>=2.76'), dependency('gio-2.0'),

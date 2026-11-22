@@ -1,7 +1,7 @@
 # Maintainer: Biz <chebizarro@protonmail.com>
 # Runtime and SDK built from the same release archive as the desktop consumers.
 pkgname=grotto-panels
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc='Public-metadata GTK management panel runtime and SDK'
 arch=('x86_64' 'aarch64')
@@ -9,7 +9,7 @@ url='https://github.com/chebizarro/nostrc'
 license=('MIT')
 depends=('gtk4>=4.14' 'libadwaita>=1.5')
 makedepends=('cmake' 'ninja' 'pkgconf' 'gettext' 'glib2-devel')
-_version=0.12.1-alpha8
+_version=0.13.1
 source=("groundhog-${_version}.tar.gz::https://github.com/chebizarro/nostrc/releases/download/groundhog-v${_version}/groundhog-${_version}.tar.gz")
 sha256sums=('SKIP')
 

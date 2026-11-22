@@ -20,7 +20,7 @@ elseif(NOT TARGET GrottoPanels::Panels)
 endif()
 find_package(PkgConfig REQUIRED)
 
-set(NOSTR_SETTINGS_VERSION 0.1.0)
+set(NOSTR_SETTINGS_VERSION 0.1.1)
 
 foreach(_nss_dep nostr-publish nostr nip19)
   if (NOT TARGET ${_nss_dep})
