@@ -657,6 +657,12 @@ int main(int argc, char **argv) {
     .flush_each_write = true,
   };
   SignetAuditLogger *audit = signet_audit_logger_new(&audit_cfg);
+  if (!audit) {
+    fprintf(stderr, "signetd: configured audit logger unavailable\n");
+    sodium_free(db_key);
+    signet_config_clear(&cfg);
+    return 1;
+  }
   signet_audit_daemon_event(audit, SIGNET_AUDIT_EVENT_STARTUP, signet_now_unix(),
                             "startup", SIGNET_VERSION, config_path);
 

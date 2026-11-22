@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #include <glib.h>
 #include <json-glib/json-glib.h>
@@ -75,8 +76,15 @@ static int signet_open_append_fd(const char *path) {
   if (!path || path[0] == '\0') return -1;
 
   /* Restrictive perms: audit logs should not be world-readable by default. */
-  int flags = O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC;
+  int flags = O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK;
   int fd = open(path, flags, 0600);
+  if (fd < 0) return -1;
+  struct stat st;
+  if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) ||
+      st.st_uid != geteuid() || st.st_nlink != 1 || fchmod(fd, 0600) != 0) {
+    close(fd);
+    return -1;
+  }
   return fd;
 }
 

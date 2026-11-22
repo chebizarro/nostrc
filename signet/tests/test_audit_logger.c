@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 static void test_audit_logger_basic(void) {
   /* Create logger to stdout */
@@ -31,10 +32,14 @@ static void test_audit_logger_basic(void) {
 }
 
 static void test_audit_logger_file(void) {
-  const char *test_path = "/tmp/signet_test_audit.jsonl";
-  
-  /* Remove old test file if exists */
-  unlink(test_path);
+  char directory[] = "/tmp/signet-audit-XXXXXX";
+  CHECK(mkdtemp(directory));
+  char test_path[256], link_path[256];
+  snprintf(test_path, sizeof(test_path), "%s/audit", directory);
+  snprintf(link_path, sizeof(link_path), "%s/link", directory);
+  FILE *existing = fopen(test_path, "w"); CHECK(existing);
+  CHECK(fclose(existing) == 0);
+  CHECK(chmod(test_path, 0644) == 0);
 
   SignetAuditLoggerConfig cfg = {
     .path = test_path,
@@ -44,6 +49,15 @@ static void test_audit_logger_file(void) {
 
   SignetAuditLogger *logger = signet_audit_logger_new(&cfg);
   CHECK(logger != NULL);
+  struct stat st;
+  CHECK(stat(test_path, &st) == 0 && (st.st_mode & 0777) == 0600);
+  CHECK(symlink(test_path, link_path) == 0);
+  SignetAuditLoggerConfig unsafe = cfg; unsafe.path = link_path;
+  CHECK(signet_audit_logger_new(&unsafe) == NULL);
+  CHECK(unlink(link_path) == 0);
+  CHECK(mkfifo(link_path, 0600) == 0);
+  CHECK(signet_audit_logger_new(&unsafe) == NULL);
+  CHECK(unlink(link_path) == 0);
 
   /* Write multiple entries */
   signet_audit_log_json(logger, SIGNET_AUDIT_EVENT_STARTUP, "{\"event\":\"1\"}");
@@ -66,6 +80,7 @@ static void test_audit_logger_file(void) {
 
   /* Cleanup */
   unlink(test_path);
+  CHECK(rmdir(directory) == 0);
 
   printf("test_audit_logger_file: PASS\n");
 }

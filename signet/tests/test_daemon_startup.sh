@@ -37,6 +37,14 @@ with tempfile.TemporaryDirectory(prefix='signet-startup-') as tmp:
     cfg.write_text('[invalid\nsecret=do-not-print-this\n')
     assert b'do-not-print-this' not in refused('malformed explicit config')
     config()
+    audit_target = root/'audit-target'; audit_target.write_text('untouched')
+    audit_link = root/'audit-link'; audit_link.symlink_to(audit_target)
+    cfg.write_text(cfg.read_text()+f'path={audit_link}\n')
+    output = refused('unsafe audit path')
+    assert b'configured audit logger unavailable' in output, output
+    assert audit_target.read_text() == 'untouched'
+    assert not db.exists(), 'unsafe audit refusal happened after store creation'
+    config()
     refused('empty master key', overrides={'SIGNET_DB_KEY_FILE':'', 'SIGNET_DB_KEY':''})
     refused('unavailable master key file', overrides={'SIGNET_DB_KEY_FILE':str(root/'absent')})
     refused('ambiguous master key', overrides={'SIGNET_DB_KEY':'value-must-not-be-logged'})
