@@ -8,10 +8,16 @@
 - Keep the work finite: identify the requested behavior, the files that own it and
   the focused checks needed to verify it. Do not turn a focused change into a
   repository-wide audit, baseline repair, benchmark programme or qualification matrix.
-- Fix regressions caused by your change. File unrelated bugs and optional hardening
-  as separate beads; do not make them new prerequisites for delivery. If a genuine
-  blocker prevents the requested behavior, explain the concrete dependency rather
-  than silently expanding scope or redefining completion.
+- Fix regressions caused by your change. Do not make unrelated bugs or optional
+  hardening new prerequisites for delivery; track them only under the admission
+  rules in "Issue tracking and collaboration". If a genuine blocker prevents the
+  requested behavior, explain the concrete dependency rather than silently
+  expanding scope or redefining completion.
+- An implementation bead is complete when its code lands at a reachable commit.
+  Required deployment, installed-system, lab or owner-only acceptance is a separate
+  bead with a named owner, environment and finite checklist; do not bundle it into
+  the implementation bead. Add `bd dep` blocking edges only for genuine blockers,
+  not for related or follow-up work.
 - Verify the real entrypoints and downstream behavior you changed. A planner,
   isolated helper or mocked test passing does not prove its production caller is
   wired correctly. A closed bead is not evidence that the deliverable works.
@@ -33,8 +39,14 @@ bd ready                         # Find unblocked work
 bd show <id>                     # Read scope and current state
 bd create "Title" --type task --priority 2 --description "Scope and reason"
 bd update <id> --claim           # Claim before editing
-bd close <id> --reason "Result and verification"
+bd close <id> --reason "Commit, result and verification"
 ```
+
+Before `bd create`, search active and closed beads (`bd search`, `bd list --all`).
+A recurring failure or re-found finding is a comment on the existing keeper,
+reopening it if closed, not a new bead. A new bug needs a current reproducer or
+concrete source evidence. File optional hardening once at priority 3 or 4, without
+child beads, until it is prioritized.
 
 Keep scope, progress, verification and version decisions in the bead. Use
 `bd remember` for durable project knowledge, not new `MEMORY.md` files. Use the
@@ -174,6 +186,8 @@ hand the commit to the coordinator. Otherwise, when landing/pushing is assigned:
 
 1. Run relevant checks, record their actual results and file unrelated follow-up
    bugs separately. Close only completed work; identify any genuine blocker.
+   `bd close --reason` cites a reachable commit, the duplicate keeper's id or a
+   recorded supersession decision.
 2. Inspect `git status` and the diff. Commit only owned changes and tracker exports
    produced through the supported workflow; never sweep unrelated work into a commit.
 3. Fetch and integrate upstream changes safely, then push. Do not blindly rebase,
@@ -189,6 +203,10 @@ hand the commit to the coordinator. Otherwise, when landing/pushing is assigned:
    Do not globally prune Docker, delete unrelated worktrees or clear others' stashes.
 6. Give a short handoff: what changed, what was verified, the landed commit and any
    remaining bugs or limits. Do not substitute a new report or ledger for delivery.
+   Do not leave a bead `in_progress` on an unpushed commit: push it to a named
+   branch, or release the claim with a note recording what remains and where.
+   `scripts/beads-reconcile.py` (report-only) surfaces stale claims and other
+   reconciliation debt; act on its findings through `bd`.
 
 ## Maintaining this file
 
