@@ -49,6 +49,9 @@ a vendor update must reconcile or retire the affected patch, not disable it.
 - **0010:** load tag-index note keys with `memcpy` when rebuilding reaction,
   reply and repost metadata, just as in the tag-query path.
 
+- **0011:** free transferred note metadata after the writer has consumed it.
+  A failed enqueue retains caller ownership.
+
 ## Upstream status
 
 These are downstream-only patches for **nostrc-wktgk**, not yet submitted or
