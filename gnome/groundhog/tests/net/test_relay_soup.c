@@ -1174,6 +1174,38 @@ test_no_session_refuses(void)
 /* gh_net_address_is_public(), including every IPv6 form carrying an IPv4
  * address, which the embedded address decides. */
 static void
+test_special_purpose_addresses(void)
+{
+  static const gchar *const refused[] = {
+    "64:ff9b:1:abcd:c0:a801:100:1", /* nonzero NAT64 suffix hides 192.168.1.1 */
+    "64:ff9b:1::808:808",          /* local-use, even with a public embedded v4 */
+    "2001:2::1", "2001:2:ffff::1", /* benchmarking /48 */
+    "2001:10::1", "2001:1::4",    /* deprecated ORCHID /28, unassigned IETF */
+    "3fff::1", "3fff:fff:ffff::1", /* documentation /20 */
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(refused); i++) {
+    g_autoptr(GInetAddress) address = g_inet_address_new_from_string(refused[i]);
+    g_test_message("refuse %s", refused[i]);
+    g_assert_false(gh_net_address_is_public(address));
+    /* The actual connect-time enumerator must not yield a socket address. */
+    g_autoptr(GSocketConnectable) connectable = gh_net_public_address_new(refused[i], 443, "https");
+    g_autoptr(GSocketAddressEnumerator) enumerator = g_socket_connectable_enumerate(connectable);
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GSocketAddress) next = g_socket_address_enumerator_next(enumerator, NULL, &error);
+    g_assert_null(next);
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+  }
+  static const gchar *const public_ietf[] = {
+    "2001:1::1", "2001:1::2", "2001:1::3", "2001:3::1", "2001:4:112::1",
+    "2001:20::1", "2001:30::1", "3fff:1000::1",
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(public_ietf); i++) {
+    g_autoptr(GInetAddress) address = g_inet_address_new_from_string(public_ietf[i]);
+    g_assert_true(gh_net_address_is_public(address));
+  }
+}
+
+static void
 test_public_address(void)
 {
   static const gchar *const refused[] = {
@@ -1198,7 +1230,7 @@ test_public_address(void)
   };
   static const gchar *const allowed[] = {
     "8.8.8.8", "1.1.1.1", "93.184.216.34", "2606:4700:4700::1111", "2a00:1450:4001:80b::200e",
-    "::ffff:8.8.8.8", "64:ff9b::8.8.8.8", "64:ff9b:1::808:808", "2002:808:808::1",
+    "::ffff:8.8.8.8", "64:ff9b::8.8.8.8", "2002:808:808::1",
     "2001:0:4136:e378:8000:63bf:f7f7:f7f7",
   };
   g_autoptr(GString) wrong = g_string_new(NULL);
@@ -1787,6 +1819,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/net/upgrade-close-recovery", test_upgrade_close_recovery);
   g_test_add_func("/groundhog/net/no-session-refuses", test_no_session_refuses);
   g_test_add_func("/groundhog/net/allow-local-network", test_allow_local_network);
+  g_test_add_func("/groundhog/net/special-purpose-addresses", test_special_purpose_addresses);
   g_test_add_func("/groundhog/net/public-address", test_public_address);
   g_test_add_func("/groundhog/net/public-only", test_public_only);
   g_test_add_func("/groundhog/net/public-enumerator", test_public_enumerator);
