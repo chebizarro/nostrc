@@ -69,6 +69,16 @@ with tempfile.TemporaryDirectory(prefix='signet-startup-') as tmp:
         assert b'not linked against SQLCipher' in migrated.stdout, migrated.stdout
         refused('plain SQLite build refuses required encryption')
         print('CAPABILITY: wrong-key case requires SQLCipher; covered by SQLCipher suite')
+    # Enabled-but-unavailable CTAP must stop startup before any listener.
+    if not os.access('/dev/uhid', os.R_OK | os.W_OK):
+        psk = root/'fleet-psk'; psk.write_text('01'*32+'\n'); psk.chmod(0o400)
+        config(root/'passkeys.db')
+        cfg.write_text(cfg.read_text()+f'\n[passkeys]\nenabled=true\nvirtual_ctap=true\nsync_key_file={psk}\n')
+        output = refused('configured CTAP unavailable', overrides={'SIGNET_REQUIRE_ENCRYPTED_DB':'false'})
+        assert b'virtual CTAP-HID requested but not started' in output or b'build lacks SIGNET_ENABLE_PASSKEYS' in output, output
+    else:
+        print('CAPABILITY: usable UHID present; unavailable CTAP negative case not applicable')
+    config()
     # Failure of a later enabled listener unwinds an already-started bootstrap
     # listener before freeing its borrowed stores.
     with socket.socket() as busy, socket.socket() as probe:
