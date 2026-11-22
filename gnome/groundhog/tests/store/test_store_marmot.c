@@ -2551,7 +2551,7 @@ assert_labels_classified(GhStore *store)
 {
   static const gchar *const known[] = {
     "mls_group", "mls_group_parent", "mls_group_pending", "mls_group_welcomes",
-    "mls_group_proposals", "mls_group_leaving", "mls_group_proposal_slot",
+    "mls_group_proposals", "mls_group_leaving", "mls_group_removed", "mls_group_proposal_slot",
     "kp_slot", "kp_slot_adopted", "kp_life", "kp_used", "kp_priv",
     "kp_full", "welcome_data", EVENT_TIME_LABEL,
     "welcome_signer",   /* a join fact, group-keyed, kept out of snapshots */
@@ -2690,6 +2690,20 @@ test_e2e_persistence(void)
                   ==, 0);
   g_assert_cmpint(sql_int(bob.store, "SELECT state FROM mls_welcomes"), ==,
                   MARMOT_WELCOME_STATE_ACCEPTED);
+  /* A real removal records group-scoped state, and snapshot rollback removes it. */
+  assert_marmot_ok(bob.storage->create_snapshot(bob.storage->ctx, &gid, "before-removal"));
+  g_autofree gchar *removal = NULL;
+  assert_marmot_ok(marmot_remove_members(alice.marmot, &gid,
+    (const uint8_t (*)[32]) &bob.pk, 1, &removal));
+  assert_marmot_ok(marmot_merge_pending_commit(alice.marmot, &gid));
+  MarmotMessageResult removed = { 0 };
+  assert_marmot_ok(marmot_process_message(bob.marmot, removal, &removed));
+  g_assert_cmpint(removed.type, ==, MARMOT_RESULT_COMMIT);
+  marmot_message_result_free(&removed);
+  g_assert_cmpint(sql_int(bob.store, "SELECT count(*) FROM mls_kv WHERE label = 'mls_group_removed'"), ==, 1);
+  assert_labels_classified(bob.store);
+  assert_marmot_ok(bob.storage->rollback_snapshot(bob.storage->ctx, &gid, "before-removal"));
+  g_assert_cmpint(sql_int(bob.store, "SELECT count(*) FROM mls_kv WHERE label = 'mls_group_removed'"), ==, 0);
   assert_labels_classified(alice.store);
   assert_labels_classified(bob.store);
   assert_integrity(alice.store);

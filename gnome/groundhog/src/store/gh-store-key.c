@@ -211,6 +211,7 @@ typedef struct {
   gchar *label;           /* SS_STORE */
   GBytes *secret;         /* SS_STORE */
   SecretService *service;
+  SecretCollection *collection; /* checked destination, never re-resolve its alias */
   gboolean tried_unlock;  /* the default keyring unlock was already offered */
   GList *pending;         /* SS_CLEAR: SecretItem refs still to delete */
   guint locked_left;      /* SS_CLEAR */
@@ -223,6 +224,7 @@ ss_op_free(SsOp *op)
   g_clear_pointer(&op->attributes, g_hash_table_unref);
   g_free(op->label);
   g_clear_pointer(&op->secret, g_bytes_unref);
+  g_clear_object(&op->collection);
   g_clear_object(&op->service);
   g_list_free_full(op->pending, g_object_unref);
   g_clear_error(&op->first_error);
@@ -508,50 +510,93 @@ ss_secret_value(const SsOp *op)
   return secret_value_new(data, (gssize)len, "application/octet-stream");
 }
 
-/* Background store: only into an existing, already unlocked default keyring,
- * through a call that fails (instead of prompting) if it locks meanwhile. */
+static void ss_check_session(GTask *task);
+
 static void
-ss_on_default_for_store(GObject *source, GAsyncResult *result, gpointer user_data)
+ss_on_default_created(GObject *source G_GNUC_UNUSED, GAsyncResult *result, gpointer data)
 {
-  (void)source;
-  GTask *task = user_data;
+  GTask *task = data;
   SsOp *op = g_task_get_task_data(task);
   GError *error = NULL;
-  SecretCollection *collection = secret_collection_for_alias_finish(result, &error);
+  op->collection = secret_collection_create_finish(result, &error);
+  if (!op->collection) {
+    ss_fail(task, ss_map_error(error, FALSE));
+    return;
+  }
+  ss_check_session(task);
+}
+
+static void
+ss_on_session_for_store(GObject *source G_GNUC_UNUSED, GAsyncResult *result, gpointer data)
+{
+  GTask *task = data;
+  SsOp *op = g_task_get_task_data(task);
+  GError *error = NULL;
+  g_autoptr(SecretCollection) session = secret_collection_for_alias_finish(result, &error);
   if (error) {
     ss_fail(task, ss_map_error(error, FALSE));
     return;
   }
-  if (!collection || secret_collection_get_locked(collection)) {
-    /* No default keyring yet also needs the user (a creation prompt). */
-    g_clear_object(&collection);
+  if (session && op->collection &&
+      g_str_equal(g_dbus_proxy_get_object_path(G_DBUS_PROXY(session)),
+                  g_dbus_proxy_get_object_path(G_DBUS_PROXY(op->collection)))) {
+    ss_fail(task, g_error_new_literal(GH_STORE_KEY_ERROR, GH_STORE_KEY_ERROR_FAILED,
+      "The default keyring is the temporary session collection. Choose a persistent keyring before creating a message store."));
+    return;
+  }
+  if (!op->collection) {
+    if (!ss_interactive(op)) {
+      ss_fail(task, locked_error());
+      return;
+    }
+    secret_collection_create(op->service, "Login", SECRET_COLLECTION_DEFAULT,
+      SECRET_COLLECTION_CREATE_NONE, g_task_get_cancellable(task), ss_on_default_created, task);
+    return;
+  }
+  if (!ss_interactive(op) && secret_collection_get_locked(op->collection)) {
     ss_fail(task, locked_error());
     return;
   }
   SecretValue *value = ss_secret_value(op);
-  secret_item_create(collection, &store_key_schema, op->attributes, op->label, value,
-                     SECRET_ITEM_CREATE_NONE, g_task_get_cancellable(task), ss_on_stored, task);
+  if (ss_interactive(op)) {
+    secret_service_store(op->service, &store_key_schema, op->attributes,
+      g_dbus_proxy_get_object_path(G_DBUS_PROXY(op->collection)), op->label, value,
+      g_task_get_cancellable(task), ss_on_stored, task);
+  } else {
+    secret_item_create(op->collection, &store_key_schema, op->attributes, op->label, value,
+      SECRET_ITEM_CREATE_NONE, g_task_get_cancellable(task), ss_on_stored, task);
+  }
   secret_value_unref(value);
-  g_object_unref(collection);
+}
+
+static void
+ss_check_session(GTask *task)
+{
+  SsOp *op = g_task_get_task_data(task);
+  secret_collection_for_alias(op->service, SECRET_COLLECTION_SESSION, SECRET_COLLECTION_NONE,
+    g_task_get_cancellable(task), ss_on_session_for_store, task);
+}
+
+static void
+ss_on_default_for_store(GObject *source G_GNUC_UNUSED, GAsyncResult *result, gpointer data)
+{
+  GTask *task = data;
+  SsOp *op = g_task_get_task_data(task);
+  GError *error = NULL;
+  op->collection = secret_collection_for_alias_finish(result, &error);
+  if (error) {
+    ss_fail(task, ss_map_error(error, FALSE));
+    return;
+  }
+  ss_check_session(task);
 }
 
 static void
 ss_store(GTask *task)
 {
   SsOp *op = g_task_get_task_data(task);
-  if (ss_interactive(op)) {
-    /* The service may prompt to unlock, or to create, the default keyring.
-     * secret_service_store replaces an item with identical attributes;
-     * GhStoreKey always passes a fresh store-id, so none can match. */
-    SecretValue *value = ss_secret_value(op);
-    secret_service_store(op->service, &store_key_schema, op->attributes,
-                         SECRET_COLLECTION_DEFAULT, op->label, value,
-                         g_task_get_cancellable(task), ss_on_stored, task);
-    secret_value_unref(value);
-    return;
-  }
   secret_collection_for_alias(op->service, SECRET_COLLECTION_DEFAULT, SECRET_COLLECTION_NONE,
-                              g_task_get_cancellable(task), ss_on_default_for_store, task);
+    g_task_get_cancellable(task), ss_on_default_for_store, task);
 }
 
 static void

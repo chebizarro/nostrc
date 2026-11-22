@@ -40,6 +40,7 @@
 #define MLS_GROUP_WELCOMES_LABEL "mls_group_welcomes"
 #define MLS_GROUP_PROPOSALS_LABEL "mls_group_proposals"
 #define MLS_GROUP_LEAVING_LABEL "mls_group_leaving"
+#define MLS_GROUP_REMOVED_LABEL "mls_group_removed"
 
 /* mls_snapshots.data: the snapshot format. 1 = row copies in
  * mls_snapshot_rows (schema v2). A rollback refuses any other value. */
@@ -1758,7 +1759,7 @@ typedef struct {
 #define MLS_STATE_SCOPE " WHERE label IN ('" MLS_GROUP_STATE_LABEL "', '" \
                         MLS_GROUP_PARENT_LABEL "', '" MLS_GROUP_PENDING_LABEL "', '" \
                         MLS_GROUP_WELCOMES_LABEL "', '" MLS_GROUP_PROPOSALS_LABEL "', '" \
-                        MLS_GROUP_LEAVING_LABEL "') AND key = ?1"
+                        MLS_GROUP_LEAVING_LABEL "', '" MLS_GROUP_REMOVED_LABEL "') AND key = ?1"
 
 static const SnapshotTable snapshot_tables[] = {
   { SNAPSHOT_INSERT "c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12) "

@@ -2194,12 +2194,16 @@ test_catch_up_two_relays_partial(void)
       wire_relay_inject(&w.h, copy);
   }
 
+  /* Force scope seen-set eviction while the group buffer still owns the ids. */
+  gh_relay_scope_test_set_seen_limit(2);
+  gh_mls_service_set_backfill_limit(bob->service, 350, 0);
   set_online(bob, TRUE);
   TextsWait all = { bob, room, backlog.texts, 0 };
   spin_until(texts_listed, &all, "every message of the backlog");
   wait_epoch(gb, (gint)gh_mls_group_get_epoch(ga));
   g_assert_cmpstr(gh_mls_group_get_name(gb), ==, "Backlog 3");
   wait_live(gb);
+  g_assert_false(gh_mls_group_get_history_incomplete(gb));
   g_assert_cmpint(gh_mls_group_get_unreadable(gb), <=, base);   /* nothing of the backlog */
   CursorWait moved = { gb, newest };
   spin_until(cursor_reached, &moved, "the cursor past the backlog");
@@ -2207,6 +2211,7 @@ test_catch_up_two_relays_partial(void)
   g_assert_cmpuint(paged_reqs(&w.h), >=, 3);
   send_text(alice, ga, "after the two-relay catch-up");
   wait_stored_text(bob, room, "after the two-relay catch-up");
+  gh_relay_scope_test_set_seen_limit(0);
   backlog_clear(&backlog);
   world_down(&w);
 }
@@ -4848,6 +4853,31 @@ test_hide_preserves_ratchet_and_commits(void)
   world_down(&w);
 }
 
+static void
+test_stale_welcome(void)
+{
+  World w;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  GhNip17Message welcome = { .account_pubkey = hex[BOB] };
+  g_autoptr(GError) error = NULL;
+  g_assert_false(gh_mls_service_test_receive_welcome(alice->service, &welcome, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+  g_clear_error(&error);
+  welcome.account_pubkey = hex[ALICE];
+  set_online(alice, FALSE);
+  g_assert_false(gh_mls_service_test_receive_welcome(alice->service, &welcome, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+  g_clear_error(&error);
+  g_autoptr(GPtrArray) invites = gh_mls_service_list_invites(alice->service, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(invites);
+  g_assert_cmpuint(invites->len, ==, 0);
+  world_down(&w);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -4918,6 +4948,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/stalled-relay-given-up", test_stalled_relay_given_up);
   g_test_add_func("/groundhog/mls-service/busy-group-stalled-relay",
                   test_busy_group_stalled_relay);
+  g_test_add_func("/groundhog/mls-service/stale-welcome", test_stale_welcome);
   g_test_add_func("/groundhog/mls-service/catch-up-over-200", test_catch_up_over_200);
   g_test_add_func("/groundhog/mls-service/join-commit-pins-no-cursor",
                   test_join_commit_pins_no_cursor);

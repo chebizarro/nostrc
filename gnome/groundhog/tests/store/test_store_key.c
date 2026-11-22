@@ -730,6 +730,24 @@ test_real_backend_no_bus(void)
   g_assert_cmpuint(gh_test_count_files(xdg_root), ==, 0);
 }
 
+static void
+test_session_default(void)
+{
+  FakeSecret *fake;
+  GhStoreKey *key = new_store_key(&fake);
+  fake_secret_set_session_default(fake, TRUE);
+  for (guint interactive = 0; interactive < 2; interactive++) {
+    GhTestKeyResult result = gh_test_lookup_or_create(key, ACCOUNT_A,
+      interactive ? GH_STORE_KEY_FLAGS_INTERACTIVE : GH_STORE_KEY_FLAGS_NONE, NULL);
+    g_assert_error(result.error, GH_STORE_KEY_ERROR, GH_STORE_KEY_ERROR_FAILED);
+    g_assert_null(result.key);
+    g_assert_cmpuint(fake_secret_items(fake)->len, ==, 0);
+    gh_test_key_result_clear(&result);
+  }
+  g_object_unref(key);
+  g_object_unref(fake);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -752,6 +770,7 @@ main(int argc, char **argv)
   g_free(no_bus);
 
   g_test_init(&argc, &argv, NULL);
+  g_test_add_func("/store-key/session-default", test_session_default);
   g_test_add_func("/store-key/schema-contract", test_schema_contract);
   g_test_add_func("/store-key/kc1/first-open", test_first_open);
   g_test_add_func("/store-key/kc1/random-per-account", test_keys_are_random_and_per_account);

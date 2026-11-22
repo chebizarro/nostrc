@@ -53,6 +53,10 @@ G_BEGIN_DECLS
  */
 #define GH_RELAY_CLOSED_OVERFLOW_PREFIX "overflow:"
 #define GH_RELAY_SCOPE_OVERFLOW_RETRIES 1
+#ifdef GH_RELAY_TEST_HOOKS
+/* Process-local test override; zero restores the production limit. */
+void gh_relay_scope_test_set_seen_limit(guint limit);
+#endif
 
 /*
  * Backfill paging (nostrc-cpwf; opt-in, gh_relay_scope_set_backfill_paging()).

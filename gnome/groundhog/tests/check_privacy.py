@@ -139,7 +139,7 @@ SCHEMA_FILE = f"data/{APP_ID}.gschema.xml"
 
 RULES = (
     "url-literal", "gsettings-allowlist", "blueprint-denylist", "libsoup-boundary",
-    "tls-resumption",
+    "tls-resumption", "css-variables",
     "no-gdk-pixbuf", "no-tmp-cache", "nip17-publish-relays", "nip17-no-10002",
     "lookup-sources", "account-auth-purpose", "auth-policy", "account-auth-setter",
     "signer-control-class",
@@ -264,7 +264,8 @@ GSETTINGS = {
 # Classes introduced after the libadwaita 1.5 / GTK 4.14 floor, taken from the
 # ADW_AVAILABLE_IN_1_x / GDK_AVAILABLE_IN_4_x annotations of libadwaita 1.9 and
 # GTK 4.22 headers (AdwButtonRow is documented "Since 1.6" but its type is
-# annotated ADW_AVAILABLE_IN_ALL). §7.2 lists the substitutes to use instead.
+# annotated ADW_AVAILABLE_IN_ALL), refreshed with versioned GIR types through
+# libadwaita 1.10 / GTK 4.24. §7.2 lists the substitutes to use instead.
 BLUEPRINT_DENYLIST = {
     **dict.fromkeys(("AdwBottomSheet", "AdwButtonRow", "AdwLayout", "AdwLayoutSlot",
                      "AdwMultiLayoutView", "AdwSpinner", "AdwSpinnerPaintable"),
@@ -275,6 +276,8 @@ BLUEPRINT_DENYLIST = {
                      "AdwShortcutsSection"), "libadwaita 1.8"),
     **dict.fromkeys(("AdwSidebar", "AdwSidebarItem", "AdwSidebarSection",
                      "AdwViewSwitcherSidebar", "AdwNoneAnimationTarget"), "libadwaita 1.9"),
+    **dict.fromkeys(("AdwCssClassBinding",), "libadwaita 1.10"),
+    **dict.fromkeys(("GtkEnumList", "GtkEnumListItem", "GtkSvgWidget"), "GTK 4.24"),
     **dict.fromkeys(("GtkAccessibleHyperlink", "GtkPopoverBin", "GtkSvg"), "GTK 4.22"),
 }
 
@@ -1088,6 +1091,16 @@ def check_private_reports(tree):
     return found
 
 
+def check_css_variables(tree):
+    found = []
+    for rel in tree.files("data", suffixes={".css"}):
+        text, _, _ = tree.views(rel)
+        code = re.sub(r"/\*.*?\*/", lambda m: blank(m.group()), text, flags=re.S)
+        found += find_all("css-variables", rel, code, re.compile(r"\bvar\s*\("),
+                          lambda value: f"{value}: use named colors, not CSS variables (libadwaita 1.5 baseline)")
+    return found
+
+
 def check(root, exceptions=None):
     """Return the violations in the Groundhog tree at `root`."""
     exceptions = EXCEPTIONS if exceptions is None else exceptions
@@ -1095,7 +1108,8 @@ def check(root, exceptions=None):
     raw = (check_url_literals(tree) + check_gsettings(tree) + check_blueprint(tree)
            + check_sources(tree) + check_message_status(tree) + check_relay_suggestions(tree)
            + check_app_id(tree) + check_preference_consumers(tree) + check_diagnostics(tree)
-           + check_issue_services(tree) + check_private_reports(tree) + check_social_boundaries(tree))
+           + check_issue_services(tree) + check_private_reports(tree) + check_social_boundaries(tree)
+           + check_css_variables(tree))
     used, found = set(), []
     for violation in raw:
         key = (violation.rule, violation.path, violation.match)
@@ -1401,6 +1415,13 @@ Mutation = namedtuple("Mutation", "name expect edits exceptions", defaults=(None
 URL = "wss://relay.example.org"
 M = Mutation
 MUTATIONS = [
+    M("css-variable-color", {"css-variables"},
+      [append("data/style.css", ".fixture { color: var(--accent-bg-color); }\n")]),
+    M("blueprint-adw-110", {"blueprint-denylist"},
+      [append("data/ui/new.blp", "Adw.CssClassBinding {}\n")]),
+    M("blueprint-gtk-424", {"blueprint-denylist"},
+      [append("data/ui/new.blp", "Gtk.SvgWidget {}\n")]),
+
     M("social-raw-sign", {"social-signer-boundary"},
       [append("src/app/gh-list-adapter.c", "void sign(void) { nostr_event_sign(event, key); }\n")]),
     M("social-raw-encrypt", {"social-signer-boundary"},

@@ -44,6 +44,8 @@ gboolean fake_secret_get_locked(FakeSecret *self);
 void fake_secret_set_unlock_accepted(FakeSecret *self, gboolean accepted);
 /* TRUE: every store fails GH_STORE_KEY_ERROR_FAILED. */
 void fake_secret_set_store_fails(FakeSecret *self, gboolean fails);
+/* TRUE: the default collection is temporary and cannot hold a new store key. */
+void fake_secret_set_session_default(FakeSecret *self, gboolean temporary);
 /* TRUE: a misbehaving service whose search returns every item. */
 void fake_secret_set_ignore_query(FakeSecret *self, gboolean ignore);
 /* TRUE: operations complete even if cancelled, like a D-Bus call the

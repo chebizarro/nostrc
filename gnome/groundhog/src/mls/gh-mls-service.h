@@ -686,6 +686,9 @@ G_DECLARE_FINAL_TYPE(GhMlsService, gh_mls_service, GH, MLS_SERVICE, GObject)
  * dismissed here, or an accept attempt used it up). */
 GhMlsService *gh_mls_service_new(const GhMlsServiceConfig *config, GError **error);
 #ifdef GH_MLS_TEST_HOOKS
+/* Deliver an already-unwrapped Welcome through the inbox callback. */
+gboolean gh_mls_service_test_receive_welcome(GhMlsService *self,
+  const GhNip17Message *welcome, GError **error);
 /* Test hook (nostrc-0bdg re-review A3): the received-invitation list cannot
  * be read (as with a storage error) while fail is TRUE. */
 void gh_mls_service_test_fail_invitation_listing(gboolean fail);
