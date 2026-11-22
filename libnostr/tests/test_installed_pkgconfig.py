@@ -22,6 +22,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", type=Path, required=True)
     parser.add_argument("--configured-prefix", action="store_true")
+    parser.add_argument("--nip44", action="store_true", help="consume only the nostr-nip44 module")
     args = parser.parse_args()
     build = args.build_dir.resolve()
     cache = {}
@@ -32,31 +33,40 @@ def main():
     if cache.get("BUILD_SHARED_LIBS") != "OFF":
         raise SystemExit("requires explicit BUILD_SHARED_LIBS=OFF")
     source = Path(cache["CMAKE_HOME_DIRECTORY"])
-    run(["cmake", "--build", build, "--target", "nostr", "--parallel", "4"])
+    targets = ["nostr", "nostr_nip44_core"] if args.nip44 else ["nostr"]
+    run(["cmake", "--build", build, "--target", *targets, "--parallel", "4"])
     with tempfile.TemporaryDirectory(prefix="installed-pc-", dir=build) as scratch:
         scratch = Path(scratch)
         prefix = Path(cache["CMAKE_INSTALL_PREFIX"]) if args.configured_prefix else scratch / "relocated-prefix"
         if prefix.exists():
             raise SystemExit(f"refusing to overwrite install prefix {prefix}")
         try:
-            for component in ("libgo", "libnostr"):
+            components = ["libgo", "libnostr"]
+            if args.nip44:
+                components.append("nips/nip44")
+            for component in components:
                 run(["cmake", "--install", build / component, "--prefix", prefix])
             pcdir = prefix / cache["CMAKE_INSTALL_LIBDIR"] / "pkgconfig"
             env = dict(os.environ, PKG_CONFIG_PATH=str(pcdir) + os.pathsep + os.environ.get("PKG_CONFIG_PATH", ""))
-            flags = subprocess.check_output(["pkg-config", "--cflags", "--libs", "--static", "nostr"], env=env, text=True)
-            print("pkg-config nostr:", flags.strip(), flush=True)
-            resolved = subprocess.check_output(["pkg-config", "--variable=libdir", "nostr"], env=env, text=True).strip()
+            module = "nostr-nip44" if args.nip44 else "nostr"
+            flags = subprocess.check_output(["pkg-config", "--cflags", "--libs", "--static", module], env=env, text=True)
+            print(f"pkg-config {module}:", flags.strip(), flush=True)
+            resolved = subprocess.check_output(["pkg-config", "--variable=libdir", module], env=env, text=True).strip()
             if Path(resolved).resolve() != pcdir.parent.resolve():
-                raise SystemExit(f"nostr.pc resolved outside staged installation: {resolved}")
+                raise SystemExit(f"{module}.pc resolved outside staged installation: {resolved}")
             assert (pcdir.parent / "libnostr.a").is_file()
             assert (pcdir.parent / "libnostrgo.a").is_file()
+            if args.nip44:
+                assert (pcdir.parent / "libnostr_nip44_core.a").is_file()
             executable = scratch / "consumer"
-            run([cache["CMAKE_C_COMPILER"], source / "libnostr/tests/installed_pkgconfig_consumer.c",
+            consumer = ("nips/nip44/tests/installed_pkgconfig_consumer.c" if args.nip44
+                        else "libnostr/tests/installed_pkgconfig_consumer.c")
+            run([cache["CMAKE_C_COMPILER"], source / consumer,
                  "-o", executable, *shlex.split(flags)], env=env)
             store = scratch / "store"
             store.mkdir()
             run([executable, store, cache["LIBNOSTR_WITH_NOSTRDB"]], env=env)
-            print("installed static nostr consumer: PASS", flush=True)
+            print(f"installed static {module} consumer: PASS", flush=True)
         finally:
             if args.configured_prefix:
                 import shutil
