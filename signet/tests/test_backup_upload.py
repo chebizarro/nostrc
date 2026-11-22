@@ -10,6 +10,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -17,11 +18,14 @@ import threading
 import unittest
 from unittest.mock import patch
 
+AWS = sys.argv.pop(1) if len(sys.argv) > 1 and not sys.argv[1].startswith('-') else 'aws'
+if os.name != 'posix' or not shutil.which(AWS):
+    print('SKIP backup_upload: requires a POSIX host and an executable AWS CLI', file=sys.stderr)
+    sys.exit(77)
 DEPLOY = Path(__file__).resolve().parents[1] / 'deploy'
 spec = importlib.util.spec_from_file_location('signet_ops', DEPLOY / 'ops.py')
 ops = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ops)
-AWS = sys.argv.pop(1) if len(sys.argv) > 1 and not sys.argv[1].startswith('-') else 'aws'
 
 
 @contextlib.contextmanager

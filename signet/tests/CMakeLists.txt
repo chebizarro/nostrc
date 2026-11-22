@@ -285,6 +285,14 @@ add_test(NAME nostr_auth COMMAND test_nostr_auth)
 add_test(NAME capability COMMAND test_capability)
   add_test(NAME relay_pool_protocol COMMAND test_relay_pool_protocol)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME backup_upload COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_backup_upload.py)
+  set_tests_properties(backup_upload PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
+  if(COMMAND nostrc_describe_test)
+    nostrc_describe_test(backup_upload OWNER signet
+      INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_backup_upload.py"
+             "${CMAKE_CURRENT_SOURCE_DIR}/../deploy/ops.py")
+  endif()
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_test(NAME linux_hardening COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/check_linux_hardening.py $<TARGET_FILE:signetd>)

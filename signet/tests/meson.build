@@ -477,3 +477,7 @@ test_bootstrap_wipe = executable('test_bootstrap_wipe',
   dependencies: signet_deps + [in_tree_dep],
   c_args: signet_test_c_args + ['-DSIGNET_ENABLE_TEST_HOOKS=1'], install: false)
 test('bootstrap_wipe', test_bootstrap_wipe)
+
+# Script returns 77 (Meson's visible skip convention) when AWS CLI is absent.
+test('backup_upload', find_program('python3'),
+  args: [files('test_backup_upload.py')], timeout: 90)

@@ -91,9 +91,17 @@ jobs:
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libglib2.0-dev libsoup-3.0-dev \
             libjson-glib-dev libgit2-dev libnsync-dev libyaml-dev \
-            libsqlite3-dev libmicrohttpd-dev libcbor-dev libsqlcipher-dev python3-jsonschema
+            libsqlite3-dev libmicrohttpd-dev libcbor-dev libsqlcipher-dev python3-jsonschema python3-venv python3-yaml
           echo "CC=clang" >> "$GITHUB_ENV"
           echo "CXX=clang++" >> "$GITHUB_ENV"
+
+      - name: Install hermetic backup-test prerequisite
+        shell: bash
+        run: |
+          source signet/deploy/versions.env
+          python3 -m venv --system-site-packages "$RUNNER_TEMP/signet-backup-cli"
+          "$RUNNER_TEMP/signet-backup-cli/bin/pip" install "awscli==$AWSCLI_VERSION"
+          echo "$RUNNER_TEMP/signet-backup-cli/bin" >> "$GITHUB_PATH"
 
       - name: Save apt package downloads even after failure
         if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
