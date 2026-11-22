@@ -686,6 +686,10 @@ G_DECLARE_FINAL_TYPE(GhMlsService, gh_mls_service, GH, MLS_SERVICE, GObject)
  * dismissed here, or an accept attempt used it up). */
 GhMlsService *gh_mls_service_new(const GhMlsServiceConfig *config, GError **error);
 #ifdef GH_MLS_TEST_HOOKS
+/* Exercise the production report with an ordered batch of real clear results;
+ * borrowed for this call. The wire regression covers the callback handoff. */
+void gh_mls_service_test_report_cleared(GhMlsGroup *group, MarmotMessageResult *applied,
+                                      size_t count);
 /* One launch attempt: 1 invalid event, 2 invalid URLs, 3 lost start precondition. */
 void gh_mls_service_test_fail_round_once(guint boundary);
 /* Deliver an already-unwrapped Welcome through the inbox callback. */
