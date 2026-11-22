@@ -376,6 +376,7 @@ ndb_all_groups(void *ctx, MarmotGroup ***out, size_t *out_count)
     if (mdb_cursor_open(txn, nc->dbi_groups, &cur) != 0) {
         mdb_txn_abort(txn);
         free(*out);
+        *out = NULL;
         return MARMOT_ERR_STORAGE;
     }
 
@@ -384,12 +385,14 @@ ndb_all_groups(void *ctx, MarmotGroup ***out, size_t *out_count)
         MarmotGroupId gid = marmot_group_id_new(k.mv_data, k.mv_size);
         (*out)[i] = deserialize_group(&gid, v.mv_data, v.mv_size);
         if (!(*out)[i]) {
+            /* As ndb_find_group_by_mls_id(): a record that does not decode
+             * is a storage error, never a group the caller may skip. */
             marmot_group_id_free(&gid);
             for (size_t j = 0; j < i; j++) marmot_group_free((*out)[j]);
             free(*out); *out = NULL;
             mdb_cursor_close(cur);
             mdb_txn_abort(txn);
-            return MARMOT_ERR_MEMORY;
+            return MARMOT_ERR_STORAGE;
         }
         marmot_group_id_free(&gid);
         i++;
@@ -435,12 +438,12 @@ static MarmotError
 ndb_find_group_by_nostr_id(void *ctx, const uint8_t nostr_id[32], MarmotGroup **out)
 {
     /* Linear scan — groups are few, this is fine */
+    *out = NULL;
     MarmotGroup **all = NULL;
     size_t count = 0;
     MarmotError err = ndb_all_groups(ctx, &all, &count);
     if (err != MARMOT_OK) return err;
 
-    *out = NULL;
     for (size_t i = 0; i < count; i++) {
         if (memcmp(all[i]->nostr_group_id, nostr_id, 32) == 0) {
             *out = all[i];
@@ -857,34 +860,209 @@ ndb_save_processed_message(void *ctx, const uint8_t wrapper_id[32],
     uint8_t val = (uint8_t)state;
     MDB_val k = { .mv_size = 32, .mv_data = (void *)wrapper_id };
     MDB_val v = { .mv_size = 1, .mv_data = &val };
-    mdb_put(txn, nc->dbi_processed, &k, &v, 0);
-    mdb_txn_commit(txn);
-    return MARMOT_OK;
+    if (mdb_put(txn, nc->dbi_processed, &k, &v, 0) != 0) {
+        mdb_txn_abort(txn);
+        return MARMOT_ERR_STORAGE;
+    }
+    return mdb_txn_commit(txn) == 0 ? MARMOT_OK : MARMOT_ERR_STORAGE;
 }
 
 /* ── Welcome operations ────────────────────────────────────────────────── */
-/* Welcomes use LMDB with similar serialize/deserialize pattern */
-/* For brevity, we delegate to the same pattern as messages */
+
+/*
+ * Welcome serialization format (version 1), keyed by the rumor id:
+ * [1: version=1]
+ * [4: event_json_len][N: event_json]
+ * [4: mls_group_id_len][N: mls_group_id]
+ * [32: nostr_group_id]
+ * [4: name_len][N: name]
+ * [4: description_len][N: description]
+ * [1: has_image_hash][32?: image_hash]
+ * [4: admin_count][admin_count*32: admin_pubkeys]
+ * [4: relay_count] relay_count * ([4: len][N: url])
+ * [32: welcomer] [4: member_count] [4: state] [32: wrapper_event_id]
+ *
+ * Records written before nostrc-d1oq hold only the NUL-terminated
+ * event_json (a JSON object or empty, so never starting with 1) and read
+ * back as pending Welcomes with that JSON alone; anything else is corrupt.
+ */
+#define NDB_WELCOME_VERSION 1
+
+static size_t
+welcome_str_len(const char *s)
+{
+    return s ? strlen(s) : 0;
+}
+
+static uint8_t *
+serialize_welcome(const MarmotWelcome *w, size_t *out_len)
+{
+    if (w->group_admin_count > (SIZE_MAX / 32) / 2 ||
+        w->group_relay_count > UINT32_MAX ||
+        (w->group_admin_count > 0 && !w->group_admin_pubkeys) ||
+        (w->group_relay_count > 0 && !w->group_relays))
+        return NULL;
+    size_t size = 1 + 4 + welcome_str_len(w->event_json)
+                + 4 + w->mls_group_id.len + 32
+                + 4 + welcome_str_len(w->group_name)
+                + 4 + welcome_str_len(w->group_description)
+                + 1 + (w->group_image_hash ? 32 : 0)
+                + 4 + w->group_admin_count * 32
+                + 4 + 32 + 4 + 4 + 32;
+    for (size_t i = 0; i < w->group_relay_count; i++) {
+        size_t rl = welcome_str_len(w->group_relays[i]);
+        if (rl > UINT32_MAX || size > SIZE_MAX - 4 - rl) return NULL;
+        size += 4 + rl;
+    }
+
+    uint8_t *buf = malloc(size);
+    if (!buf) return NULL;
+    uint8_t *p = buf;
+    *p++ = NDB_WELCOME_VERSION;
+
+#define PUT_BYTES(src, n) do { write_u32_le(p, (uint32_t)(n)); p += 4; \
+        if ((n) > 0) { memcpy(p, (src), (n)); p += (n); } } while (0)
+    PUT_BYTES(w->event_json, welcome_str_len(w->event_json));
+    PUT_BYTES(w->mls_group_id.data, w->mls_group_id.len);
+    memcpy(p, w->nostr_group_id, 32); p += 32;
+    PUT_BYTES(w->group_name, welcome_str_len(w->group_name));
+    PUT_BYTES(w->group_description, welcome_str_len(w->group_description));
+    *p++ = w->group_image_hash ? 1 : 0;
+    if (w->group_image_hash) { memcpy(p, w->group_image_hash, 32); p += 32; }
+    PUT_BYTES(w->group_admin_pubkeys, w->group_admin_count * 32);
+    write_u32_le(p, (uint32_t)w->group_relay_count); p += 4;
+    for (size_t i = 0; i < w->group_relay_count; i++)
+        PUT_BYTES(w->group_relays[i], welcome_str_len(w->group_relays[i]));
+#undef PUT_BYTES
+    memcpy(p, w->welcomer, 32); p += 32;
+    write_u32_le(p, w->member_count); p += 4;
+    write_i32_le(p, (int32_t)w->state); p += 4;
+    memcpy(p, w->wrapper_event_id, 32); p += 32;
+
+    *out_len = (size_t)(p - buf);
+    return buf;
+}
+
+/* A length-prefixed field at *p: its bytes in [*p + 4, *p + 4 + len). */
+static bool
+welcome_take(const uint8_t **p, const uint8_t *end, const uint8_t **field, uint32_t *len)
+{
+    if ((size_t)(end - *p) < 4) return false;
+    *len = read_u32_le(*p);
+    *p += 4;
+    if ((size_t)(end - *p) < *len) return false;
+    *field = *p;
+    *p += *len;
+    return true;
+}
+
+static bool
+welcome_take_str(const uint8_t **p, const uint8_t *end, char **out)
+{
+    const uint8_t *f;
+    uint32_t len;
+    if (!welcome_take(p, end, &f, &len)) return false;
+    if (len == 0) return true;
+    if (memchr(f, 0, len)) return false;
+    *out = strndup((const char *)f, len);
+    return *out != NULL;
+}
+
+/* NULL on a malformed record or OOM: either way the caller reports
+ * MARMOT_ERR_STORAGE rather than absence. */
+static MarmotWelcome *
+deserialize_welcome(const uint8_t id[32], const uint8_t *data, size_t len)
+{
+    MarmotWelcome *w = marmot_welcome_new();
+    if (!w) return NULL;
+    memcpy(w->id, id, 32);
+
+    if (len == 0) goto fail;
+    if (data[0] != NDB_WELCOME_VERSION) {
+        /* Legacy record: the NUL-terminated event JSON only. */
+        if (data[len - 1] != 0 || (len > 1 && data[0] != '{') ||
+            memchr(data, 0, len - 1))
+            goto fail;
+        w->state = MARMOT_WELCOME_STATE_PENDING;
+        w->event_json = strndup((const char *)data, len);
+        if (!w->event_json) goto fail;
+        return w;
+    }
+
+    const uint8_t *p = data + 1;
+    const uint8_t *end = data + len;
+    const uint8_t *f;
+    uint32_t n;
+    if (!welcome_take_str(&p, end, &w->event_json)) goto fail;
+    if (!welcome_take(&p, end, &f, &n)) goto fail;
+    if (n > 0) {
+        w->mls_group_id = marmot_group_id_new(f, n);
+        if (!w->mls_group_id.data) goto fail;
+    }
+    if ((size_t)(end - p) < 32) goto fail;
+    memcpy(w->nostr_group_id, p, 32); p += 32;
+    if (!welcome_take_str(&p, end, &w->group_name) ||
+        !welcome_take_str(&p, end, &w->group_description))
+        goto fail;
+    if (p >= end) goto fail;
+    if (*p++) {
+        if ((size_t)(end - p) < 32 || !(w->group_image_hash = malloc(32))) goto fail;
+        memcpy(w->group_image_hash, p, 32); p += 32;
+    }
+    if (!welcome_take(&p, end, &f, &n) || n % 32 != 0) goto fail;
+    if (n > 0) {
+        w->group_admin_pubkeys = malloc(n);
+        if (!w->group_admin_pubkeys) goto fail;
+        memcpy(w->group_admin_pubkeys, f, n);
+        w->group_admin_count = n / 32;
+    }
+    if ((size_t)(end - p) < 4) goto fail;
+    uint32_t relays = read_u32_le(p); p += 4;
+    /* Each relay takes at least its 4-byte length. */
+    if (relays > (size_t)(end - p) / 4) goto fail;
+    if (relays > 0) {
+        w->group_relays = calloc((size_t)relays + 1, sizeof(char *));
+        if (!w->group_relays) goto fail;
+        for (uint32_t i = 0; i < relays; i++) {
+            if (!welcome_take_str(&p, end, &w->group_relays[i])) goto fail;
+            w->group_relay_count = i + 1;
+            if (!w->group_relays[i] && !(w->group_relays[i] = strdup(""))) goto fail;
+        }
+    }
+    if ((size_t)(end - p) != 32 + 4 + 4 + 32) goto fail;
+    memcpy(w->welcomer, p, 32); p += 32;
+    w->member_count = read_u32_le(p); p += 4;
+    w->state = (MarmotWelcomeState)read_i32_le(p); p += 4;
+    memcpy(w->wrapper_event_id, p, 32);
+    return w;
+fail:
+    marmot_welcome_free(w);
+    return NULL;
+}
 
 static MarmotError
 ndb_save_welcome(void *ctx, const MarmotWelcome *w)
 {
     NdbCtx *nc = ctx;
+    if (!w) return MARMOT_ERR_INVALID_ARG;
 
-    /* Simple: store event_json as the value, keyed by welcome id */
-    const char *json = w->event_json ? w->event_json : "";
+    size_t blob_len;
+    uint8_t *blob = serialize_welcome(w, &blob_len);
+    if (!blob) return MARMOT_ERR_MEMORY;
 
     MDB_txn *txn;
-    if (mdb_txn_begin(nc->mls_env, NULL, 0, &txn) != 0)
+    if (mdb_txn_begin(nc->mls_env, NULL, 0, &txn) != 0) {
+        free(blob);
         return MARMOT_ERR_STORAGE;
+    }
 
     MDB_val k = { .mv_size = 32, .mv_data = (void *)w->id };
-    MDB_val v = { .mv_size = strlen(json) + 1, .mv_data = (void *)json };
+    MDB_val v = { .mv_size = blob_len, .mv_data = blob };
     int rc = mdb_put(txn, nc->dbi_welcomes, &k, &v, 0);
+    free(blob);
 
     if (rc != 0) { mdb_txn_abort(txn); return MARMOT_ERR_STORAGE; }
-    mdb_txn_commit(txn);
-    return MARMOT_OK;
+    return mdb_txn_commit(txn) == 0 ? MARMOT_OK : MARMOT_ERR_STORAGE;
 }
 
 static MarmotError
@@ -901,19 +1079,8 @@ ndb_find_welcome_by_event_id(void *ctx, const uint8_t event_id[32], MarmotWelcom
     MDB_val v;
     bool found = false;
     MarmotError err = ndb_lookup(mdb_get(txn, nc->dbi_welcomes, &k, &v), &found);
-    if (found) {
-        MarmotWelcome *w = marmot_welcome_new();
-        if (w) {
-            memcpy(w->id, event_id, 32);
-            w->event_json = strndup(v.mv_data, v.mv_size);
-        }
-        if (!w || !w->event_json) {
-            marmot_welcome_free(w);
-            err = MARMOT_ERR_MEMORY;
-        } else {
-            *out = w;
-        }
-    }
+    if (found && !(*out = deserialize_welcome(event_id, v.mv_data, v.mv_size)))
+        err = MARMOT_ERR_STORAGE;
     mdb_txn_abort(txn);
     return err;
 }
@@ -923,6 +1090,8 @@ ndb_find_welcome_by_event_id(void *ctx, const uint8_t event_id[32], MarmotWelcom
  * Value: [state:1][processed_at:8 big-endian][welcome_id_present:1][welcome_id:32 if present][reason_len:2 big-endian][reason:var]
  */
 
+/* Welcomes whose state is PENDING, `pg->offset` skipped and at most
+ * `pg->limit` returned, as the memory and SQLite backends do. */
 static MarmotError
 ndb_pending_welcomes(void *ctx, const MarmotPagination *pg,
                       MarmotWelcome ***out, size_t *out_count)
@@ -931,87 +1100,53 @@ ndb_pending_welcomes(void *ctx, const MarmotPagination *pg,
     *out = NULL;
     *out_count = 0;
 
-    size_t limit = (pg && pg->limit > 0) ? pg->limit : 100;
+    size_t limit = pg ? pg->limit : 1000;
+    size_t skip = pg ? pg->offset : 0;
+    if (limit == 0) return MARMOT_OK;
 
     MDB_txn *txn;
     if (mdb_txn_begin(nc->mls_env, NULL, MDB_RDONLY, &txn) != 0)
         return MARMOT_ERR_STORAGE;
-
-    /* Iterate all welcomes and filter out those already processed. */
     MDB_cursor *cur;
     if (mdb_cursor_open(txn, nc->dbi_welcomes, &cur) != 0) {
         mdb_txn_abort(txn);
         return MARMOT_ERR_STORAGE;
     }
 
-    /* First pass: count pending welcomes */
-    size_t count = 0;
+    MarmotWelcome **arr = NULL;
+    size_t count = 0, cap = 0, seen = 0;
+    MarmotError err = MARMOT_OK;
     MDB_val k, v;
     int rc = mdb_cursor_get(cur, &k, &v, MDB_FIRST);
     while (rc == 0 && count < limit) {
-        if (k.mv_size == 32) {
-            /* Check if this welcome's wrapper_event_id has been processed.
-             * We look up the welcome by id from dbi_welcomes — the welcome
-             * struct includes wrapper_event_id. But we only store event_json,
-             * so we check the processed table (dbi_kv with label "wproc"). */
-            uint8_t kbuf[64];
-            size_t kl = make_kv_key("wproc", k.mv_data, 32, kbuf, sizeof(kbuf));
-            if (kl > 0) {
-                MDB_val pk = { .mv_size = kl, .mv_data = kbuf };
-                MDB_val pv;
-                if (mdb_get(txn, nc->dbi_kv, &pk, &pv) != 0) {
-                    /* Not processed — this is a pending welcome */
-                    count++;
-                }
+        MarmotWelcome *w = k.mv_size == 32
+            ? deserialize_welcome(k.mv_data, v.mv_data, v.mv_size) : NULL;
+        if (!w) { err = MARMOT_ERR_STORAGE; break; }
+        if (w->state != MARMOT_WELCOME_STATE_PENDING || seen++ < skip) {
+            marmot_welcome_free(w);
+        } else {
+            if (count == cap) {
+                size_t ncap = cap ? cap * 2 : 16;
+                MarmotWelcome **grown = realloc(arr, ncap * sizeof(*arr));
+                if (!grown) { marmot_welcome_free(w); err = MARMOT_ERR_MEMORY; break; }
+                arr = grown;
+                cap = ncap;
             }
+            arr[count++] = w;
         }
         rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
     }
-    mdb_cursor_close(cur);
-
-    if (count == 0) {
-        mdb_txn_abort(txn);
-        return MARMOT_OK;
-    }
-
-    /* Second pass: collect pending welcomes */
-    *out = calloc(count, sizeof(MarmotWelcome *));
-    if (!*out) { mdb_txn_abort(txn); return MARMOT_ERR_MEMORY; }
-
-    if (mdb_cursor_open(txn, nc->dbi_welcomes, &cur) != 0) {
-        mdb_txn_abort(txn);
-        free(*out);
-        *out = NULL;
-        return MARMOT_ERR_STORAGE;
-    }
-
-    size_t idx = 0;
-    rc = mdb_cursor_get(cur, &k, &v, MDB_FIRST);
-    while (rc == 0 && idx < count) {
-        if (k.mv_size == 32) {
-            uint8_t kbuf[64];
-            size_t kl = make_kv_key("wproc", k.mv_data, 32, kbuf, sizeof(kbuf));
-            if (kl > 0) {
-                MDB_val pk = { .mv_size = kl, .mv_data = kbuf };
-                MDB_val pv;
-                if (mdb_get(txn, nc->dbi_kv, &pk, &pv) != 0) {
-                    /* Pending welcome — reconstruct */
-                    MarmotWelcome *w = marmot_welcome_new();
-                    if (w) {
-                        memcpy(w->id, k.mv_data, 32);
-                        w->event_json = strndup(v.mv_data, v.mv_size);
-                        w->state = MARMOT_WELCOME_STATE_PENDING;
-                        (*out)[idx++] = w;
-                    }
-                }
-            }
-        }
-        rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
-    }
+    if (err == MARMOT_OK && rc != 0 && rc != MDB_NOTFOUND) err = MARMOT_ERR_STORAGE;
     mdb_cursor_close(cur);
     mdb_txn_abort(txn);
 
-    *out_count = idx;
+    if (err != MARMOT_OK) {
+        for (size_t i = 0; i < count; i++) marmot_welcome_free(arr[i]);
+        free(arr);
+        return err;
+    }
+    *out = arr;
+    *out_count = count;
     return MARMOT_OK;
 }
 

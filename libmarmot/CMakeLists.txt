@@ -418,6 +418,7 @@ if(BUILD_TESTING)
   target_include_directories(test_storage_contract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   add_test(NAME marmot_test_storage_contract COMMAND test_storage_contract)
   if(TARGET nostrdb AND LMDB_FOUND)
+    target_compile_definitions(test_storage_contract PRIVATE MARMOT_TEST_HAVE_NOSTRDB=1)
     add_test(NAME marmot_test_nostrdb_epochs COMMAND test_storage_contract --nostrdb-epochs)
   endif()
 

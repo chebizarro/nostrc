@@ -29,6 +29,10 @@
 #ifndef MARMOT_TEST_HAVE_SQLITE3_HEADER
 #  define MARMOT_TEST_HAVE_SQLITE3_HEADER 0
 #endif
+/* Set by CMake when nostrdb and LMDB are built: the backend must run. */
+#ifndef MARMOT_TEST_HAVE_NOSTRDB
+#  define MARMOT_TEST_HAVE_NOSTRDB 0
+#endif
 
 #define TEST(fn, backend_name, storage) do { \
     printf("  [%-8s] %-45s", backend_name, #fn); \
@@ -1060,8 +1064,97 @@ run_contract_tests(const char *backend_name, MarmotStorage *s,
  * main — instantiate and test each available backend
  * ──────────────────────────────────────────────────────────────────────── */
 
+#if MARMOT_TEST_HAVE_NOSTRDB
+/* Overwrite with `with` the byte `offset` bytes before every copy of
+ * `marker` in the file (LMDB may keep older copies in freed pages). */
+static void
+patch_before_marker(const char *path, const uint8_t *marker, size_t marker_len,
+                    size_t offset, uint8_t with)
+{
+    FILE *f = fopen(path, "r+b");
+    assert(f != NULL);
+    assert(fseek(f, 0, SEEK_END) == 0);
+    long size = ftell(f);
+    assert(size > 0);
+    uint8_t *buf = malloc((size_t)size);
+    assert(buf != NULL);
+    rewind(f);
+    assert(fread(buf, 1, (size_t)size, f) == (size_t)size);
+    size_t hits = 0;
+    for (size_t i = offset; i + marker_len <= (size_t)size; i++) {
+        if (memcmp(buf + i, marker, marker_len) != 0) continue;
+        assert(fseek(f, (long)(i - offset), SEEK_SET) == 0);
+        assert(fputc(with, f) == with);
+        hits++;
+    }
+    assert(hits > 0);
+    free(buf);
+    assert(fclose(f) == 0);
+}
+
+/* nostrc-d1oq (nostrc-w285, review W24 L1): a stored record that does not
+ * decode is MARMOT_ERR_STORAGE, never "not found" -- callers act on absence
+ * for good, e.g. refusing an invitation.  LMDB does not checksum pages, so
+ * the corruption reaches the backend's decoder. */
+static void
+test_nostrdb_read_errors_are_not_absence(MarmotStorage *unused)
+{
+    (void)unused;
+    char path[512];
+    snprintf(path, sizeof(path), "%s/read_errors.lmdb", tmp_dir);
+    MarmotStorage *s = marmot_storage_nostrdb_new(NULL, path);
+    assert(s != NULL);
+
+    /* Group blob: [version][u32 len=32][nostr_group_id]...;
+     * Welcome blob: [version][u32 json_len][event_json]... */
+    uint8_t group_marker[32];
+    for (size_t i = 0; i < sizeof(group_marker); i++)
+        group_marker[i] = (uint8_t)(0xD1 ^ (i * 0x1F));
+    static const char welcome_json[] = "{\"d1oq\":\"corrupt-me-welcome-marker\"}";
+
+    MarmotGroupId gid = marmot_group_id_new((const uint8_t *)"rd_err_grp", 10);
+    MarmotGroup *g = make_test_group(gid.data, gid.len, "Read Error Group", 3);
+    memcpy(g->nostr_group_id, group_marker, 32);
+    assert(s->save_group(s->ctx, g) == MARMOT_OK);
+    marmot_group_free(g);
+
+    MarmotWelcome *w = make_test_welcome(&gid, 0x70);
+    free(w->event_json);
+    w->event_json = strdup(welcome_json);
+    assert(w->event_json != NULL);
+    assert(s->save_welcome(s->ctx, w) == MARMOT_OK);
+    uint8_t welcome_id[32];
+    memcpy(welcome_id, w->id, 32);
+    marmot_welcome_free(w);
+    marmot_storage_free(s);
+
+    patch_before_marker(path, group_marker, 32, 5, 0x7F);
+    patch_before_marker(path, (const uint8_t *)welcome_json, strlen(welcome_json), 5, 0x7F);
+
+    s = marmot_storage_nostrdb_new(NULL, path);
+    assert(s != NULL);
+    MarmotGroup *found = (MarmotGroup *)(uintptr_t)1;
+    assert(s->find_group_by_mls_id(s->ctx, &gid, &found) == MARMOT_ERR_STORAGE);
+    assert(found == NULL);
+    found = (MarmotGroup *)(uintptr_t)1;
+    assert(s->find_group_by_nostr_id(s->ctx, group_marker, &found) == MARMOT_ERR_STORAGE);
+    assert(found == NULL);
+
+    /* 0x7F is not a Welcome record version and not legacy JSON either. */
+    MarmotWelcome *fw = (MarmotWelcome *)(uintptr_t)1;
+    MarmotError werr = s->find_welcome_by_event_id(s->ctx, welcome_id, &fw);
+    assert(werr == MARMOT_ERR_STORAGE);
+    assert(fw == NULL);
+
+    marmot_group_id_free(&gid);
+    marmot_storage_free(s);
+}
+#endif
+
 int main(int argc, char **argv)
 {
+    /* Unbuffered, so a crash's log shows the test it died in. */
+    setvbuf(stdout, NULL, _IONBF, 0);
     int total_backends = 0;
     make_tmp_dir();
     if (argc == 2 && strcmp(argv[1], "--nostrdb-epochs") == 0) {
@@ -1110,16 +1203,24 @@ int main(int argc, char **argv)
 
     /* ── 3. nostrdb backend (if compiled with nostrdb) ────────────────── */
     {
-        char ndb_dir[512];
-        snprintf(ndb_dir, sizeof(ndb_dir), "%s/ndb_mls_state", tmp_dir);
-        mkdir(ndb_dir, 0755);
+        /* The MLS state layer opens LMDB with MDB_NOSUBDIR: a file path, not
+         * a directory (nostrc-d1oq: a directory made it skip silently). */
+        char ndb_path[512];
+        snprintf(ndb_path, sizeof(ndb_path), "%s/ndb_mls_state.lmdb", tmp_dir);
 
         /* Pass NULL for ndb_handle — still tests the LMDB MLS state layer */
-        MarmotStorage *s = marmot_storage_nostrdb_new(NULL, ndb_dir);
+        MarmotStorage *s = marmot_storage_nostrdb_new(NULL, ndb_path);
+#if MARMOT_TEST_HAVE_NOSTRDB
+        /* Built with nostrdb and LMDB: the backend must run, never skip. */
+        assert(s != NULL);
+#endif
         if (s != NULL) {
             assert(s->messages_in_epochs != NULL);
             run_contract_tests("nostrdb", s, true);
             marmot_storage_free(s);
+#if MARMOT_TEST_HAVE_NOSTRDB
+            TEST(test_nostrdb_read_errors_are_not_absence, "nostrdb", NULL);
+#endif
             total_backends++;
         } else {
             printf("\n── nostrdb backend ── SKIPPED (not available)\n");
