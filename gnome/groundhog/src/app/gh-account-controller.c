@@ -2,6 +2,7 @@
 #include "gh-identity.h"
 #include "gh-signer.h"
 #include "gh-nip46-session.h"
+#include <glib/gi18n.h>
 
 #define SIGNER_BUS "org.nostr.Signer"
 #define CREDENTIAL_WAIT_MS 1500
@@ -1476,35 +1477,35 @@ gh_account_describe_limits(GhAccountState state, GhSignerAvailability availabili
                            const gchar *requested_method, gboolean network_available)
 {
   if (!network_available)
-    return g_strdup("Offline: no network connection. Nothing can be sent or received.");
+    return g_strdup(_("Offline: no network connection. Nothing can be sent or received."));
   switch (state) {
   case GH_ACCOUNT_STATE_DISCOVERING:
-    return g_strdup("Read-only: looking for accounts");
+    return g_strdup(_("Read-only: looking for accounts"));
   case GH_ACCOUNT_STATE_STORE_UNAVAILABLE:
-    return g_strdup("Read-only: the account store could not be read");
+    return g_strdup(_("Read-only: the account store could not be read"));
   case GH_ACCOUNT_STATE_NO_IDENTITIES:
   case GH_ACCOUNT_STATE_UNSELECTED:
-    return g_strdup("Read-only: no Groundhog account is selected");
+    return g_strdup(_("Read-only: no Groundhog account is selected"));
   case GH_ACCOUNT_STATE_SELECTED_MISSING:
-    return g_strdup("Read-only: the selected account is no longer available");
+    return g_strdup(_("Read-only: the selected account is no longer available"));
   case GH_ACCOUNT_STATE_ACTIVE:
   default:
     break;
   }
   if (g_strcmp0(requested_method, "nip46") == 0)
-    return g_strdup("Read-only: NIP-46 remote signing is not supported in this build");
+    return g_strdup(_("Read-only: NIP-46 remote signing is not supported in this build"));
   if (g_strcmp0(requested_method, "auto") != 0 &&
       g_strcmp0(requested_method, "local") != 0 &&
       g_strcmp0(requested_method, "nip55l") != 0)
-    return g_strdup_printf("Read-only: unknown signer method \"%s\"",
+    return g_strdup_printf(_("Read-only: unknown signer method \"%s\""),
                            requested_method ? requested_method : "");
   switch (availability) {
   case GH_SIGNER_AVAILABILITY_UNKNOWN:
-    return g_strdup("Read-only: checking for the Nostr signer");
+    return g_strdup(_("Read-only: checking for the Nostr signer"));
   case GH_SIGNER_AVAILABILITY_NO_BUS:
-    return g_strdup("Read-only: no session bus, so the Nostr signer cannot be reached");
+    return g_strdup(_("Read-only: no session bus, so the Nostr signer cannot be reached"));
   case GH_SIGNER_AVAILABILITY_ABSENT:
-    return g_strdup("Read-only: the Nostr signer service is not installed or running");
+    return g_strdup(_("Read-only: the Nostr signer service is not installed or running"));
   case GH_SIGNER_AVAILABILITY_ACTIVATABLE:
   case GH_SIGNER_AVAILABILITY_RUNNING:
   default:
@@ -1524,23 +1525,23 @@ gh_account_controller_describe_limits(GhAccountController *self,
     return gh_account_describe_limits(self->state, self->availability, "auto",
                                       network_available);
   if (!self->remote_storage_ready)
-    return g_strdup("Read-only: unlock or repair encrypted storage before using your remote signer");
+    return g_strdup(_("Read-only: unlock or repair encrypted storage before using your remote signer"));
   if (!network_available)
-    return g_strdup("Offline: stored messages remain available; remote signing needs a connection");
+    return g_strdup(_("Offline: stored messages remain available; remote signing needs a connection"));
   switch (self->remote_state) {
   case GH_REMOTE_SIGNER_LOADING_CREDENTIAL:
-    return g_strdup("Read-only: loading remote signer credentials");
+    return g_strdup(_("Read-only: loading remote signer credentials"));
   case GH_REMOTE_SIGNER_CONNECTING:
-    return g_strdup("Read-only: connecting to your remote signer");
+    return g_strdup(_("Read-only: connecting to your remote signer"));
   case GH_REMOTE_SIGNER_OFFLINE:
     /* Keep the composer and retry path available. The session queues until
      * a relay returns; a successful RPC is what clears timeout-derived
      * OFFLINE, so refusing calls here would strand the account forever. */
     return NULL;
   case GH_REMOTE_SIGNER_LOCKED:
-    return g_strdup_printf("Read-only: %s", gh_account_controller_describe_remote_lock(self));
+    return g_strdup_printf(_("Read-only: %s"), gh_account_controller_describe_remote_lock(self));
   case GH_REMOTE_SIGNER_ERROR:
-    return g_strdup("Read-only: remote signer needs repair or re-pairing");
+    return g_strdup(_("Read-only: remote signer needs repair or re-pairing"));
   case GH_REMOTE_SIGNER_READY:
   default:
     return NULL;
