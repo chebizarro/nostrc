@@ -220,6 +220,9 @@ target_link_libraries(groundhog-diagnostics PUBLIC PkgConfig::GROUNDHOG_DEPS)
 target_compile_options(groundhog-diagnostics PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(groundhog PRIVATE groundhog-diagnostics)
 
+# Each executable test owns its accessibility runtime, even in an omnibus.
+set(NOSTRC_TEST_PRIVATE_SESSION ON)
+
 if (BUILD_TESTING)
   add_executable(test-groundhog-diagnostics tests/app/test_diagnostics.c)
   target_link_libraries(test-groundhog-diagnostics PRIVATE groundhog-diagnostics)

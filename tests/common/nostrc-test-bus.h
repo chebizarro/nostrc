@@ -88,6 +88,8 @@ typedef enum {
   /* Leave DBUS_SESSION_BUS_ADDRESS and the session-bus singleton alone: the
    * bus is reachable only through nostrc_test_bus_connect() and its address. */
   NOSTRC_TEST_BUS_FLAGS_NOT_SESSION = 1 << 0,
+  /* Own a short, private XDG_RUNTIME_DIR for this bus and its services. */
+  NOSTRC_TEST_BUS_FLAGS_PRIVATE_RUNTIME = 1 << 1,
 } NostrcTestBusFlags;
 
 /* TRUE when dbus-daemon is installed, so a test can skip (exit 77) cleanly
