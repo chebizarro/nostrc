@@ -1314,7 +1314,7 @@ static void test_nip46_replay_capacity(bool cache_only) {
   CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "pair", now));
   CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "first", now));
   CHECK(!n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "quota", now));
-  n46_expect_last_audit(&f, "get_public_key", "error", "replay_full");
+  n46_expect_last_audit(&f, "unknown", "error", "replay_full");
   char second_sk[65], second_pk[65]; gen_keypair_hex(second_sk, second_pk);
   char *fresh = NULL; char agent_pk[65];
   CHECK(signet_key_store_reissue_connect_secret(f.ks, "stew", NULL, f.bunker_pk_hex,
@@ -1322,11 +1322,11 @@ static void test_nip46_replay_capacity(bool cache_only) {
   CHECK(n46_connect(&f, second_sk, second_pk, fresh, "second-pair", now));
   sodium_memzero(fresh, strlen(fresh)); g_free(fresh);
   CHECK(!n46_get_public_key(&f, second_sk, second_pk, "global-full", now));
-  n46_expect_last_audit(&f, "get_public_key", "error", "replay_full");
+  n46_expect_last_audit(&f, "unknown", "error", "replay_full");
   CHECK(!n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "first", now));
-  n46_expect_last_audit(&f, "get_public_key", "error", "replay_duplicate");
+  n46_expect_last_audit(&f, "unknown", "error", "replay_duplicate");
   CHECK(!n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, NULL, now));
-  n46_expect_last_audit(&f, "get_public_key", "error", "replay_invalid");
+  n46_expect_last_audit(&f, "unknown", "error", "replay_invalid");
   n46_expect_binding(&f, f.client_pk_hex, "stew", now);
   sodium_memzero(second_sk, sizeof(second_sk));
   n46_teardown(&f);
@@ -1353,7 +1353,7 @@ static void test_replay_refused_pairing(bool cache_only) {
     }
     CHECK(!n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret",
                        i == 2 ? NULL : i == 4 ? "occupied" : "refused", now));
-    n46_expect_last_audit(&f, "connect", "error", codes[i]);
+    n46_expect_last_audit(&f, "unknown", "error", codes[i]);
     n46_expect_binding(&f, f.client_pk_hex, NULL, now);
   }
   /* Removing just the replay fixture permits exactly the original secret. */
@@ -1489,7 +1489,34 @@ static void test_refused_pairing_preserves_secret(bool cache_only, bool policy_d
          n46_mode_name(cache_only), policy_deny ? "policy" : "deny-list");
 }
 
+static void test_nip46_junk_replay(void) {
+  N46Fixture f; n46_setup_mode(&f, true);
+  signet_nip46_server_free(f.srv);
+  SignetReplayCacheConfig cfg = {.max_entries = 4, .ttl_seconds = 600,
+    .skew_seconds = 120, .max_entries_per_scope = 4, .refuse_when_full = true};
+  f.replay = signet_replay_cache_new(&cfg); CHECK(f.replay); n46_new_server(&f);
+  int64_t now = time(NULL);
+  for (int i = 0; i < 2; i++) {
+    CHECK(!signet_nip46_server_handle_event(f.srv, f.bunker_pk_hex, f.bunker_sk_hex,
+      f.client_pk_hex, "not ciphertext", now, "junk-cipher", now));
+    n46_expect_last_audit(&f, "unknown", "error", i ? "replay_duplicate" : "decrypt_failed");
+  }
+  for (int i = 0; i < 2; i++) {
+    CHECK(!n46_send(&f, f.client_sk_hex, f.client_pk_hex, "not json", "junk-json", now));
+    n46_expect_last_audit(&f, "unknown", "error", i ? "replay_duplicate" : "invalid_request");
+  }
+  CHECK(!signet_nip46_server_handle_event(f.srv, f.bunker_pk_hex, f.bunker_sk_hex,
+    f.client_pk_hex, "not ciphertext", now - 121, "stale-junk", now));
+  n46_expect_last_audit(&f, "unknown", "error", "replay_too_old");
+  CHECK(!signet_nip46_server_handle_event(f.srv, f.bunker_pk_hex, f.bunker_sk_hex,
+    f.client_pk_hex, "not ciphertext", now + 121, "future-junk", now));
+  n46_expect_last_audit(&f, "unknown", "error", "replay_in_future");
+  n46_teardown(&f);
+  puts("test_nip46_junk_replay: PASS");
+}
+
 int main(void) {
+  test_nip46_junk_replay();
   for (int mode = 0; mode <= 1; mode++) {
     test_refused_pairing_preserves_secret(mode != 0, false);
     test_refused_pairing_preserves_secret(mode != 0, true);

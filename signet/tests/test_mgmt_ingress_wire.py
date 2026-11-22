@@ -4,9 +4,9 @@ peer relay that never reaches EOSE and a relay-set reload.
 
 The fixture relay behaves like a real one: every REQ receives the
 connection's history and its own EOSE, and a live event is fanned out to
-every open REQ it matches, oldest first. signetd installs two REQs with the
-same filter on a fast relay at startup, so the relay answers fresh requests on
-the older one and the pool forwards only that first copy (nostrc-5xqun)."""
+every open REQ it matches, oldest first. Filter replacements must close the
+old REQ; a late delivery on that retired id must never authorize a command.
+"""
 import json
 import os
 from pathlib import Path
@@ -76,7 +76,10 @@ def run(binary, mode):
 
         def handle(relay, frame):
             nonlocal current_socket, open_sids
-            if frame[0] == 'REQ':
+            if frame[0] == 'CLOSE':
+                if frame[1] in open_sids:
+                    open_sids.remove(frame[1])
+            elif frame[0] == 'REQ':
                 state['requests'] += 1
                 assert state['requests'] <= 12, state
                 if relay.sock is not current_socket:
@@ -98,9 +101,8 @@ def run(binary, mode):
                 # cannot distinguish it from a live command.
                 relay.send(['EVENT', sid, history[state['connections'] - 1]])
                 if isolate and state['connections'] == 1 and len(open_sids) == 1:
-                    # The startup REQ keeps draining while the one installed
-                    # on CONNECTED reaches EOSE. A ready relay must not turn
-                    # the draining REQ into a live source.
+                    # The test explicitly replaces this draining REQ. Its
+                    # pending history must not inherit the next REQ's EOSE.
                     state['draining'] = sid
                     return
                 relay.send(['EOSE', sid])
@@ -122,10 +124,9 @@ def run(binary, mode):
                     state['warmed'] = True
                     relay.send(['EVENT', state['sid'], event])
                     return
-                # signetd's startup leaves two REQs with this filter on the
-                # relay; the regression needs the older one to carry the
-                # fresh request.
-                assert state['startup_requests'] >= 2, state
+                # Startup owns one REQ; isolation explicitly replaces it.
+                assert len(open_sids) == 1, state
+                assert state['startup_requests'] == (2 if isolate else 1), state
                 draining = state['draining']
                 if draining and not state['late_sent']:
                     state['late_sent'] = True
@@ -152,7 +153,7 @@ def run(binary, mode):
                 raise AssertionError((state, exc.stdout, exc.stderr)) from exc
             assert result.returncode == 0, (result.returncode, state, result.stdout + result.stderr)
             assert state['connections'] == phases, state
-            assert state['startup_requests'] >= 2, state
+            assert state['startup_requests'] == (2 if isolate else 1), state
             # warm-up, stale and live publications per phase
             assert state['live'] == phases * 3, state
             if dead:

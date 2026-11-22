@@ -118,9 +118,13 @@ def pool_wire(binary, timeout=False):
     shared = {'a_sid': None, 'old_sid': None, 'signed': None, 'events': 0}
     b_subscribed = threading.Event()
     a = None
+    active = {'a': set(), 'b': set()}
 
     def primary(relay, frame):
-        if frame[0] == 'REQ':
+        if frame[0] == 'CLOSE':
+            active['a'].discard(frame[1])
+        elif frame[0] == 'REQ':
+            active['a'].add(frame[1])
             sid, filt = frame[1:3]
             if filt['kinds'] == [12346]:
                 relay.send(['CLOSED', sid, 'blocked: fixture-complete'])
@@ -134,16 +138,21 @@ def pool_wire(binary, timeout=False):
                     relay.send(['EOSE', shared['old_sid']])
             relay.send(['EOSE', sid])
         elif frame[0] == 'EVENT':
+            assert len(active['a']) == 1, ('superseded primary REQs', active)
             shared['events'] += 1
             shared['signed'] = frame[1]
             if not timeout:
                 relay.send(['OK', frame[1]['id'], False, 'blocked: fixture'])
 
     def secondary(relay, frame):
-        if frame[0] == 'REQ':
+        if frame[0] == 'CLOSE':
+            active['b'].discard(frame[1])
+        elif frame[0] == 'REQ':
+            active['b'].add(frame[1])
             shared['b_sid'] = frame[1]
             b_subscribed.set()
         elif frame[0] == 'EVENT':
+            assert len(active['b']) == 1, ('superseded secondary REQs', active)
             shared['events'] += 1
             assert frame[1] == shared['signed'], 'failover changed already-signed event'
             relay.send(['OK', frame[1]['id'], True, ''])

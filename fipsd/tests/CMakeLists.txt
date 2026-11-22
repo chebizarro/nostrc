@@ -396,6 +396,14 @@ add_test(NAME FipsdNodeRekeyMsg2Test COMMAND fipsd_node_rekey_msg2_test)
 set_tests_properties(FipsdNodeRekeyMsg2Test PROPERTIES TIMEOUT 120 LABELS "fips;node" ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdNodeRekeyMsg2Test OWNER fipsd TARGETS fipsd_node_rekey_msg2_test)
 
+# FilterAnnounce submit/completion ownership, with dispatcher-side faults.
+fipsd_unit_test(fipsd_bloom_completion_test test_bloom_completion.c)
+target_sources(fipsd_bloom_completion_test PRIVATE handshake_fixture.c)
+add_dependencies(fipsd_tests fipsd_bloom_completion_test)
+add_test(NAME FipsdBloomCompletionTest COMMAND fipsd_bloom_completion_test)
+set_tests_properties(FipsdBloomCompletionTest PROPERTIES TIMEOUT 60 LABELS "fips;node" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdBloomCompletionTest OWNER fipsd TARGETS fipsd_bloom_completion_test)
+
 # Tier B4: all privileged device syscalls replaced in the ordinary tests.
 fipsd_unit_test(fipsd_tun_test test_tun.c)
 fipsd_unit_test(fipsd_tun_runtime_test test_tun_runtime.c)
