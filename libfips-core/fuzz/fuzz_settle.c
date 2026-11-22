@@ -1,8 +1,8 @@
 #include <fips/proto/settle/settle.h>
 #include <fips/proto/settle/join.h>
 #include <fips/proto/settle/parity.h>
-#include "../tests/fakes/host.h"
-#include "../tests/fakes/settle_table.h"
+#include "fakes/host.h"
+#include "fakes/settle_table.h"
 #include <stdlib.h>
 #include <string.h>
 #define CHECK(x) do { if (!(x)) abort(); } while (0)
