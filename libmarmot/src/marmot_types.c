@@ -236,6 +236,14 @@ marmot_message_result_free(MarmotMessageResult *result)
 }
 
 void
+marmot_message_results_free(MarmotMessageResult *results, size_t count)
+{
+    if (!results) return;
+    for (size_t i = 0; i < count; i++) marmot_message_result_free(&results[i]);
+    free(results);
+}
+
+void
 marmot_create_group_result_free(MarmotCreateGroupResult *result)
 {
     if (!result) return;

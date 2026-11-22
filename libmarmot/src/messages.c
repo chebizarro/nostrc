@@ -27,6 +27,7 @@
 #include "marmot-internal.h"
 #include "commits.h"
 #include "proposals.h"
+#include "send_guard.h"
 #include "mls/mls_group.h"
 #include "mls/mls-internal.h"
 #include <nostr-event.h>
@@ -643,6 +644,15 @@ create_message_impl(Marmot *m,
             plaintext = (const uint8_t *)bound_json;
             plaintext_len = strlen(bound_json);
         }
+        /* nostrc-ow0c: never below a generation already handed out. */
+        MarmotError gerr = marmot_send_guard_apply(m, &mls_group);
+        if (gerr != MARMOT_OK) {
+            free(bound_json);
+            mls_group_free(&mls_group);
+            sodium_memzero(exporter_secret, sizeof(exporter_secret));
+            marmot_group_free(group);
+            return gerr;
+        }
         if (mls_group_encrypt(&mls_group, plaintext, plaintext_len,
                               &mls_ciphertext, &mls_ciphertext_len) != 0) {
             free(bound_json);
@@ -676,7 +686,8 @@ create_message_impl(Marmot *m,
 
     /* Persist updated MLS state (generation counter advances on encrypt). */
     if (mls_loaded) {
-        if (msg_save_mls_group(m, &mls_group) != 0) {
+        if (msg_save_mls_group(m, &mls_group) != 0 ||
+            marmot_send_guard_record(m, &mls_group) != MARMOT_OK) {
             free(nip44_ciphertext);
             mls_group_free(&mls_group);
             free(bound_json);

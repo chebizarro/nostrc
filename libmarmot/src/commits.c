@@ -2240,8 +2240,11 @@ static void deferred_order(const Marmot *m, const MlsGroup *cur, const PendingCo
                            size_t *order);
 
 MarmotError
-marmot_commit_clear_pending(Marmot *m, MarmotGroup *group)
+marmot_commit_clear_pending(Marmot *m, MarmotGroup *group,
+                            MarmotMessageResult **out_results, size_t *out_count)
 {
+    if (out_results) *out_results = NULL;
+    if (out_count) *out_count = 0;
     const MarmotGroupId *gid = &group->mls_group_id;
     PendingCommit p;
     MarmotError err = pending_load(m, gid->data, gid->len, &p);
@@ -2259,13 +2262,31 @@ marmot_commit_clear_pending(Marmot *m, MarmotGroup *group)
          * leaf, say -- is judged before the Commit that beats it. */
         size_t order[PENDING_MAX_DEFERRED];
         deferred_order(m, &cur, &p, order);
+        /* nostrc-8gbp: the caller may want each applied Commit's result --
+         * its committer above all (who added a member) -- as it gets one
+         * for a Commit processed live. */
+        MarmotMessageResult *results = NULL;
+        size_t n_results = 0;
+        if (out_results && p.deferred_count > 0) {
+            results = calloc(p.deferred_count, sizeof(*results));
+            if (!results) err = MARMOT_ERR_MEMORY;
+        }
         for (size_t k = 0; err == MARMOT_OK && k < p.deferred_count; k++) {
             const DeferredCommit *d = &p.deferred[order[k]];
             MarmotMessageResult r;
             memset(&r, 0, sizeof(r));
-            (void)marmot_commit_process_inbound(m, group, d->epoch, d->msg, d->msg_len,
-                                                d->event_id, &r);
-            marmot_message_result_free(&r);
+            MarmotError perr = marmot_commit_process_inbound(m, group, d->epoch, d->msg,
+                                                             d->msg_len, d->event_id, &r);
+            if (results && perr == MARMOT_OK && r.type == MARMOT_RESULT_COMMIT)
+                results[n_results++] = r;   /* moved: the caller frees it */
+            else
+                marmot_message_result_free(&r);
+        }
+        if (err == MARMOT_OK && results && n_results > 0) {
+            *out_results = results;
+            *out_count = n_results;
+        } else {
+            marmot_message_results_free(results, n_results);
         }
     }
     mls_group_free(&cur);   /* zeroed by load_current() even on failure */

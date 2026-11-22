@@ -15,6 +15,8 @@
 #include "commits.h"
 #include "convergence.h"
 #include "proposals.h"
+#include "send_guard.h"
+#include "mls/mls_key_schedule.h"
 #include "members.h"
 #include "kp_profile.h"
 #include "test_enroll.h"
@@ -1814,6 +1816,48 @@ test_failed_merge_stays_clearable(void)
 }
 
 
+/* nostrc-8gbp: a Commit deferred behind our pending one (it loses to ours)
+ * is applied when ours is cleared; the caller learns who committed it, as
+ * for a Commit processed live.  Bob's key wins equal-priority ties
+ * (trio_init), so Alice's rename waits behind Bob's. */
+static void
+test_cleared_pending_reports_deferred_committers(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *bobs = rename_pending(&t.bob, &t.gid, "Bob's");
+    char *alices = rename_pending(&t.alice, &t.gid, "Alice's");
+    MarmotError err;
+    deliver(&t.bob, alices, &err, NULL);
+    CHECK(err == MARMOT_ERR_OWN_COMMIT_PENDING, "Alice's Commit deferred at Bob: %d", err);
+
+    MarmotMessageResult *res = (MarmotMessageResult *)(uintptr_t)1;
+    size_t n = 99;
+    OK(marmot_clear_pending_commit_with_results(t.bob.m, &t.gid, &res, &n));
+    CHECK(n == 1 && res, "one deferred Commit applied: %zu", n);
+    char alice_hex[65];
+    for (int i = 0; i < 32; i++) snprintf(alice_hex + 2 * i, 3, "%02x", t.alice.pk[i]);
+    CHECK(res[0].type == MARMOT_RESULT_COMMIT, "a Commit result");
+    CHECK(res[0].commit.committer_pubkey_hex &&
+          strcmp(res[0].commit.committer_pubkey_hex, alice_hex) == 0,
+          "attributed to Alice: %s", res[0].commit.committer_pubkey_hex
+                                           ? res[0].commit.committer_pubkey_hex : "(null)");
+    CHECK(res[0].commit.committer_leaf != UINT32_MAX, "with her leaf");
+    CHECK(res[0].commit.updated_group && res[0].commit.updated_group->name &&
+          strcmp(res[0].commit.updated_group->name, "Alice's") == 0, "the group it made");
+    marmot_message_results_free(res, n);
+
+    /* Nothing pending any more: nothing to report. */
+    res = (MarmotMessageResult *)(uintptr_t)1;
+    OK(marmot_clear_pending_commit_with_results(t.bob.m, &t.gid, &res, &n));
+    CHECK(res == NULL && n == 0, "nothing applied the second time");
+    CHECK(marmot_clear_pending_commit_with_results(t.bob.m, &t.gid, NULL, &n) ==
+              MARMOT_ERR_INVALID_ARG, "out params required");
+    free(bobs);
+    free(alices);
+    trio_clear(&t);
+}
+
 /* W17b addendum C2: the outbox is append-only; an entry leaves only when
  * its own send is confirmed.  Two merged Adds before the first Welcome is
  * sent keep both; a mark covers only the ids it names. */
@@ -2915,6 +2959,78 @@ test_inner_event_dedupe_is_per_group(void)
     marmot_outgoing_message_free(&b);
     marmot_outgoing_message_free(&c);
     marmot_group_id_free(&gid2);
+    trio_clear(&t);
+}
+
+/* nostrc-ow0c: a storage rollback of the group's MLS state within an epoch
+ * (what MarmotStorage.rollback_snapshot does to the "mls_group" record)
+ * rewinds Bob's sender ratchet; his next message still uses a fresh
+ * generation, and Charlie reads both. */
+static void
+test_rollback_never_reuses_a_sender_generation(void)
+{
+    Trio t;
+    trio_init(&t);
+    MarmotStorage *s = t.bob.m->storage;
+    uint8_t *snap = NULL;
+    size_t snap_len = 0;
+    OK(s->mls_load(s->ctx, "mls_group", t.gid.data, t.gid.len, &snap, &snap_len));
+
+    char *a = app_message(&t.bob, &t.gid, "before the rollback");
+    uint32_t gen_a = sent_sender_data(&t.bob, &t.gid, a).generation;
+    OK(s->mls_store(s->ctx, "mls_group", t.gid.data, t.gid.len, snap, snap_len));
+    char *b = app_message(&t.bob, &t.gid, "after the rollback");
+    uint32_t gen_b = sent_sender_data(&t.bob, &t.gid, b).generation;
+    CHECK(gen_b > gen_a, "a fresh generation after the rollback: %u after %u", gen_b, gen_a);
+
+    MarmotError err;
+    CHECK(deliver(&t.charlie, a, &err, NULL) == MARMOT_RESULT_APPLICATION_MESSAGE &&
+          err == MARMOT_OK, "Charlie reads the first: %d", err);
+    CHECK(deliver(&t.charlie, b, &err, NULL) == MARMOT_RESULT_APPLICATION_MESSAGE &&
+          err == MARMOT_OK, "and the second: %d", err);
+    sodium_memzero(snap, snap_len);
+    free(snap);
+    free(a);
+    free(b);
+    trio_clear(&t);
+}
+
+/* The same mark guards the handshake chain (a Remove request of ourselves
+ * is a PrivateMessage), and is ignored for another epoch's state. */
+static void
+test_send_guard_covers_handshake_chain(void)
+{
+    Trio t;
+    trio_init(&t);
+    MlsGroup g, rewound;
+    load_mls(&t.bob, &t.gid, &g);
+    load_mls(&t.bob, &t.gid, &rewound);
+    uint32_t own = g.own_leaf_index;
+    for (int i = 0; i < 3; i++) {
+        MlsMessageKeys k;
+        CHECK(mls_secret_tree_derive_keys(&g.secret_tree, own, true, &k) == 0, "handshake step");
+        sodium_memzero(&k, sizeof k);
+    }
+    uint32_t used = g.secret_tree.senders[own].handshake_generation;
+    OK(marmot_send_guard_record(t.bob.m, &g));
+    OK(marmot_send_guard_apply(t.bob.m, &rewound));
+    CHECK(rewound.secret_tree.senders[own].handshake_generation >= used &&
+          rewound.secret_tree.senders[own].application_generation >=
+              g.secret_tree.senders[own].application_generation,
+          "the rewound state moves past the mark");
+
+    MlsGroup other;
+    load_mls(&t.bob, &t.gid, &other);
+    other.epoch += 1;   /* another epoch: fresh ratchets, the mark does not apply */
+    uint32_t before = other.secret_tree.sender_initialized[own]
+                          ? other.secret_tree.senders[own].handshake_generation : 0;
+    OK(marmot_send_guard_apply(t.bob.m, &other));
+    CHECK((other.secret_tree.sender_initialized[own]
+               ? other.secret_tree.senders[own].handshake_generation : 0) == before,
+          "a mark of another epoch is ignored");
+    mls_group_free(&g);
+    mls_group_free(&rewound);
+    mls_group_free(&other);
     trio_clear(&t);
 }
 
@@ -8929,6 +9045,9 @@ main(int argc, char **argv)
     RUN(test_member_cannot_post_as_another);
     RUN(test_inner_event_delivered_once);
     RUN(test_inner_event_dedupe_is_per_group);
+    RUN(test_rollback_never_reuses_a_sender_generation);
+    RUN(test_send_guard_covers_handshake_chain);
+    RUN(test_cleared_pending_reports_deferred_committers);
     RUN(test_rename_reaches_every_member);
     RUN(test_group_data_relays_follow_commit);
     RUN(test_noop_group_context_commit_is_privileged);

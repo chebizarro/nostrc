@@ -24,7 +24,10 @@
  * are pruned). "welcome_signer" (since libmarmot 0.12.0, members.c) is keyed
  * by the group id too, but records a fact of the join (which device the
  * Welcome's sender vouched for), not epoch state: an epoch rollback must not
- * touch it, so it stays out of snapshots. The
+ * touch it, so it stays out of snapshots. "mls_send_hwm" (libmarmot 0.12.0,
+ * nostrc-ow0c), group-keyed too, records the sender generations already
+ * handed out in the epoch: a rollback must never restore it, or a rewound
+ * sender ratchet could reuse a generation. The
  * others are keyed by a public key (kp_slot, and kp_slot_adopted since
  * libmarmot 0.12.0; kp_life, since libmarmot 0.12.0 the account's KeyPackage
  * lifecycle record, nostrc-0bdg; kp_used, the profile the account's last

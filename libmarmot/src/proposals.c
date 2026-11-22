@@ -53,6 +53,7 @@
  */
 
 #include "proposals.h"
+#include "send_guard.h"
 #include "commits.h"
 #include "kp_profile.h"
 #include "mls/mls-internal.h"
@@ -910,6 +911,12 @@ self_remove(Marmot *m, const MarmotGroupId *gid, char **out_event_json, MarmotLe
         err = MARMOT_ERR_UNSUPPORTED;   /* a leaf lacks it: nobody could commit it */
     if (dry || err != MARMOT_OK) goto out;
 
+    /* A Remove of ourselves is a PrivateMessage on our handshake chain:
+     * never below a generation already handed out (nostrc-ow0c). */
+    if (kind == MARMOT_LEAVE_REMOVE_REQUEST) {
+        err = marmot_send_guard_apply(m, &cur);
+        if (err != MARMOT_OK) goto out;
+    }
     int rc = kind == MARMOT_LEAVE_SELF_REMOVE
                  ? mls_group_self_remove_proposal(&cur, &msg, &msg_len, &own)
                  : mls_group_remove_self_proposal(&cur, &msg, &msg_len, &own);
@@ -930,7 +937,10 @@ self_remove(Marmot *m, const MarmotGroupId *gid, char **out_event_json, MarmotLe
     }
     bool dup = false;
     /* A Remove of ourselves took a step of our handshake ratchet. */
-    if (kind == MARMOT_LEAVE_REMOVE_REQUEST) err = store_mls(m, &cur);
+    if (kind == MARMOT_LEAVE_REMOVE_REQUEST) {
+        err = store_mls(m, &cur);
+        if (err == MARMOT_OK) err = marmot_send_guard_record(m, &cur);
+    }
     if (err == MARMOT_OK) err = keep_opened(m, &cur, msg, msg_len, &own, true, &dup);
     if (err == MARMOT_OK) err = leaving_store(m, gid->data, gid->len, cur.epoch, json);
     if (err == MARMOT_OK) {

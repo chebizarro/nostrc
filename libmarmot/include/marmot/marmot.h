@@ -856,6 +856,30 @@ MARMOT_API MarmotError marmot_clear_pending_commit(Marmot *m,
                                          const MarmotGroupId *mls_group_id);
 
 /**
+ * marmot_clear_pending_commit_with_results:
+ * @m: Marmot instance
+ * @mls_group_id: the group
+ * @out_results: (out) (transfer full) (array length=out_count): the result
+ *   of each deferred Commit this applied (type MARMOT_RESULT_COMMIT), in
+ *   the order applied, or NULL when none applied; free with
+ *   marmot_message_results_free()
+ * @out_count: (out): the number of results
+ *
+ * marmot_clear_pending_commit(), reporting the Commits it processes as
+ * marmot_process_message() would have when they arrived: their committer
+ * (commit.committer_pubkey_hex, commit.committer_leaf), departures, the
+ * updated group, any convergence change (nostrc-8gbp).  Deferred Commits
+ * that do not apply (refused, stale) are not reported.
+ *
+ * Returns: as marmot_clear_pending_commit(); nothing is returned on error.
+ * Since 0.12.0.
+ */
+MARMOT_API MarmotError marmot_clear_pending_commit_with_results(Marmot *m,
+                                         const MarmotGroupId *mls_group_id,
+                                         MarmotMessageResult **out_results,
+                                         size_t *out_count);
+
+/**
  * marmot_get_pending_commit:
  * @m: Marmot instance
  * @mls_group_id: the group
