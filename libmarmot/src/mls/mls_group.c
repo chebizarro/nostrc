@@ -4812,16 +4812,19 @@ process_commit_impl(MlsGroup *group,
                 staged_rc = MARMOT_ERR_INTERNAL;
                 goto staged_fail;
             }
-            if (memcmp(node_pk, commit.path.nodes[i].encryption_key,
-                       MLS_KEM_PK_LEN) == 0 &&
-                remember_own_path_key(group, fdp[i], node_sk, node_pk) != 0) {
+            int key_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            if (sodium_memcmp(node_pk, commit.path.nodes[i].encryption_key,
+                               MLS_KEM_PK_LEN) == 0)
+                key_rc = remember_own_path_key(group, fdp[i], node_sk, node_pk) == 0
+                             ? 0 : MARMOT_ERR_INTERNAL;
+            if (key_rc != 0) {
                 mls_commit_clear(&commit);
                 sodium_memzero(node_sk, sizeof(node_sk));
                 sodium_memzero(node_pk, sizeof(node_pk));
                 sodium_memzero(psk_secret, sizeof(psk_secret));
                 sodium_memzero(our_path_secret, sizeof(our_path_secret));
                 sodium_memzero(current_secret, sizeof(current_secret));
-                staged_rc = MARMOT_ERR_INTERNAL;
+                staged_rc = key_rc;
                 goto staged_fail;
             }
             sodium_memzero(node_sk, sizeof(node_sk));

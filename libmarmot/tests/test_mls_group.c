@@ -2888,6 +2888,8 @@ typedef enum {
     PATH_LEAF_DUPLICATE_SIGNATURE_KEY,  /* review W16 M4 */
     PATH_NODE_KEY_IN_TREE,              /* review W16 M3 */
     PATH_NODE_KEY_REPEATED,             /* review W16 M3 */
+    PATH_NODE_SECRET_MISMATCH_LOW,
+    PATH_NODE_SECRET_MISMATCH_HIGH,
     PATH_LEAF_CASE_COUNT
 } PathLeafCase;
 
@@ -2896,6 +2898,7 @@ static const char *const path_leaf_case_names[PATH_LEAF_CASE_COUNT] = {
     "duplicate encryption key", "unsupported GroupContext extension",
     "another member's signature key", "path node key already in the tree",
     "path node key repeated within the path",
+    "lowest path key disagrees with its secret", "highest path key disagrees with its secret",
 };
 
 /* Signing key of the member whose signature key PATH_LEAF_DUPLICATE_-
@@ -2952,8 +2955,14 @@ build_update_path_for_test(const MlsGroup *committer,
                                             path->nodes[i].encryption_key) == 0);
         sodium_memzero(node_sk, sizeof(node_sk));
     }
-    /* Receivers do not yet match node keys against the path secrets
-     * (nostrc-11r1), so only the §12.4.2 freshness rule can reject these. */
+    /* Freshness and path-secret consistency are independent checks. */
+    if (leaf_case == PATH_NODE_SECRET_MISMATCH_LOW ||
+        leaf_case == PATH_NODE_SECRET_MISMATCH_HIGH) {
+        uint8_t unrelated_sk[MLS_KEM_SK_LEN];
+        uint32_t at = leaf_case == PATH_NODE_SECRET_MISMATCH_LOW ? 0 : fdp_len - 1;
+        assert(mls_crypto_kem_keygen(unrelated_sk, path->nodes[at].encryption_key) == 0);
+        sodium_memzero(unrelated_sk, sizeof(unrelated_sk));
+    }
     if (leaf_case == PATH_NODE_KEY_IN_TREE)
         memcpy(path->nodes[fdp_len - 1].encryption_key, dup_key, MLS_KEM_PK_LEN);
     if (leaf_case == PATH_NODE_KEY_REPEATED) {
