@@ -40,6 +40,13 @@ typedef struct {
   gchar *event_frame;          /* ["EVENT",<event>] */
 } SoupHandle;
 
+guint
+gh_relay_soup_scope_get_retry_seconds(gpointer data)
+{
+  const SoupHandle *handle = data;
+  return handle->retry_seconds;
+}
+
 static SoupHandle *
 handle_ref(SoupHandle *handle)
 {
@@ -205,8 +212,11 @@ scope_message(SoupHandle *handle, NostrEnvelope *envelope)
     if (!event->event || g_strcmp0(event->subscription_id, handle->sub_id) != 0)
       return;
     char *json = nostr_event_serialize_compact(event->event);
-    if (json)
+    if (json) {
+      /* A matching EVENT proves relay progress even when EOSE is omitted. */
+      handle->retry_seconds = 1;
       gh_relay_scope_event(handle->scope, handle->url, json);
+    }
     free(json);
     return;
   }

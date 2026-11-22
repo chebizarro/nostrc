@@ -256,6 +256,7 @@ is_hex(const gchar *text, gsize length)
 
 typedef struct {
   guint errors;
+  guint events;
   guint eoses;
   guint disconnected;
   gchar *last_error;
@@ -266,7 +267,9 @@ on_scope(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
 {
   (void)scope;
   ScopeSeen *seen = data;
-  if (update->notice == GH_RELAY_NOTICE_ERROR) {
+  if (update->notice == GH_RELAY_NOTICE_EVENT) {
+    seen->events++;
+  } else if (update->notice == GH_RELAY_NOTICE_ERROR) {
     seen->errors++;
     g_free(seen->last_error);
     seen->last_error = g_strdup(update->detail);
@@ -1072,6 +1075,49 @@ username_at(Socks5Fixture *socks, guint index)
   return ((Socks5Request *)g_ptr_array_index(socks5_fixture_requests(socks), index))->username;
 }
 
+static gpointer
+capture_soup_open(GhRelayScope *scope, const gchar *url, const NostrFilters *filters,
+                    gpointer data, GError **error)
+{
+  gpointer *handle = data;
+  *handle = gh_relay_soup_scope_open(scope, url, filters, NULL, NULL, NULL, error);
+  return *handle;
+}
+
+static void
+capture_soup_close(gpointer handle, gpointer data)
+{
+  *(gpointer *)data = NULL;
+  gh_relay_soup_scope_close(handle);
+}
+
+static void
+test_event_resets_backoff_without_eose(void)
+{
+  WireRelay relay = { .serve = TRUE, .no_eose = TRUE, .close_on_connect = TRUE };
+  relay_init(&relay);
+  g_autofree gchar *json = signed_json("live without EOSE");
+  wire_relay_inject(&relay, json);
+  ScopeSeen seen = { 0 };
+  gpointer handle = NULL;
+  const GhRelayTransport transport = { .open = capture_soup_open, .close = capture_soup_close };
+  GhRelayScope *scope = gh_relay_scope_new_with_transport(1, any_filters(), &transport,
+                                                         &handle, on_scope, &seen);
+  g_assert_true(gh_relay_scope_add_url(scope, relay.url, NULL));
+  gh_relay_scope_start(scope);
+  wait_at_least(&seen.disconnected, 2);
+  g_assert_cmpuint(gh_relay_soup_scope_get_retry_seconds(handle), >=, 4);
+  relay.close_on_connect = FALSE;
+  wait_at_least(&seen.events, 1);
+  g_assert_cmpuint(seen.eoses, ==, 0);
+  g_assert_cmpuint(gh_relay_soup_scope_get_retry_seconds(handle), ==, 1);
+  gh_relay_scope_cancel(scope);
+  gh_relay_scope_unref(scope);
+  g_assert_null(handle);
+  g_free(seen.last_error);
+  relay_clear(&relay);
+}
+
 static void
 test_upgrade_close_recovery(void)
 {
@@ -1817,6 +1863,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/net/mode-switch", test_mode_switch);
   g_test_add_func("/groundhog/net/isolation", test_isolation);
   g_test_add_func("/groundhog/net/upgrade-close-recovery", test_upgrade_close_recovery);
+  g_test_add_func("/groundhog/net/event-resets-backoff", test_event_resets_backoff_without_eose);
   g_test_add_func("/groundhog/net/no-session-refuses", test_no_session_refuses);
   g_test_add_func("/groundhog/net/allow-local-network", test_allow_local_network);
   g_test_add_func("/groundhog/net/special-purpose-addresses", test_special_purpose_addresses);
