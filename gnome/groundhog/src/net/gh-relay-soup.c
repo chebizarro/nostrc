@@ -35,6 +35,7 @@ typedef struct {
   NostrFilters *filters;
   gchar *sub_id;               /* the live REQ's id, NULL when none */
   guint sub_serial;
+  gboolean caught_up;          /* matching EOSE for this REQ, not an older connection */
   GSource *retry;
   guint retry_seconds;
   /* publish */
@@ -165,6 +166,7 @@ ws_open(SoupHandle *handle)
 static void
 send_req(SoupHandle *handle)
 {
+  handle->caught_up = FALSE;
   g_free(handle->sub_id);
   handle->sub_id = g_strdup_printf("gh%08x%u", g_random_int(), ++handle->sub_serial);
   /* ["REQ",<id>,<filter>...] */
@@ -220,8 +222,10 @@ scope_message(SoupHandle *handle, NostrEnvelope *envelope)
       return;
     char *json = nostr_event_serialize_compact(event->event);
     if (json) {
-      /* A matching EVENT proves relay progress even when EOSE is omitted. */
-      handle->retry_seconds = 1;
+      /* Stored replay before EOSE is not evidence of a healthy live
+       * connection: a relay may replay and immediately kick us each time. */
+      if (handle->caught_up)
+        handle->retry_seconds = 1;
       gh_relay_scope_event(handle->scope, handle->url, json);
     }
     free(json);
@@ -230,7 +234,7 @@ scope_message(SoupHandle *handle, NostrEnvelope *envelope)
   case NOSTR_ENVELOPE_EOSE: {
     const gchar *sub_id = nostr_eose_envelope_get_message((NostrEOSEEnvelope *)envelope);
     if (handle->sub_id && g_strcmp0(sub_id, handle->sub_id) == 0) {
-      handle->retry_seconds = 1;
+      handle->caught_up = TRUE;
       gh_relay_scope_eose(handle->scope, handle->url);
     }
     return;
