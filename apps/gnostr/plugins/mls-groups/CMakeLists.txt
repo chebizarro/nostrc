@@ -125,6 +125,21 @@ configure_file(
 
 # W16b re-review N1: which rejected group events report "out of sync".
 if(BUILD_TESTING)
+    add_executable(gnostr-test-group-message-model
+        tests/test_group_message_model.c model/gn-group-message-model.c
+        ${PROJECT_ROOT}/marmot-gobject/src/marmot-gobject-message.c
+        ${PROJECT_ROOT}/marmot-gobject/src/marmot-gobject-enums.c)
+    target_include_directories(gnostr-test-group-message-model PRIVATE
+        ${GNOSTR_APP_DIR}/src ${PROJECT_ROOT}/libnostr/include
+        ${PROJECT_ROOT}/marmot-gobject/include ${PROJECT_ROOT}/libmarmot/include
+        ${CMAKE_BINARY_DIR}/marmot-gobject/include ${CMAKE_BINARY_DIR}/libmarmot/include)
+    target_compile_definitions(gnostr-test-group-message-model PRIVATE MARMOT_GOBJECT_STATIC_DEFINE MARMOT_STATIC_DEFINE)
+    target_link_libraries(gnostr-test-group-message-model PRIVATE PkgConfig::GTK4 PkgConfig::JSON_GLIB)
+    if(COMMAND apply_sanitizers)
+        apply_sanitizers(gnostr-test-group-message-model)
+    endif()
+    add_test(NAME gnostr-test-group-message-model COMMAND gnostr-test-group-message-model)
+    set_tests_properties(gnostr-test-group-message-model PROPERTIES TIMEOUT 30 LABELS "mls;plugin;unit;gnostr")
     add_executable(gnostr-test-mls-group-error
         tests/test_mls_group_error.c
         gn-mls-group-error.c)
