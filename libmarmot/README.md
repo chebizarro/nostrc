@@ -1215,6 +1215,12 @@ not read (its validity rules need the frozen unsafe-host set): such a tag is
   older databases on open) and nostrdb (group record version 2) backends;
   0 means unknown (adopted groups, records stored before). Application
   storage backends must persist it too (nostrc-x215).
+- **A storage rollback never reuses a sender generation (nostrc-ow0c).**
+  Every operation that steps our own sender ratchet (application messages,
+  a Remove request of ourselves) records the generations handed out in the
+  epoch under the new `mls_send_hwm` label, and first moves a state behind
+  that record past it. A `MarmotStorage` snapshot must not cover that label
+  or the processed-message markers (see `create_snapshot`).
 - **An invitation survives a storage error (nostrc-w285).**
   `marmot_accept_welcome()` refuses a Welcome for good only on a definitive
   not-found: of its raw data (now `MARMOT_ERR_STORAGE_NOT_FOUND`, was

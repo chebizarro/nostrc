@@ -102,6 +102,7 @@ set(MARMOT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/commits.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/convergence.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/proposals.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/send_guard.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/members.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/groups.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/welcome.c
