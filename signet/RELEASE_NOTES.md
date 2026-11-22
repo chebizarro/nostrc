@@ -8,6 +8,11 @@
   key equality. Clients must send a signed, token-bound server-challenge event
   object in `auth_event` (purpose `signet-bootstrap`); the response rotates the
   pending pairing secret instead of disclosing it. See the README contract.
+- CTAP-HID is now default-deny: `SignetFidoCtapHidConfig` requires an explicit
+  `owner_group` and per-operation authorization/consent callback. Update API
+  callers; device access, channel IDs and claimed request fields are not caller
+  authorization. The daemon has no such backend and refuses startup with
+  `virtual_ctap=true`; keep that configuration disabled when upgrading.
 - Production relay configuration requires `wss://` URLs; insecure relay URLs are rejected.
 - Fleet PSK inputs and audit logs must be protected regular files. Unsafe ownership,
   permissions and symlink destinations are rejected; correct these before upgrading.

@@ -189,6 +189,19 @@ are also Unversioned. Test/checker/documentation changes have no separate
 component bump. No release tag is published by this integration, so Latest
 release and Release tag remain unchanged.
 
+Signet security integration (`nostrc-d1g76`, `nostrc-nmefa`, `nostrc-6dx4o`,
+`nostrc-mnr6a`, `nostrc-k2d0c`, `nostrc-qe8yy`): MINOR-class incompatible
+pre-1.0 bootstrap possession-proof and CTAP-HID authorization/configuration/API
+changes, together with PATCH-class challenge, admission, secret-wiping and
+backup read-back fixes, fold into unreleased **signet 0.10.0**. No additional
+bump is needed before that version is released; incompatible upgrade requirements
+are recorded in `signet/RELEASE_NOTES.md`. Signet's latest release remains
+0.8.0-rc.1 and its published tag remains `signet-v0.8.0-rc.1`.
+The versioned NIP-46 client/provider core (`nostrc-mnr6a`) retains unreleased
+**nip46 0.2.0**: PATCH-class message/parameter wiping changes no public API,
+ABI or wire format and folds into that unreleased version. No authoritative
+version source, declared version or published release/tag changes.
+
 NIP-46 relay-array memory safety (`nostrc-33n89`): PATCH-class fixes fold into
 unreleased nip46 0.2.0 and Groundhog 0.13.0 without a second version bump.
 Parsed relay arrays now carry a trailing NULL, and pairing validation uses the
