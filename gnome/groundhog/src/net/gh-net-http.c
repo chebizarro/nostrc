@@ -82,7 +82,7 @@ request_error(Request *request, GError *error)
   if (request->mode_changed && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED) &&
       !g_cancellable_is_cancelled(request->caller)) {
     g_error_free(error);
-    return g_error_new_literal(G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED,
+    return g_error_new_literal(GH_NET_HTTP_ERROR, GH_NET_HTTP_ERROR_MODE_CHANGED,
                                "The network setting changed before the server answered");
   }
   return error;

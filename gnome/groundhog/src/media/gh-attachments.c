@@ -187,11 +187,11 @@ gh_attachments_describe_error(const GError *error, GhAttachmentsDirection direct
   } else if (download && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_FAILED)) {
     /* GhNetHttp: another HTTP status, or a redirect (never followed). */
     text = g_strdup(_("The server that holds this file refused the download."));
+  } else if (g_error_matches(error, GH_NET_HTTP_ERROR, GH_NET_HTTP_ERROR_MODE_CHANGED)) {
+    text = g_strdup(_("The network setting changed before the server answered."));
   } else if (error->domain == GH_NET_HTTP_ERROR) {
     text = download ? g_strdup_printf(_("The server refused the download (HTTP %d)."), error->code)
                     : g_strdup_printf(_("The server refused the file (HTTP %d)."), error->code);
-  } else if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED)) {
-    text = g_strdup(_("The network setting changed before the server answered."));
   } else if (tor && (tor_unreachable || proxy_error(error) ||
                      g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CONNECTION_REFUSED))) {
     /* Tor mode never connects directly (charter §4.2): nothing went out. */

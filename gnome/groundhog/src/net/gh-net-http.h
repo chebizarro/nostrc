@@ -20,8 +20,8 @@ G_BEGIN_DECLS
  *               unreachable proxy is an error. The outcome is reported to the
  *               app's GhNetSession (gh_net_session_dup_default()).
  * A change of network-mode ends every request made in another mode, with
- * G_IO_ERROR_CONNECTION_CLOSED (never G_IO_ERROR_CANCELLED, which stays the
- * caller's own cancellation): nothing made before the user chose Tor still
+ * GH_NET_HTTP_ERROR_MODE_CHANGED in GH_NET_HTTP_ERROR (never
+ * G_IO_ERROR_CANCELLED, which stays the caller's own cancellation): nothing made before the user chose Tor still
  * completes directly afterwards.
  * The session has no cookie jar, cache, HSTS or authentication store, sends
  * no User-Agent, Referer or Accept-Language, follows no redirect (a 3xx is an
@@ -138,6 +138,8 @@ GSocketConnectable *gh_net_public_address_new(const gchar *hostname, guint16 por
  * request is logged. */
 #define GH_NET_HTTP_ERROR gh_net_http_error_quark()
 GQuark gh_net_http_error_quark(void);
+/* Negative codes distinguish local routing changes from positive HTTP statuses. */
+#define GH_NET_HTTP_ERROR_MODE_CHANGED (-1)
 typedef struct {
   const gchar *method;        /* "GET", "PUT" or "HEAD"; NULL: GET */
   const gchar *uri;

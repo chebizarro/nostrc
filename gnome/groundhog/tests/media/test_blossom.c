@@ -849,7 +849,7 @@ test_mode_change_in_flight(void)
   spin_until(held, &wait);
   g_settings_set_string(f.settings, "network-mode", "tor");
   spin_until(result_done, &r);
-  g_assert_error(r.error, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED);
+  g_assert_error(r.error, GH_NET_HTTP_ERROR, GH_NET_HTTP_ERROR_MODE_CHANGED);
   g_assert_null(r.file);
   g_assert_cmpuint(blossom_fixture_count(f.blossom, "PUT"), ==, 1);
   blossom_fixture_release_held(f.blossom);
@@ -872,7 +872,7 @@ test_local_policy_revoked_in_flight(void)
   spin_until(held, &wait);
   g_settings_set_boolean(f.settings, "allow-local-network", FALSE);
   spin_until(result_done, &r);
-  g_assert_error(r.error, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED);
+  g_assert_error(r.error, GH_NET_HTTP_ERROR, GH_NET_HTTP_ERROR_MODE_CHANGED);
   g_assert_null(r.bytes);
   blossom_fixture_release_held(f.blossom);
   result_clear(&r); fixture_down(&f);

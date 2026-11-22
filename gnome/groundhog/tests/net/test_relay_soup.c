@@ -787,7 +787,7 @@ test_tor_routing(void)
 /* As the relay dispatcher closes every old connection, a mode change ends
  * every GhNetHttp request made in another mode: a direct request whose
  * server has not answered yet never completes once the user picks Tor. It
- * fails with G_IO_ERROR_CONNECTION_CLOSED (callers take CANCELLED for their
+ * fails with GH_NET_HTTP_ERROR_MODE_CHANGED (callers take CANCELLED for their
  * own cancellation and would say nothing). A request of the mode chosen is
  * not touched, and the caller's cancellation is still CANCELLED. */
 static void
@@ -809,7 +809,7 @@ test_http_mode_switch(void)
   spin_until(http_holding, &http);
   g_settings_set_string(settings, "network-mode", "tor");
   spin_until(fetched_done, &fetched);
-  g_assert_error(fetched.error, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED);
+  g_assert_error(fetched.error, GH_NET_HTTP_ERROR, GH_NET_HTTP_ERROR_MODE_CHANGED);
   g_assert_null(fetched.value);
   release_held(&http);
   run_for(50);
@@ -822,7 +822,7 @@ test_http_mode_switch(void)
   g_assert_cmpuint(socks5_fixture_requests(socks)->len, ==, 1);
   g_settings_set_string(settings, "network-mode", "none");
   spin_until(fetched_done, &fetched);
-  g_assert_error(fetched.error, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED);
+  g_assert_error(fetched.error, GH_NET_HTTP_ERROR, GH_NET_HTTP_ERROR_MODE_CHANGED);
   release_held(&http);
   fetched_clear(&fetched);
 
@@ -1349,7 +1349,7 @@ test_allow_local_network(void)
   spin_until(http_holding, &http);
   g_settings_set_boolean(settings, "allow-local-network", FALSE);
   spin_until(fetched_done, &fetched);
-  g_assert_error(fetched.error, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED);
+  g_assert_error(fetched.error, GH_NET_HTTP_ERROR, GH_NET_HTTP_ERROR_MODE_CHANGED);
   fetched_clear(&fetched);
   release_held(&http);
   gh_net_http_get_public_async(net, url, NULL, 1024, NULL, on_get, &fetched);
