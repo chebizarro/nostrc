@@ -1190,47 +1190,10 @@ on_react(GhConversation *conversation, GhMessage *target, const gchar *emoji,
   g_autofree gchar *target_kind_str = g_strdup_printf("%d", target_kind);
 
   if (!add) {
-    /* Remove our own reaction with this emoji. */
-    g_autofree gchar *reaction_id = reactions
-      ? gh_reaction_store_remove_own(reactions, target_id, emoji, NULL) : NULL;
-    if (!reaction_id)
-      return;
-    switch (gh_conversation_get_backend(conversation)) {
-    case GH_CONVERSATION_BACKEND_NIP17: {
-      const gchar *const *recipients = gh_conversation_get_peers(conversation);
-      GObject *outbox_obj = gh_account_store_get_outbox(self->account_store);
-      GhOutbox *outbox = outbox_obj ? GH_OUTBOX(outbox_obj) : NULL;
-      if (outbox && recipients)
-        gh_outbox_send_deletion_room(outbox, recipients, reaction_id, NULL);
-      break;
-    }
-    case GH_CONVERSATION_BACKEND_NIP29: {
-      /* W26 slice B review fix (F2): use kind-5 (NIP-09 author deletion),
-       * not kind 9005 (admin delete-event). A regular member can remove
-       * their own reaction without admin permission. */
-      GObject *service_obj = gh_app_outbox_get_nip29_service(self->outbox);
-      if (GH_IS_NIP29_SERVICE(service_obj)) {
-        GhNip29Room *room = gh_nip29_service_lookup_room(GH_NIP29_SERVICE(service_obj), room_id);
-        if (room)
-          gh_nip29_service_send_deletion(GH_NIP29_SERVICE(service_obj), room, reaction_id,
-                                         NULL);
-      }
-      break;
-    }
-    case GH_CONVERSATION_BACKEND_MLS: {
-#if GROUNDHOG_HAVE_MLS_UI
-      GObject *service_obj = gh_app_outbox_get_mls_service(self->outbox);
-      if (GH_IS_MLS_SERVICE(service_obj)) {
-        GhMlsGroup *group = gh_mls_service_lookup(GH_MLS_SERVICE(service_obj), room_id);
-        if (group)
-          gh_mls_service_send_deletion(GH_MLS_SERVICE(service_obj), group, reaction_id, NULL);
-      }
-#endif
-      break;
-    }
-    default:
-      break;
-    }
+    g_autoptr(GError) error = NULL;
+    if (!gh_app_outbox_remove_reaction(self->outbox, conversation, target_id, emoji, &error) &&
+        error)
+      g_message("Groundhog could not queue a reaction deletion: %s", error->message);
     return;
   }
 

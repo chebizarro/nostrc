@@ -42,6 +42,7 @@
 #include <fcntl.h>
 #include <glib/gstdio.h>
 #include <limits.h>
+#include <sqlite3.h>
 #include <unistd.h>
 #ifdef __linux__
 #include <pthread.h>
@@ -1574,6 +1575,69 @@ test_kc4_unavailable(void)
   fixture_down(&f);
 }
 
+static int
+deny_outbox_insert(void *data, int action, const char *table, const char *column,
+                    const char *db, const char *trigger)
+{
+  (void)data; (void)column; (void)db; (void)trigger;
+  return action == SQLITE_INSERT && g_strcmp0(table, "outbox") == 0
+    ? SQLITE_DENY : SQLITE_OK;
+}
+
+static void
+test_reaction_delete_enqueue(void)
+{
+  Fixture f = { .with_outbox = TRUE };
+  fixture_up(&f, 2);
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  publish_inbox_list(&f, 2);
+  receive_message(&f, "reaction target");
+  g_autofree gchar *room_id = room_of(1, 2);
+  GhConversation *room = gh_conversation_store_lookup(f.model, room_id);
+  g_autoptr(GhMessage) target = g_list_model_get_item(G_LIST_MODEL(room), 0);
+  const gchar *target_id = gh_message_get_rumor_id(target);
+  const gchar *rid = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+  GhReactionStore *reactions = gh_app_outbox_get_reactions(f.sender);
+  g_autoptr(GhReaction) reaction = gh_reaction_new(target_id, rid, hex[2], "+", 10, room_id);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_reaction_store_admit(reactions, reaction, &error));
+  g_assert_no_error(error);
+  GhReactionSummary *summary = gh_reaction_store_lookup(reactions, target_id);
+
+  /* The other two dispatch routes have no running service/room. */
+  g_autofree gchar *nip29_id = gh_message_nip29_room_id("wss://relay.test.invalid", "missing-group");
+  g_autofree gchar *mls_id = g_strconcat("mls:", rid, NULL);
+  g_autoptr(GhConversation) nip29 = gh_conversation_new_nip29(hex[2], nip29_id);
+  g_autoptr(GhConversation) mls = gh_conversation_new_mls(hex[2], mls_id);
+  GhConversation *unavailable[] = { nip29, mls };
+  for (guint i = 0; i < G_N_ELEMENTS(unavailable); i++) {
+    g_assert_false(gh_app_outbox_remove_reaction(f.sender, unavailable[i], target_id, "+", &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED);
+    g_clear_error(&error);
+    g_assert_cmpstr(gh_reaction_summary_own_reaction_id(summary, "+"), ==, rid);
+  }
+
+  /* A real SQLCipher enqueue failure must leave both the chip and durable row. */
+  sqlite3 *db = gh_store_get_db(gh_account_store_get_store(f.store));
+  g_assert_cmpint(sqlite3_set_authorizer(db, deny_outbox_insert, NULL), ==, SQLITE_OK);
+  g_assert_false(gh_app_outbox_remove_reaction(f.sender, room, target_id, "+", &error));
+  g_assert_nonnull(error);
+  g_clear_error(&error);
+  g_assert_cmpint(sqlite3_set_authorizer(db, NULL, NULL), ==, SQLITE_OK);
+  g_assert_cmpstr(gh_reaction_summary_own_reaction_id(summary, "+"), ==, rid);
+  sqlite3_stmt *row = NULL;
+  g_assert_cmpint(sqlite3_prepare_v2(db, "SELECT 1 FROM reactions WHERE reaction_msg_id = ?",
+                                    -1, &row, NULL), ==, SQLITE_OK);
+  sqlite3_bind_text(row, 1, rid, -1, SQLITE_TRANSIENT);
+  g_assert_cmpint(sqlite3_step(row), ==, SQLITE_ROW);
+  sqlite3_finalize(row);
+  g_assert_true(gh_app_outbox_remove_reaction(f.sender, room, target_id, "+", &error));
+  g_assert_no_error(error);
+  g_assert_null(gh_reaction_summary_own_reaction_id(summary, "+"));
+  fixture_down(&f);
+}
+
 /* PT-6: on a switch the inbox stops, the outbox is disposed and the store is
  * closed (no descriptor left on it) before the next account's store opens;
  * the outbox's unsent message survives and resumes when the account returns. */
@@ -2660,6 +2724,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/account-store/kc2-locked", test_kc2_locked);
   g_test_add_func("/groundhog/account-store/kc3-key-missing", test_kc3_key_missing);
   g_test_add_func("/groundhog/account-store/kc4-unavailable", test_kc4_unavailable);
+  g_test_add_func("/groundhog/account-store/reaction-delete-enqueue", test_reaction_delete_enqueue);
   g_test_add_func("/groundhog/account-store/pt6-switch-order", test_pt6_switch_order);
   g_test_add_func("/groundhog/account-store/pt6-switch-mid-open", test_pt6_switch_mid_open);
   g_test_add_func("/groundhog/account-store/st8-forget", test_st8_forget);

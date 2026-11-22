@@ -104,6 +104,11 @@ gboolean gh_app_outbox_delete_message(GhStoreConversations *stored, GObject *out
 gboolean gh_app_outbox_delete_group_message(GhAppOutbox *self, GhConversation *conversation,
                                             GhMessage *message, gboolean for_everyone,
                                             GError **error);
+/* Queue the account's reaction deletion before removing its local chip.
+ * Unavailable backends and failed durable enqueues leave the reaction intact. */
+gboolean gh_app_outbox_remove_reaction(GhAppOutbox *self, GhConversation *conversation,
+                                       const gchar *target_id, const gchar *emoji,
+                                       GError **error);
 /* A received NIP-09 request (GhAppOutboxDeleteFunc): the message @rumor_id
  * in @room_id is deleted as with Delete for Me only if @author_pubkey wrote
  * it; anyone else's is left alone. *out_deleted (nullable) says whether one

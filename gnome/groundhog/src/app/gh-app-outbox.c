@@ -523,6 +523,66 @@ gh_app_outbox_delete_group_message(GhAppOutbox *self, GhConversation *conversati
 }
 
 gboolean
+gh_app_outbox_remove_reaction(GhAppOutbox *self, GhConversation *conversation,
+                               const gchar *target_id, const gchar *emoji, GError **error)
+{
+  g_return_val_if_fail(self != NULL && GH_IS_CONVERSATION(conversation), FALSE);
+  GhReactionSummary *summary = self->reactions
+    ? gh_reaction_store_lookup(self->reactions, target_id) : NULL;
+  g_autofree gchar *reaction_id = summary
+    ? g_strdup(gh_reaction_summary_own_reaction_id(summary, emoji)) : NULL;
+  if (!reaction_id)
+    return FALSE;
+
+  const gchar *room_id = gh_conversation_get_room_id(conversation);
+  (void)room_id;
+  switch (gh_conversation_get_backend(conversation)) {
+  case GH_CONVERSATION_BACKEND_NIP17: {
+    const gchar *const *recipients = gh_conversation_get_peers(conversation);
+    if (!GH_IS_OUTBOX(self->reactions_outbox) || !recipients)
+      goto unavailable;
+    g_autofree gchar *request = gh_outbox_send_deletion_room(
+      GH_OUTBOX(self->reactions_outbox), recipients, reaction_id, error);
+    if (!request)
+      return FALSE;
+    break;
+  }
+#if GROUNDHOG_HAVE_NIP29
+  case GH_CONVERSATION_BACKEND_NIP29: {
+    GhNip29Room *room = GH_IS_NIP29_SERVICE(self->nip29)
+      ? gh_nip29_service_lookup_room(GH_NIP29_SERVICE(self->nip29), room_id) : NULL;
+    if (!room)
+      goto unavailable;
+    g_autoptr(GhNip29Op) op = gh_nip29_service_send_deletion(
+      GH_NIP29_SERVICE(self->nip29), room, reaction_id, error);
+    if (!op)
+      return FALSE;
+    break;
+  }
+#endif
+#if GROUNDHOG_HAVE_MLS
+  case GH_CONVERSATION_BACKEND_MLS: {
+    GhMlsGroup *group = GH_IS_MLS_SERVICE(self->mls)
+      ? gh_mls_service_lookup(GH_MLS_SERVICE(self->mls), room_id) : NULL;
+    if (!group)
+      goto unavailable;
+    if (!gh_mls_service_send_deletion(GH_MLS_SERVICE(self->mls), group, reaction_id, error))
+      return FALSE;
+    break;
+  }
+#endif
+  default:
+    goto unavailable;
+  }
+  return gh_reaction_store_remove(self->reactions, reaction_id, error);
+
+unavailable:
+  g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
+                      "Reactions can't be removed here now");
+  return FALSE;
+}
+
+gboolean
 gh_app_outbox_honour_deletion(GhStoreConversations *stored, GObject *outbox,
                               const gchar *room_id, const gchar *rumor_id,
                               const gchar *author_pubkey, gboolean *out_deleted,
