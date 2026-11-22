@@ -363,22 +363,41 @@ stack_inbox_list(guint key, gint64 created_at, const gchar *const *urls)
   return out;
 }
 
+typedef struct {
+  SendStack *stack;
+  GhConversation *conversation;
+  guint position;
+} StackSelectionWait;
+
+static G_GNUC_UNUSED gboolean
+stack_conversation_listed(gpointer data)
+{
+  StackSelectionWait *wait = data;
+  GhSidebarPage *sidebar = gh_window_get_sidebar(wait->stack->window);
+  GtkSelectionModel *list = gtk_list_view_get_model(gh_sidebar_page_get_list(sidebar));
+  if (!list)
+    return FALSE;
+  guint n = g_list_model_get_n_items(G_LIST_MODEL(list));
+  for (guint i = 0; i < n; i++) {
+    g_autoptr(GObject) item = g_list_model_get_item(G_LIST_MODEL(list), i);
+    if (item == G_OBJECT(wait->conversation)) {
+      wait->position = i;
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
 /* Selects conversation in the sidebar list as a click does, which shows it
  * in the content page. */
 static G_GNUC_UNUSED void
 send_stack_select(SendStack *s, GhConversation *conversation)
 {
+  StackSelectionWait wait = { s, conversation, GTK_INVALID_LIST_POSITION };
+  gh_test_spin_until(stack_conversation_listed, &wait);
   GhSidebarPage *sidebar = gh_window_get_sidebar(s->window);
   GtkSelectionModel *list = gtk_list_view_get_model(gh_sidebar_page_get_list(sidebar));
-  guint n = g_list_model_get_n_items(G_LIST_MODEL(list));
-  guint position = GTK_INVALID_LIST_POSITION;
-  for (guint i = 0; i < n && position == GTK_INVALID_LIST_POSITION; i++) {
-    g_autoptr(GObject) item = g_list_model_get_item(G_LIST_MODEL(list), i);
-    if (item == G_OBJECT(conversation))
-      position = i;
-  }
-  g_assert_cmpuint(position, !=, GTK_INVALID_LIST_POSITION);
-  gtk_selection_model_select_item(list, position, TRUE);
+  gtk_selection_model_select_item(list, wait.position, TRUE);
   g_assert_true(gh_sidebar_page_get_selected(sidebar) == (gpointer)conversation);
   g_assert_true(gh_conversation_view_get_conversation(send_stack_view(s)) == conversation);
   gh_test_run_until_idle();

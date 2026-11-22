@@ -588,6 +588,7 @@ main(void)
   fetch(http, uri);
   fetch(http, uri);
   wait_at_least(&server.handshakes, first + 3);
+  wait_at_least(&server.hits, 5);
   g_assert_cmpint(g_atomic_int_get(&server.hits), ==, 5);
 
   /* 3. The relay transport in Tor mode: two scopes, two circuits. */

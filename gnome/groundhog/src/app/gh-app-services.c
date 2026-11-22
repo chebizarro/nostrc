@@ -2824,6 +2824,7 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
     /* Encrypted groups find people through their kind 10002 (nostrc-0bdg):
      * offered, with consent, only when they run and the account has none. */
     .offer_relay_list = GH_FEATURE_ENCRYPTED_GROUPS,
+    .tor_available = GH_FEATURE_TOR,
   };
   gh_onboarding_attach(window, &onboarding);
 #endif

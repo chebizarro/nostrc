@@ -18,7 +18,7 @@ adapter_free(gpointer data)
 
 GhStatusInbox
 gh_inbox_status_map(GhDmInboxState inbox, GhAccountRelaysState relays,
-                    gboolean inbox_has_relays)
+                    gboolean relays_failed)
 {
   switch (inbox) {
   case GH_DM_INBOX_NO_INBOX_RELAYS:
@@ -36,7 +36,7 @@ gh_inbox_status_map(GhDmInboxState inbox, GhAccountRelaysState relays,
   case GH_DM_INBOX_BACKFILLING: return GH_STATUS_INBOX_BACKFILLING;
   case GH_DM_INBOX_LIVE: return GH_STATUS_INBOX_LIVE;
   case GH_DM_INBOX_ERROR:
-    return inbox_has_relays ? GH_STATUS_INBOX_UNREACHABLE : GH_STATUS_INBOX_ERROR;
+    return relays_failed ? GH_STATUS_INBOX_UNREACHABLE : GH_STATUS_INBOX_ERROR;
   /* The account's store is not open: its own status input explains why
    * (gh-store-status.h), and nothing is subscribed. */
   case GH_DM_INBOX_NO_STORAGE:
@@ -59,7 +59,7 @@ sync_status(GhStatus *status)
   }
   GhStatusInbox state = gh_inbox_status_map(gh_dm_inbox_get_state(inbox),
                                             gh_account_relays_get_state(relays),
-                                            gh_dm_inbox_get_relays(inbox) != NULL);
+                                            gh_dm_inbox_get_relays_failed(inbox));
   guint backlog = state == GH_STATUS_INBOX_BACKFILLING || state == GH_STATUS_INBOX_LIVE ?
                    gh_dm_inbox_get_remote_backlog(inbox) : 0;
   g_object_freeze_notify(G_OBJECT(status));

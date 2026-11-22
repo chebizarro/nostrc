@@ -545,10 +545,40 @@ test_social_hidden_policy(void)
 }
 #endif
 
+static void
+test_local_network_retry(void)
+{
+  Fixture f;
+  fixture_up(&f, TRUE);
+  g_settings_set_boolean(f.settings, "allow-local-network", FALSE);
+  g_autoptr(GhPictureCache) cache = cache_new(&f);
+  gh_picture_cache_allow(cache, A);
+  gh_picture_cache_allow(cache, B);
+  g_assert_null(gh_picture_cache_get(cache, A, URI_A));
+  g_assert_null(gh_picture_cache_get(cache, B, URI_B));
+  g_task_return_new_error(g_ptr_array_index(f.http.tasks, 0), G_IO_ERROR,
+                          G_IO_ERROR_PERMISSION_DENIED, "not a public address");
+  g_task_return_new_error(g_ptr_array_index(f.http.tasks, 1), G_IO_ERROR,
+                          G_IO_ERROR_TIMED_OUT, "unreachable server");
+  drain();
+  g_assert_true(gh_picture_cache_has_failed(cache, URI_A));
+  g_assert_true(gh_picture_cache_has_failed(cache, URI_B));
+  g_settings_set_boolean(f.settings, "allow-local-network", TRUE);
+  g_assert_cmpuint(get_count(&f.http), ==, 3);
+  g_assert_true(gh_picture_cache_is_loading(cache, URI_A));
+  g_assert_true(gh_picture_cache_has_failed(cache, URI_B));
+  g_autoptr(GBytes) png = one_pixel_png();
+  http_answer(&f.http, 2, png);
+  g_assert_nonnull(gh_picture_cache_get(cache, A, URI_A));
+  g_settings_reset(f.settings, "allow-local-network");
+  fixture_down(&f);
+}
+
 int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
+  g_test_add_func("/groundhog/picture-cache/local-network-retry", test_local_network_retry);
   g_test_add_func("/privacy/avatars/master-off-all-surfaces", test_master_off_all_surfaces);
   g_test_add_func("/groundhog/picture-cache/follow-removal", test_follow_removal);
 #if GH_TEST_SOCIAL_POLICY

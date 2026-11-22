@@ -798,6 +798,20 @@ label_text(gpointer widget, GType type, const gchar *name)
   return gtk_label_get_text(template_child(widget, type, name));
 }
 
+static gboolean
+confirmation_presented(gpointer data)
+{
+  AdwAlertDialog *dialog = gh_requests_view_get_confirmation(data);
+  return dialog && gtk_widget_get_mapped(GTK_WIDGET(dialog));
+}
+
+static AdwAlertDialog *
+wait_confirmation(GhRequestsView *view)
+{
+  gh_test_spin_until(confirmation_presented, view);
+  return gh_requests_view_get_confirmation(view);
+}
+
 static void
 respond(AdwAlertDialog *dialog, const gchar *response)
 {
@@ -848,7 +862,7 @@ test_gui_requests_view(void)
 
   /* Delete asks first; Cancel keeps it. */
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(view), "requests.delete", NULL));
-  AdwAlertDialog *confirm = gh_requests_view_get_confirmation(view);
+  AdwAlertDialog *confirm = wait_confirmation(view);
   g_assert_cmpstr(adw_alert_dialog_get_heading(confirm), ==, "Delete Request?");
   g_assert_cmpint(adw_alert_dialog_get_response_appearance(confirm, "delete-confirm"), ==,
                   ADW_RESPONSE_DESTRUCTIVE);
@@ -857,21 +871,21 @@ test_gui_requests_view(void)
   g_assert_null(gh_requests_view_get_confirmation(view));
   g_assert_nonnull(room_of(&f, x));
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(view), "requests.delete", NULL));
-  respond(gh_requests_view_get_confirmation(view), "delete-confirm");
+  respond(wait_confirmation(view), "delete-confirm");
   g_assert_null(room_of(&f, x));
   g_assert_null(gh_requests_view_get_request(view));
 
   /* Block asks first too, naming the npub. */
   g_assert_true(gh_window_open_item(f.window, room_of(&f, y)));
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(view), "requests.block", NULL));
-  confirm = gh_requests_view_get_confirmation(view);
+  confirm = wait_confirmation(view);
   g_autofree gchar *y_short = gh_recipient_npub_short(y->pk);
   g_autofree gchar *heading = g_strdup_printf("Block %s?", y_short);
   g_assert_cmpstr(adw_alert_dialog_get_heading(confirm), ==, heading);
   /* Honest about what Block does: this conversation, undone by writing. */
   g_assert_nonnull(strstr(adw_alert_dialog_get_body(confirm), "in this conversation"));
   g_assert_nonnull(strstr(adw_alert_dialog_get_body(confirm),
-                          "start a new message to them: that unblocks the conversation"));
+                          "start a new message with exactly the same people. That unblocks this conversation"));
   respond(confirm, "block-confirm");
   g_assert_null(room_of(&f, y));
   g_assert_true(blocked(&f, y));

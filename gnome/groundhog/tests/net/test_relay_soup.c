@@ -787,7 +787,7 @@ test_tor_routing(void)
 /* As the relay dispatcher closes every old connection, a mode change ends
  * every GhNetHttp request made in another mode: a direct request whose
  * server has not answered yet never completes once the user picks Tor. It
- * fails with G_IO_ERROR_CONNECTION_CLOSED (callers take CANCELLED for their
+ * fails with GH_NET_HTTP_ERROR_MODE_CHANGED (callers take CANCELLED for their
  * own cancellation and would say nothing). A request of the mode chosen is
  * not touched, and the caller's cancellation is still CANCELLED. */
 static void
@@ -809,7 +809,7 @@ test_http_mode_switch(void)
   spin_until(http_holding, &http);
   g_settings_set_string(settings, "network-mode", "tor");
   spin_until(fetched_done, &fetched);
-  g_assert_error(fetched.error, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED);
+  g_assert_error(fetched.error, GH_NET_HTTP_ERROR, GH_NET_HTTP_ERROR_MODE_CHANGED);
   g_assert_null(fetched.value);
   release_held(&http);
   run_for(50);
@@ -822,7 +822,7 @@ test_http_mode_switch(void)
   g_assert_cmpuint(socks5_fixture_requests(socks)->len, ==, 1);
   g_settings_set_string(settings, "network-mode", "none");
   spin_until(fetched_done, &fetched);
-  g_assert_error(fetched.error, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED);
+  g_assert_error(fetched.error, GH_NET_HTTP_ERROR, GH_NET_HTTP_ERROR_MODE_CHANGED);
   release_held(&http);
   fetched_clear(&fetched);
 
@@ -930,6 +930,7 @@ test_tor_fail_closed(void)
   /* Through at least one reconnect backoff (≤ 1.5 s): still nothing. */
   guint errors = seen.errors;
   wait_at_least(&seen.errors, errors + 1);
+  wait_tor_state(session, GH_NET_TOR_UNREACHABLE);
   g_assert_cmpint(gh_net_session_get_tor_state(session), ==, GH_NET_TOR_UNREACHABLE);
   g_assert_cmpuint(tripwire.accepted, ==, 0);
   g_assert_cmpuint(dns_names->len, ==, 0);
@@ -1069,6 +1070,25 @@ static const gchar *
 username_at(Socks5Fixture *socks, guint index)
 {
   return ((Socks5Request *)g_ptr_array_index(socks5_fixture_requests(socks), index))->username;
+}
+
+static void
+test_upgrade_close_recovery(void)
+{
+  GhNetSession *session = install_session(GH_NET_MODE_NONE, NULL);
+  WireRelay relay = { .serve = TRUE, .close_on_connect = TRUE };
+  relay_init(&relay);
+  ScopeSeen seen = { 0 };
+  GhRelayScope *scope = open_scope(1, relay.url, &seen);
+  wait_at_least(&relay.closed_sockets, 2);
+  g_assert_cmpuint(seen.eoses, ==, 0);
+  relay.close_on_connect = FALSE;
+  wait_for_count(&seen.eoses, 1);
+  gh_relay_scope_cancel(scope);
+  gh_relay_scope_unref(scope);
+  g_free(seen.last_error);
+  relay_clear(&relay);
+  uninstall_session(session);
 }
 
 static void
@@ -1349,7 +1369,7 @@ test_allow_local_network(void)
   spin_until(http_holding, &http);
   g_settings_set_boolean(settings, "allow-local-network", FALSE);
   spin_until(fetched_done, &fetched);
-  g_assert_error(fetched.error, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED);
+  g_assert_error(fetched.error, GH_NET_HTTP_ERROR, GH_NET_HTTP_ERROR_MODE_CHANGED);
   fetched_clear(&fetched);
   release_held(&http);
   gh_net_http_get_public_async(net, url, NULL, 1024, NULL, on_get, &fetched);
@@ -1764,6 +1784,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/net/tor-probe", test_tor_probe);
   g_test_add_func("/groundhog/net/mode-switch", test_mode_switch);
   g_test_add_func("/groundhog/net/isolation", test_isolation);
+  g_test_add_func("/groundhog/net/upgrade-close-recovery", test_upgrade_close_recovery);
   g_test_add_func("/groundhog/net/no-session-refuses", test_no_session_refuses);
   g_test_add_func("/groundhog/net/allow-local-network", test_allow_local_network);
   g_test_add_func("/groundhog/net/public-address", test_public_address);

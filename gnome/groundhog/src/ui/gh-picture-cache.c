@@ -8,6 +8,7 @@ typedef struct {
   GdkTexture *texture;     /* loaded */
   gboolean loading;
   gboolean failed;
+  gboolean address_refused;
   GPtrArray *pubkeys;      /* who asked, for "picture-changed" */
   GCancellable *cancellable;
 } Entry;
@@ -313,6 +314,31 @@ on_master_setting(GSettings *settings, const gchar *key, GhPictureCache *self)
   gh_picture_cache_set_master(self, g_settings_get_boolean(settings, MASTER_KEY));
 }
 
+static void
+on_local_network_setting(GSettings *settings, const gchar *key G_GNUC_UNUSED,
+                         GhPictureCache *self)
+{
+  if (!g_settings_get_boolean(settings, "allow-local-network"))
+    return;
+  GHashTableIter iter;
+  gpointer uri, value;
+  g_hash_table_iter_init(&iter, self->by_uri);
+  while (g_hash_table_iter_next(&iter, &uri, &value)) {
+    Entry *entry = value;
+    if (!entry->failed || !entry->address_refused)
+      continue;
+    for (guint i = 0; i < entry->pubkeys->len; i++) {
+      const gchar *pubkey = g_ptr_array_index(entry->pubkeys, i);
+      if (!eligible(self, pubkey))
+        continue;
+      entry->failed = FALSE;
+      entry->address_refused = FALSE;
+      gh_picture_cache_get(self, pubkey, uri);
+      break;
+    }
+  }
+}
+
 void
 gh_picture_cache_bind_settings(GhPictureCache *self, GSettings *settings)
 {
@@ -325,6 +351,8 @@ gh_picture_cache_bind_settings(GhPictureCache *self, GSettings *settings)
     return;
   g_signal_connect_object(settings, "changed::" MASTER_KEY, G_CALLBACK(on_master_setting), self,
                           0);
+  g_signal_connect_object(settings, "changed::allow-local-network",
+                          G_CALLBACK(on_local_network_setting), self, 0);
   /* The start state, not a change: an off switch at startup fetches nothing
    * and leaves the persisted consents where they are (a later change to
    * off is what revokes them). */
@@ -433,6 +461,7 @@ on_loaded(GObject *source, GAsyncResult *result, gpointer data)
         g_set_object(&entry->texture, loaded->texture);
       } else {
         entry->failed = TRUE;
+        entry->address_refused = g_error_matches(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
         g_debug("picture %s: %s", fetch->uri, error ? error->message : "no image");
       }
       g_autoptr(GHashTable) who = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);

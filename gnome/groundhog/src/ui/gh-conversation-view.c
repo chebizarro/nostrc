@@ -3229,7 +3229,7 @@ static void
 action_public_reference(GtkWidget *widget, const char *name, GVariant *parameter)
 {
   GhConversationView *self = GH_CONVERSATION_VIEW(widget);
-  if (!self->conversation || !self->reference_resolver) return;
+  if (!self->conversation) return;
   const gchar *id = g_variant_get_string(parameter, NULL);
   GhMessage *message = gh_conversation_lookup_message(self->conversation, id);
   if (!message || gh_message_get_withdrawn(message) ||
@@ -3242,15 +3242,16 @@ action_public_reference(GtkWidget *widget, const char *name, GVariant *parameter
   if (!entry || !entry->reference_descriptor ||
       (entry->reference_descriptor->type != GN_NOSTR_REFERENCE_EVENT &&
        entry->reference_descriptor->type != GN_NOSTR_REFERENCE_ADDRESS)) return;
-  /* Repost and quote need the note locally; finding it is the card's
-   * explicit Find on Relays (nostrc-8xfib.6). */
-  g_autofree gchar *local = gn_nostr_reference_resolver_lookup_local(self->reference_resolver,
-                                                                     entry->reference_descriptor);
-  if (!local) return;
+  /* Both the cache and a verified embedded original are local sources. */
+  g_autofree gchar *local = self->reference_resolver
+    ? gn_nostr_reference_resolver_lookup_local(self->reference_resolver, entry->reference_descriptor)
+    : NULL;
+  const gchar *original = local ? local : entry->reference_original;
+  if (!original) return;
   const gchar *operation =
     g_str_equal(name, "conversation.repost-reference") ? "repost" : "quote";
   g_signal_emit(self, signals[SIGNAL_PUBLIC_REFERENCE_ACTION], 0,
-                operation, entry->reference_descriptor->uri);
+                operation, entry->reference_descriptor->uri, original);
 }
 
 static void
@@ -3655,7 +3656,7 @@ gh_conversation_view_class_init(GhConversationViewClass *klass)
     G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
   signals[SIGNAL_PUBLIC_REFERENCE_ACTION] = g_signal_new("public-reference-action",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
-    G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_STRING);
+    G_TYPE_NONE, 3, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
 
   /* The templates name these types; they resolve by name. */
   g_type_ensure(GH_TYPE_TIMELINE_ITEM);

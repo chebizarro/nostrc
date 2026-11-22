@@ -398,13 +398,19 @@ confirm_find(GhPublicNoteUi *self, const gchar *uri)
 
 static void
 public_action(GhConversationView *view, const gchar *action, const gchar *uri,
-              GhPublicNoteUi *self)
+              const gchar *original, GhPublicNoteUi *self)
 {
   if (!gh_account_controller_is_current(self->accounts, self->generation)) return;
   g_autoptr(GnNostrReference) reference = gn_nostr_reference_parse(uri);
   if (!reference || (reference->type != GN_NOSTR_REFERENCE_EVENT &&
                      reference->type != GN_NOSTR_REFERENCE_ADDRESS)) return;
   const GhPublicNote *note = lookup(self, reference);
+  g_autoptr(GhPublicNote) embedded = NULL;
+  if (!note && reference->type == GN_NOSTR_REFERENCE_EVENT) {
+    embedded = gh_public_note_from_signed_json(original, NULL);
+    if (embedded && g_strcmp0(embedded->id, reference->id) == 0)
+      note = embedded;
+  }
   if (!note) return;
   AdwDialog *dialog = gh_public_post_dialog_new(self->accounts, self->relays, note,
                                                 uri, g_str_equal(action, "quote"));
@@ -430,7 +436,8 @@ static gboolean
 resolver_can_fetch(GnNostrReferenceResolver *resolver)
 {
   GhPublicNoteUi *self = (GhPublicNoteUi *)resolver;
-  return writable_store(self) != NULL;
+  return writable_store(self) != NULL &&
+    g_network_monitor_get_network_available(g_network_monitor_get_default());
 }
 
 static void
@@ -443,7 +450,7 @@ resolver_fetch_async(GnNostrReferenceResolver *resolver, const GnNostrReference 
   /* One explicit search at a time: a newer request supersedes the old one. */
   complete_fetch(self, NULL, G_IO_ERROR_CANCELLED, "Superseded");
   self->fetch_task = task;
-  if (!gh_account_controller_is_current(self->accounts, self->generation) ||
+  if (!resolver_can_fetch(resolver) ||
       !confirm_find(self, reference->uri))
     complete_fetch(self, NULL, G_IO_ERROR_CANCELLED, "No relay was contacted");
 }
@@ -525,6 +532,8 @@ gh_public_note_ui_attach(GhWindow *window, const GhPublicNoteUiConfig *config)
                           G_CONNECT_SWAPPED);
   g_signal_connect_object(self->store, "changed", G_CALLBACK(reload), self,
                           G_CONNECT_SWAPPED);
+  g_signal_connect_object(g_network_monitor_get_default(), "network-changed",
+                          G_CALLBACK(reload), self, G_CONNECT_SWAPPED);
   reload(self);
   gh_conversation_view_set_reference_resolver(view, GN_NOSTR_REFERENCE_RESOLVER(self));
   g_object_unref(self);

@@ -2432,6 +2432,34 @@ test_relays_refused(void)
   fixture_down(&f);
 }
 
+/* A final refusal applies to the old targets, not to a newly published inbox. */
+static void
+test_final_refusal_new_inbox(void)
+{
+  Fixture f;
+  fixture_up(&f, NULL, NULL);
+  settle_own(&f, ALICE_INBOX, NULL);
+  fake_resolver_set(f.resolver, hex_bob, GH_INBOX_FOUND, BOB_A, NULL);
+  script(&f.transport, BOB_A, ANSWER_OK, FALSE, "blocked: not accepting");
+  script(&f.transport, ALICE_INBOX, ANSWER_OK, TRUE, "");
+  fixture_outbox(&f);
+  g_autoptr(GhOutboxItem) item = send_text(&f, hex_bob, "moved inbox");
+  gh_test_spin_until(round_over, item);
+  g_assert_cmpint(gh_outbox_item_get_state(item), ==, GH_STORE_OUTBOX_NEEDS_ATTENTION);
+  guint lookups = f.resolver->calls;
+  fake_resolver_set(f.resolver, hex_bob, GH_INBOX_FOUND, BOB_B, NULL);
+  script(&f.transport, BOB_B, ANSWER_OK, TRUE, "");
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_outbox_retry(f.outbox, gh_outbox_item_get_outbox_id(item), &error));
+  g_assert_no_error(error);
+  gh_test_spin_until(state_settled, item);
+  g_assert_cmpuint(f.resolver->calls, >, lookups);
+  g_assert_cmpint(gh_outbox_item_get_status(item), ==, GH_MESSAGE_STATUS_SENT);
+  g_assert_cmpuint(count_opens(&f.transport, hex_bob, BOB_A), ==, 1);
+  g_assert_cmpuint(count_opens(&f.transport, hex_bob, BOB_B), ==, 1);
+  fixture_down(&f);
+}
+
 /* The size bound: the largest text still seals into a wrap (the envelope
  * would fail otherwise); one more step is refused up front, draft kept. */
 static void
@@ -3101,6 +3129,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/outbox/note-to-self", test_note_to_self);
   g_test_add_func("/groundhog/outbox/other-backends", test_other_backends_untouched);
   g_test_add_func("/groundhog/outbox/relays-refused", test_relays_refused);
+  g_test_add_func("/groundhog/outbox/final-refusal-new-inbox", test_final_refusal_new_inbox);
   g_test_add_func("/groundhog/outbox/size-bound", test_size_bound);
   g_test_add_func("/groundhog/outbox/send-lifts-block", test_send_lifts_block);
 #ifdef GROUNDHOG_TEST_WIRE

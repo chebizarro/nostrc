@@ -354,6 +354,7 @@ config_of(Fixture *f)
     .publish_transport = &pub_transport,
     .publish_transport_data = &f->rec,
     .offer_relay_list = TRUE,   /* as with GH_FEATURE_ENCRYPTED_GROUPS (nostrc-0bdg) */
+    .tor_available = TRUE,
   };
 }
 
@@ -733,6 +734,14 @@ test_first_run_publishes(Fixture *f, gconstpointer data)
   g_settings_set_string(f->settings, "network-mode", "tor");
   g_assert_nonnull(strstr(gtk_label_get_text(check_note), "through Tor"));
   g_assert_nonnull(strstr(gtk_label_get_text(check_note), "neither your IP address"));
+  GhInboxSetupConfig guard_config = config_of(f);
+  guard_config.tor_available = FALSE;
+  g_autoptr(GhOnboardingView) guard = g_object_ref_sink(gh_onboarding_view_new(&guard_config));
+  GtkLabel *guard_note = GTK_LABEL(gtk_widget_get_template_child(GTK_WIDGET(guard),
+    GH_TYPE_ONBOARDING_VIEW, "check_note"));
+  g_assert_nonnull(strstr(gtk_label_get_text(guard_note), "won’t connect to relays"));
+  g_assert_null(strstr(gtk_label_get_text(guard_note), "through Tor"));
+
   g_settings_reset(f->settings, "network-mode");
   g_assert_null(strstr(gtk_label_get_text(check_note), "through Tor"));
   const gchar *footer = gtk_label_get_text(child(f, "inbox_footer"));

@@ -27,7 +27,7 @@ G_BEGIN_DECLS
  *
  * Scope handles keep one live REQ (fresh subscription id per REQ) and
  * reconnect after a lost connection with a jittered backoff (1 s doubling to
- * 30 s, times U(0.5, 1.5); charter S5); a failed dial is reported as
+ * 30 s, times U(0.5, 1.5), reset only by a matching EOSE; charter S5); a failed dial is reported as
  * GH_RELAY_NOTICE_ERROR, a lost connection as GH_RELAY_NOTICE_DISCONNECTED.
  * Publish handles make one attempt: the EVENT is sent once the WebSocket is
  * open, and a failed dial or a connection lost before the relay's OK is

@@ -12,10 +12,10 @@ G_BEGIN_DECLS
  *    says why: nothing configured (NO_SOURCES), still looking, the lookup
  *    relays failed (LOOKUP_FAILED), or the account has no inbox list
  *    (MISSING, charter §7.15 #7);
- *  - an inbox ERROR with a subscription is every inbox relay failing
- *    (UNREACHABLE, #8); without one it is a local failure (ERROR). */
+ *  - an inbox ERROR uses the inbox's explicit relay-failure flag to tell
+ *    unreachable relays (#8) from a local failure, even with relay URLs. */
 GhStatusInbox gh_inbox_status_map(GhDmInboxState inbox, GhAccountRelaysState relays,
-                                  gboolean inbox_has_relays);
+                                  gboolean relays_failed);
 
 /* Keeps status's inbox input (and its explanation) in step with inbox and
  * relays until status is finalized. */

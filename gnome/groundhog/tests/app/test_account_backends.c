@@ -188,6 +188,9 @@ test_partial_sources(void)
   g_assert_cmpstr(gh_account_controller_get_active_npub(controller), ==, NULL);
 }
 
+static gboolean listing_callbacks_done(gpointer data);
+static void spin_until(gboolean (*predicate)(gpointer), gpointer data);
+
 static void
 test_migration(void)
 {
@@ -212,7 +215,9 @@ test_migration(void)
   g_autofree gchar *unchanged_method = g_settings_get_string(settings, "signer-method");
   g_assert_cmpstr(unchanged_backend, ==, "nip46");
   g_assert_cmpstr(unchanged_method, ==, "local");
-  drain_idle();
+  /* Both controllers borrow the stack-backed source until their tasks finish. */
+  spin_until(listing_callbacks_done, second);
+  spin_until(listing_callbacks_done, controller);
 }
 
 typedef struct {

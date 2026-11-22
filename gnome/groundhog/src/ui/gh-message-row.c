@@ -886,8 +886,6 @@ update_cards(GhMessageRow *self, GhMessage *message, guint cards)
   }
 }
 
-/* Repost and Quote… need the note in the verified local cache (the
- * card may also have resolved from a repost's embedded original). */
 /* A repost's card is its bubble's content (nostrc-boq9.5, nostrc-1co3q), as
  * gnostr's kind-6 rows show the original instead of the repost's JSON: a
  * repost has no text of its own, and the card says what it shares, or that
@@ -927,7 +925,10 @@ update_public_actions(GhMessageRow *self)
   g_autofree gchar *local = reference && resolver &&
     reference->type != GN_NOSTR_REFERENCE_PERSON && resolved
       ? gn_nostr_reference_resolver_lookup_local(resolver, reference) : NULL;
-  gtk_widget_set_visible(GTK_WIDGET(self->public_actions), local != NULL);
+  const gchar *original = NULL;
+  if (resolved && self->view && self->message)
+    gh_conversation_view_get_reference_target(self->view, self->message, NULL, NULL, &original);
+  gtk_widget_set_visible(GTK_WIDGET(self->public_actions), local != NULL || original != NULL);
 }
 
 /* The reference box (gh-message-reference.blp) is made the first time the

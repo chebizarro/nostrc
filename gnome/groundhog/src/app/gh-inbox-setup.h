@@ -188,6 +188,8 @@ typedef struct {
    * KeyPackages only through it (nostrc-0bdg). The application sets it
    * with GH_FEATURE_ENCRYPTED_GROUPS. */
   gboolean offer_relay_list;
+  /* The executable's transport capability, not the selected network mode. */
+  gboolean tor_available;
 } GhInboxSetupConfig;
 
 /* Where the optional kind-10002 relay list stands. */

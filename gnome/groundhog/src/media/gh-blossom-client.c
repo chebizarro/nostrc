@@ -461,7 +461,7 @@ transfer_revoked(GnBlossomClient *client, GError **error)
   }
   if (!t->revoked || (t->caller && g_cancellable_is_cancelled(t->caller))) return FALSE;
   g_clear_error(error);
-  g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED,
+  g_set_error_literal(error, GH_NET_HTTP_ERROR, GH_NET_HTTP_ERROR_MODE_CHANGED,
                       "The network setting changed before the server answered");
   return TRUE;
 }

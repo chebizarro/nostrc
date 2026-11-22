@@ -212,8 +212,10 @@ scope_message(SoupHandle *handle, NostrEnvelope *envelope)
   }
   case NOSTR_ENVELOPE_EOSE: {
     const gchar *sub_id = nostr_eose_envelope_get_message((NostrEOSEEnvelope *)envelope);
-    if (handle->sub_id && g_strcmp0(sub_id, handle->sub_id) == 0)
+    if (handle->sub_id && g_strcmp0(sub_id, handle->sub_id) == 0) {
+      handle->retry_seconds = 1;
       gh_relay_scope_eose(handle->scope, handle->url);
+    }
     return;
   }
   case NOSTR_ENVELOPE_CLOSED: {
@@ -355,7 +357,6 @@ on_ws_connected(GObject *source, GAsyncResult *result, gpointer data)
     if (handle->publish_side) {
       send_text(handle, handle->event_frame); /* the OK arrives as a message */
     } else {
-      handle->retry_seconds = 1;
       send_req(handle);
     }
   }

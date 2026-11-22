@@ -729,6 +729,7 @@ test_req_exact(void)
   gh_relay_scope_notice(open_req(&f.rec, INBOX_B)->scope, INBOX_B,
                         GH_RELAY_NOTICE_ERROR, NULL, FALSE, "refused");
   g_assert_cmpint(gh_dm_inbox_get_state(f.inbox), ==, GH_DM_INBOX_ERROR);
+  g_assert_true(gh_dm_inbox_get_relays_failed(f.inbox));
   g_assert_nonnull(strstr(gh_dm_inbox_get_error(f.inbox), "sign in"));
   const gchar *detail = NULL;
   g_assert_cmpint(relay_state(f.inbox, INBOX_A, &detail), ==, GH_DM_INBOX_RELAY_AUTH_REQUIRED);
@@ -1851,6 +1852,7 @@ test_unusable_seen_set(void)
   /* Fail closed: no REQ that would turn every replay into a prompt. */
   g_assert_cmpint(gh_dm_inbox_get_state(f.inbox), ==, GH_DM_INBOX_ERROR);
   g_assert_nonnull(gh_dm_inbox_get_error(f.inbox));
+  g_assert_false(gh_dm_inbox_get_relays_failed(f.inbox));
   g_assert_cmpuint(f.rec.reqs->len, ==, 0);
   fixture_down(&f);
 }
