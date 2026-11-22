@@ -63,14 +63,8 @@ struct _NostrRelayPrivate {
     pthread_t dial_owner;
     nsync_cv dial_done_cv; /* synchronous callers join an already claimed dial */
 
-    /* nostrc-xfjg: leases on relay->connection. write_operations takes one
-     * under @mutex in the same critical section that reads the pointer and
-     * drops it once its write returns; a connection taken out of
-     * relay->connection (a reconnect, close, free) is released only after
-     * conn_leases has fallen to zero, so no writer still holds it. (A
-     * reconnect used to leave the old connection's channels to nobody,
-     * because the writer might still be using them.) */
-    int conn_leases;
+    /* Connection-specific lease counts live in connection-private.h, protected
+     * by this relay's mutex; any count reaching zero wakes retirement. */
     nsync_cv conn_leases_cv;
 
     /* Registered callbacks: connection state, NIP-42 AUTH challenge
@@ -147,6 +141,9 @@ void nostr_relay_test_set_dial_hook(NostrRelayDialHook hook, void *data);
  * @hook after its own dial succeeds and before it installs (or, when a
  * nostr_relay_connect() published one meanwhile, adopts) a connection. */
 void nostr_relay_test_set_reconnect_hook(NostrRelayDialHook hook, void *data);
+/* Private barriers after detaching an old connection / before a leased write. */
+void nostr_relay_test_set_retire_hook(NostrRelayDialHook hook, void *data);
+void nostr_relay_test_set_lease_hook(NostrRelayDialHook hook, void *data);
 
 /* nostrc-xbso: releases the caller's reference on an answer channel of
  * nostr_relay_write() it will not read (any more): closes it, so the writer's

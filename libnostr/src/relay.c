@@ -242,7 +242,7 @@ static void relay_callback_slot_call_state(NostrRelay *relay,
 
 static void relay_set_state(NostrRelay *relay, NostrRelayConnectionState new_state);
 static NostrConnection *relay_connection_lease(NostrRelay *r);
-static void relay_connection_unlease(NostrRelay *r);
+static void relay_connection_unlease(NostrRelay *r, NostrConnection *conn);
 static uint64_t get_monotonic_time_ms(void);
 static uint64_t calculate_backoff_with_jitter(int attempt);
 static bool relay_attempt_reconnect(NostrRelay *r);
@@ -673,7 +673,7 @@ bool nostr_relay_wait_established_with_context(NostrRelay *relay, uint32_t timeo
     NostrConnection *conn = relay_connection_lease(relay);
     int outcome = conn ? nostr_connection_wait_handshake_with_context(conn, timeout_ms, cancel) : -1;
     if (outcome == 1) {
-        relay_connection_unlease(relay);
+        relay_connection_unlease(relay, conn);
         return true;
     }
 
@@ -690,7 +690,7 @@ bool nostr_relay_wait_established_with_context(NostrRelay *relay, uint32_t timeo
         }
         nsync_mu_unlock(&relay->priv->mutex);
     }
-    if (conn) relay_connection_unlease(relay);
+    if (conn) relay_connection_unlease(relay, conn);
     relay_callback_slot_call_state(relay, slot, NOSTR_RELAY_STATE_CONNECTED,
                                    NOSTR_RELAY_STATE_DISCONNECTED);
     if (err) {
@@ -745,7 +745,6 @@ NostrRelay *nostr_relay_new(GoContext *context, const char *url, Error **err) {
     relay->priv->subscription_channel_close_queue = go_channel_create(16);
     relay->priv->debug_raw = NULL;
     relay->priv->reconnect_now = go_channel_create(1);
-    relay->priv->conn_leases = 0;
     nsync_cv_init(&relay->priv->conn_leases_cv);
     nsync_cv_init(&relay->priv->dial_done_cv);
     go_wait_group_init(&relay->priv->workers);
@@ -777,20 +776,19 @@ NostrRelay *nostr_relay_ref(NostrRelay *relay) {
     return relay;
 }
 
-/* nostrc-xfjg: a writer's lease on relay->connection (see
- * NostrRelayPrivate.conn_leases). NULL when not connected; otherwise the
- * connection stays usable until relay_connection_unlease(). */
+/* A lease pins this connection, not a replacement published during retirement.
+ * Counts and the shared wakeup CV are protected by the owning relay mutex. */
 static NostrConnection *relay_connection_lease(NostrRelay *r) {
     nsync_mu_lock(&r->priv->mutex);
     NostrConnection *conn = r->connection;
-    if (conn) r->priv->conn_leases++;
+    if (conn) conn->priv->relay_leases++;
     nsync_mu_unlock(&r->priv->mutex);
     return conn;
 }
 
-static void relay_connection_unlease(NostrRelay *r) {
+static void relay_connection_unlease(NostrRelay *r, NostrConnection *conn) {
     nsync_mu_lock(&r->priv->mutex);
-    if (--r->priv->conn_leases == 0) nsync_cv_broadcast(&r->priv->conn_leases_cv);
+    if (--conn->priv->relay_leases == 0) nsync_cv_broadcast(&r->priv->conn_leases_cv);
     nsync_mu_unlock(&r->priv->mutex);
 }
 
@@ -803,13 +801,8 @@ static void relay_connection_unlease(NostrRelay *r) {
  * and a reconnect (which used to only close the old connection and leave its
  * channels to nobody). NULL-safe.
  *
- * Not for a connection that was never stored in relay->connection (a dial
- * that failed, lost a race, or found the relay closing): nostrc-vpha B1. No
- * writer can hold a lease on one (relay_connection_lease() hands out
- * relay->connection only), and conn_leases counts leases on whatever the relay
- * does hold, so waiting here would wait for another connection's writer: one
- * blocked on that connection's full send channel, which only this thread would
- * close. Those go to nostr_connection_release() directly. */
+ * Unpublished losing dials go directly to nostr_connection_release(): nobody
+ * could have leased them. A published connection waits only for its own users. */
 static void relay_retire_connection(NostrRelay *r, NostrConnection *conn) {
     if (!conn) return;
     /* Wake leased handshake waiters before waiting for leases. Do not call
@@ -826,7 +819,7 @@ static void relay_retire_connection(NostrRelay *r, NostrConnection *conn) {
     if (conn->recv_channel) go_channel_close(conn->recv_channel);
     if (conn->send_channel) go_channel_close(conn->send_channel);
     nsync_mu_lock(&r->priv->mutex);
-    while (r->priv->conn_leases > 0)
+    while (conn->priv->relay_leases > 0)
         nsync_cv_wait(&r->priv->conn_leases_cv, &r->priv->mutex);
     nsync_mu_unlock(&r->priv->mutex);
     nostr_connection_release(conn);
@@ -1001,6 +994,18 @@ static _Atomic(NostrRelayDialHook) g_dial_hook = NULL;
 static _Atomic(void *) g_dial_hook_data = NULL;
 static _Atomic(NostrRelayDialHook) g_reconnect_hook = NULL;
 static _Atomic(void *) g_reconnect_hook_data = NULL;
+static _Atomic(NostrRelayDialHook) g_retire_hook = NULL, g_lease_hook = NULL;
+static _Atomic(void *) g_retire_hook_data = NULL, g_lease_hook_data = NULL;
+
+void nostr_relay_test_set_retire_hook(NostrRelayDialHook hook, void *data) {
+    atomic_store(&g_retire_hook_data, data);
+    atomic_store(&g_retire_hook, hook);
+}
+
+void nostr_relay_test_set_lease_hook(NostrRelayDialHook hook, void *data) {
+    atomic_store(&g_lease_hook_data, data);
+    atomic_store(&g_lease_hook, hook);
+}
 
 void nostr_relay_test_set_dial_hook(NostrRelayDialHook hook, void *data) {
     atomic_store(&g_dial_hook_data, data);
@@ -1218,7 +1223,7 @@ static void *write_operations(void *arg) {
                 r->priv->connection_generation == req->connection_generation &&
                 r->priv->auth_state == NOSTR_RELAY_AUTH_STATE_SENT) {
                 conn = r->connection;
-                if (conn) r->priv->conn_leases++;
+                if (conn) conn->priv->relay_leases++;
             }
             nsync_mu_unlock(&r->priv->mutex);
         } else {
@@ -1227,6 +1232,8 @@ static void *write_operations(void *arg) {
         if (!conn) {
             werr = new_error(1, "no current connection or AUTH attempt");
         } else {
+            NostrRelayDialHook lease_hook = atomic_load(&g_lease_hook);
+            if (lease_hook) lease_hook(r, atomic_load(&g_lease_hook_data));
             // Metrics: time WS write and count bytes
             nostr_metric_timer t = {0};
             nostr_metric_timer_start(&t);
@@ -1237,7 +1244,7 @@ static void *write_operations(void *arg) {
                 nostr_metric_counter_add("ws_tx_bytes", (uint64_t)strlen(req->msg));
                 nostr_metric_counter_add("ws_tx_messages", 1);
             }
-            relay_connection_unlease(r);
+            relay_connection_unlease(r, conn);
         }
         // The writer owns req->msg copy
         if (req->msg) free(req->msg);
@@ -1398,6 +1405,8 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
     NostrConnection *old_conn = r->connection;
     r->connection = NULL;
     nsync_mu_unlock(&r->priv->mutex);
+    NostrRelayDialHook retire_hook = atomic_load(&g_retire_hook);
+    if (retire_hook) retire_hook(r, atomic_load(&g_retire_hook_data));
     relay_retire_connection(r, old_conn);
 
     /* Create new connection */
@@ -1422,7 +1431,7 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
         r->connection = new_conn;
     }
     NostrConnection *candidate = !closing ? r->connection : NULL;
-    if (candidate) r->priv->conn_leases++;
+    if (candidate) candidate->priv->relay_leases++;
     nsync_mu_unlock(&r->priv->mutex);
     /* Never published, so released without the lease wait: the writer may hold
      * a lease on the adopted connection, blocked on its full send channel,
@@ -1466,7 +1475,7 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
         slot = relay_callback_slot_ref_locked(r->priv->state_slot);
     }
     nsync_mu_unlock(&r->priv->mutex);
-    relay_connection_unlease(r);
+    relay_connection_unlease(r, candidate);
     relay_callback_slot_call_state(r, slot, old_state, new_state);
     if (current && ready && old_state != new_state)
         nostr_relay_notify_listeners(r, NOSTR_RELAY_LISTEN_CONNECTED);

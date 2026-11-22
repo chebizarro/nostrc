@@ -475,6 +475,98 @@ static void hold_before_publish(NostrRelay *relay, void *data) {
     pthread_mutex_unlock(&barrier->mutex);
 }
 
+static void barrier_wait(DialBarrier *barrier) {
+    struct timespec deadline;
+    clock_gettime(CLOCK_REALTIME, &deadline);
+    deadline.tv_sec += 10;
+    pthread_mutex_lock(&barrier->mutex);
+    while (!barrier->arrived)
+        CHECK(pthread_cond_timedwait(&barrier->changed, &barrier->mutex, &deadline) == 0);
+    pthread_mutex_unlock(&barrier->mutex);
+}
+
+static void barrier_release(DialBarrier *barrier) {
+    pthread_mutex_lock(&barrier->mutex);
+    barrier->release = true;
+    pthread_cond_broadcast(&barrier->changed);
+    pthread_mutex_unlock(&barrier->mutex);
+}
+
+static void barrier_destroy(DialBarrier *barrier) {
+    pthread_cond_destroy(&barrier->changed);
+    pthread_mutex_destroy(&barrier->mutex);
+}
+
+/* Both interleavings hold the real writer after its lease acquisition. The
+ * hold is a condition-variable barrier, not an assumption about scheduling. */
+static void test_retirement_ignores_replacement_lease(void) {
+    int base = nostr_connection_unreleased_count();
+    NostrRelay *relay = relay_for_port(srv.port);
+    Error *err = NULL;
+    CHECK(nostr_relay_connect(relay, &err));
+    CHECK(nostr_relay_wait_established(relay, 10000, &err));
+    DialBarrier retiring = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, false, false };
+    DialBarrier leased = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, false, false };
+    DialBarrier retired = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, false, false };
+    nostr_relay_test_set_retire_hook(hold_before_publish, &retiring);
+    nostr_relay_test_set_reconnect_hook(hold_before_publish, &retired);
+    server_drop();
+    nostr_relay_reconnect_now(relay);
+    barrier_wait(&retiring); /* A detached, retirement has not started */
+    CHECK(nostr_relay_connect(relay, &err)); /* publishes B */
+    nostr_relay_test_set_lease_hook(hold_before_publish, &leased);
+    GoChannel *answer = nostr_relay_write(relay, "[\"REQ\",\"lease\",{}]");
+    CHECK(answer);
+    barrier_wait(&leased); /* writer owns B's lease */
+    barrier_release(&retiring);
+    barrier_wait(&retired); /* A retired while B's lease is still held */
+    CHECK(nostr_connection_unreleased_count() == base + 2); /* B + losing C */
+    barrier_release(&leased);
+    nostr_relay_test_set_lease_hook(NULL, NULL);
+    barrier_release(&retired);
+    nostr_relay_test_set_retire_hook(NULL, NULL);
+    nostr_relay_test_set_reconnect_hook(NULL, NULL);
+    nostr_relay_write_answer_release(answer);
+    nostr_relay_free(relay);
+    CHECK(nostr_connection_unreleased_count() == base);
+    barrier_destroy(&retiring);
+    barrier_destroy(&leased);
+    barrier_destroy(&retired);
+    WAIT_FOR(atomic_load(&srv.open) == 0);
+    puts("  [ok] retiring A ignores the real writer's lease on B");
+}
+
+static void test_losing_dial_ignores_winner_lease(void) {
+    int base = nostr_connection_unreleased_count();
+    NostrRelay *relay = relay_for_port(srv.port);
+    DialBarrier dial = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, false, false };
+    DialBarrier leased = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, false, false };
+    nostr_relay_test_set_dial_hook(hold_before_publish, &dial);
+    pthread_t loser;
+    CHECK(pthread_create(&loser, NULL, dial_thread, relay) == 0);
+    barrier_wait(&dial);
+    nostr_relay_test_set_dial_hook(NULL, NULL);
+    Error *err = NULL;
+    CHECK(nostr_relay_connect(relay, &err));
+    nostr_relay_test_set_lease_hook(hold_before_publish, &leased);
+    GoChannel *answer = nostr_relay_write(relay, "[\"REQ\",\"winner\",{}]");
+    CHECK(answer);
+    barrier_wait(&leased);
+    barrier_release(&dial);
+    void *result = NULL;
+    CHECK(pthread_join(loser, &result) == 0 && result == relay);
+    CHECK(nostr_connection_unreleased_count() == base + 1);
+    barrier_release(&leased);
+    nostr_relay_test_set_lease_hook(NULL, NULL);
+    nostr_relay_write_answer_release(answer);
+    nostr_relay_free(relay);
+    CHECK(nostr_connection_unreleased_count() == base);
+    barrier_destroy(&dial);
+    barrier_destroy(&leased);
+    WAIT_FOR(atomic_load(&srv.open) == 0);
+    puts("  [ok] losing dial never waits on the winner's writer lease");
+}
+
 static void test_close_rejects_inflight_dial(void) {
     int base = nostr_connection_unreleased_count();
     NostrRelay *relay = relay_for_port(srv.port);
@@ -544,7 +636,7 @@ static void hold_reconnect(NostrRelay *relay, void *data) {
 
 static int relay_connection_leases(NostrRelay *relay) {
     nsync_mu_lock(&relay->priv->mutex);
-    int leases = relay->priv->conn_leases;
+    int leases = relay->connection ? (int)relay->connection->priv->relay_leases : 0;
     nsync_mu_unlock(&relay->priv->mutex);
     return leases;
 }
@@ -651,6 +743,8 @@ int main(void) {
     test_close_rejects_inflight_dial();
     test_racing_dials_publish_one_connection();
     test_reconnect_adopts_without_lease_wait();
+    test_retirement_ignores_replacement_lease();
+    test_losing_dial_ignores_winner_lease();
     test_close_answers_writes_when_not_connected();
 
     server_stop();
