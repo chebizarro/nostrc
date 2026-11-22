@@ -432,6 +432,7 @@ mls_group_to_marmot_group(const MlsGroup *mls,
             group->image_nonce = malloc(12);
             if (group->image_nonce) memcpy(group->image_nonce, gde->image_nonce, 12);
         }
+        group->group_data_version = gde->version;
     }
 
     return group;

@@ -468,6 +468,7 @@ legacy_group_from_mls(const MlsGroup *mls, MarmotGroup **out, char ***relays_out
         group->image_nonce = malloc(12);
         if (group->image_nonce) memcpy(group->image_nonce, gde->image_nonce, 12);
     }
+    group->group_data_version = gde->version;
 
     /* Extract relay URLs from gde before freeing */
     if (gde->relay_count > 0 && gde->relays) {

@@ -36,7 +36,8 @@ static const char *SCHEMA_V1 =
     "  last_message_at  INTEGER DEFAULT 0,"
     "  last_message_processed_at INTEGER DEFAULT 0,"
     "  epoch            INTEGER DEFAULT 0,"
-    "  state            INTEGER DEFAULT 0"
+    "  state            INTEGER DEFAULT 0,"
+    "  group_data_version INTEGER DEFAULT 0"   /* since 0.12.0 (nostrc-x215) */
     ");"
 
     /* Messages */
@@ -166,6 +167,25 @@ ensure_schema(sqlite3 *db)
         sqlite3_free(err);
         return -1;
     }
+    /* A groups table made before 0.12.0 lacks group_data_version (the last
+     * column, read by index): add it, the version unknown (0). */
+    sqlite3_stmt *st = NULL;
+    bool has_version = false;
+    if (sqlite3_prepare_v2(db, "PRAGMA table_info(groups)", -1, &st, NULL) != SQLITE_OK)
+        return -1;
+    while ((rc = sqlite3_step(st)) == SQLITE_ROW) {
+        const char *col = (const char *)sqlite3_column_text(st, 1);
+        if (col && strcmp(col, "group_data_version") == 0) has_version = true;
+    }
+    sqlite3_finalize(st);
+    if (rc != SQLITE_DONE) return -1;
+    if (!has_version &&
+        sqlite3_exec(db, "ALTER TABLE groups ADD COLUMN group_data_version INTEGER DEFAULT 0",
+                     NULL, NULL, &err) != SQLITE_OK) {
+        fprintf(stderr, "[marmot-sqlite] Schema upgrade failed: %s\n", err ? err : "unknown");
+        sqlite3_free(err);
+        return -1;
+    }
     return 0;
 }
 
@@ -261,6 +281,7 @@ group_from_row(sqlite3_stmt *stmt)
     g->last_message_processed_at = sqlite3_column_int64(stmt, 11);
     g->epoch = (uint64_t)sqlite3_column_int64(stmt, 12);
     g->state = sqlite3_column_int(stmt, 13);
+    g->group_data_version = (uint16_t)sqlite3_column_int(stmt, 14);
     return g;
 }
 
@@ -460,8 +481,8 @@ sql_save_group(void *ctx, const MarmotGroup *group)
         " image_hash, image_key, image_nonce, "
         " admin_pubkeys, admin_count, "
         " last_message_id, last_message_at, last_message_processed_at, "
-        " epoch, state) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", -1, &stmt, NULL);
+        " epoch, state, group_data_version) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", -1, &stmt, NULL);
     if (rc != SQLITE_OK) return MARMOT_ERR_STORAGE;
 
     bind_group_id(stmt, 1, &group->mls_group_id);
@@ -489,6 +510,7 @@ sql_save_group(void *ctx, const MarmotGroup *group)
     sqlite3_bind_int64(stmt, 12, group->last_message_processed_at);
     sqlite3_bind_int64(stmt, 13, (int64_t)group->epoch);
     sqlite3_bind_int(stmt, 14, group->state);
+    sqlite3_bind_int(stmt, 15, group->group_data_version);
 
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);

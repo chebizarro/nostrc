@@ -948,21 +948,42 @@ marmot_group_apply_group_data(MarmotGroup *group, const MarmotGroupDataExtension
     char *description = gde->description ? strdup(gde->description) : NULL;
     uint8_t (*admins)[32] = NULL;
     if (gde->admin_count > 0 && gde->admins) admins = malloc(gde->admin_count * 32);
+    /* The image the epoch names, and the version that says what its key is
+     * (nostrc-x215: a v1 image_key is the image key, a v2 one a seed). */
+    uint8_t *image_hash = gde->image_hash ? malloc(32) : NULL;
+    uint8_t *image_key = gde->image_key ? malloc(32) : NULL;
+    uint8_t *image_nonce = gde->image_nonce ? malloc(12) : NULL;
     if ((gde->name && !name) || (gde->description && !description) ||
-        (gde->admin_count > 0 && gde->admins && !admins)) {
+        (gde->admin_count > 0 && gde->admins && !admins) ||
+        (gde->image_hash && !image_hash) || (gde->image_key && !image_key) ||
+        (gde->image_nonce && !image_nonce)) {
         free(name);
         free(description);
         free(admins);
+        free(image_hash);
+        free(image_key);
+        free(image_nonce);
         return MARMOT_ERR_MEMORY;
     }
     if (admins) memcpy(admins, gde->admins, gde->admin_count * 32);
+    if (image_hash) memcpy(image_hash, gde->image_hash, 32);
+    if (image_key) memcpy(image_key, gde->image_key, 32);
+    if (image_nonce) memcpy(image_nonce, gde->image_nonce, 12);
     free(group->name);
     free(group->description);
     free(group->admin_pubkeys);
+    free(group->image_hash);
+    if (group->image_key) sodium_memzero(group->image_key, 32);
+    free(group->image_key);
+    free(group->image_nonce);
     group->name = name;
     group->description = description;
     group->admin_pubkeys = admins;
     group->admin_count = admins ? gde->admin_count : 0;
+    group->image_hash = image_hash;
+    group->image_key = image_key;
+    group->image_nonce = image_nonce;
+    group->group_data_version = gde->version;
     return MARMOT_OK;
 }
 

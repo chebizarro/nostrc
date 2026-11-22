@@ -183,6 +183,8 @@ make_kv_key(const char *label, const uint8_t *key, size_t key_len,
  * [8: last_message_processed_at]
  * [8: epoch]
  * [4: state]
+ * version 2 (nostrc-x215) appends [2: group_data_version]; version 1
+ * records read with it 0 (unknown).
  */
 
 static uint8_t *
@@ -199,13 +201,13 @@ serialize_group(const MarmotGroup *g, size_t *out_len)
     size_t size = 1 + 4 + 32 + 4 + name_len + 4 + desc_len
                 + 3 + (g->image_hash ? 32 : 0) + (g->image_key ? 32 : 0) + (g->image_nonce ? 12 : 0)
                 + 4 + g->admin_count * 32
-                + 4 + lmid_len + 8 + 8 + 8 + 4;
+                + 4 + lmid_len + 8 + 8 + 8 + 4 + 2;
 
     uint8_t *buf = malloc(size);
     if (!buf) return NULL;
     uint8_t *p = buf;
 
-    *p++ = 1; /* version */
+    *p++ = 2; /* version */
 
     /* nostr_group_id */
     write_u32_le(p, 32); p += 4;
@@ -243,6 +245,8 @@ serialize_group(const MarmotGroup *g, size_t *out_len)
     write_i64_le(p, g->last_message_processed_at); p += 8;
     write_u64_le(p, g->epoch); p += 8;
     write_i32_le(p, (int32_t)g->state); p += 4;
+    *p++ = (uint8_t)g->group_data_version;
+    *p++ = (uint8_t)(g->group_data_version >> 8);
 
     *out_len = (size_t)(p - buf);
     return buf;
@@ -255,7 +259,8 @@ deserialize_group(const MarmotGroupId *mls_gid, const uint8_t *data, size_t len)
     const uint8_t *p = data;
     const uint8_t *end = data + len;
 
-    if (*p++ != 1) return NULL; /* version check */
+    uint8_t version = *p++;
+    if (version != 1 && version != 2) return NULL;
 
     MarmotGroup *g = marmot_group_new();
     if (!g) return NULL;
@@ -327,6 +332,13 @@ deserialize_group(const MarmotGroupId *mls_gid, const uint8_t *data, size_t len)
     g->last_message_processed_at = read_i64_le(p); p += 8;
     g->epoch = read_u64_le(p); p += 8;
     g->state = read_i32_le(p); p += 4;
+    if (version >= 2) {
+        if (p + 2 != end) goto fail;
+        g->group_data_version = (uint16_t)(p[0] | (p[1] << 8));
+        p += 2;
+    } else if (p != end) {
+        goto fail;
+    }
 
     return g;
 fail:

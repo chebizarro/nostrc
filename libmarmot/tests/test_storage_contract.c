@@ -143,6 +143,15 @@ test_group_save_and_find_by_mls_id(MarmotStorage *s)
     assert(strcmp(found->name, "Alpha") == 0);
     assert(found->epoch == 7);
     assert(found->state == MARMOT_GROUP_STATE_ACTIVE);
+    assert(found->group_data_version == 0);
+    marmot_group_free(found);
+
+    /* nostrc-x215: the MIP-01 version round-trips (v1 image_key is a key). */
+    g->group_data_version = 1;
+    assert(s->save_group(s->ctx, g) == MARMOT_OK);
+    found = NULL;
+    assert(s->find_group_by_mls_id(s->ctx, &g->mls_group_id, &found) == MARMOT_OK);
+    assert(found != NULL && found->group_data_version == 1);
     marmot_group_free(found);
     marmot_group_free(g);
 }
@@ -1064,6 +1073,46 @@ run_contract_tests(const char *backend_name, MarmotStorage *s,
  * main — instantiate and test each available backend
  * ──────────────────────────────────────────────────────────────────────── */
 
+#if MARMOT_TEST_HAVE_SQLITE3_HEADER
+/* nostrc-x215: a database made before 0.12.0 (groups without
+ * group_data_version) opens, its groups read with the version unknown, and
+ * new records keep theirs. */
+static void
+test_sqlite_upgrades_groups_table(MarmotStorage *unused)
+{
+    (void)unused;
+    char db_path[512];
+    snprintf(db_path, sizeof(db_path), "%s/pre_0_12.db", tmp_dir);
+    sqlite3 *db = NULL;
+    assert(sqlite3_open(db_path, &db) == SQLITE_OK);
+    assert(sqlite3_exec(db,
+        "CREATE TABLE groups (mls_group_id BLOB PRIMARY KEY, nostr_group_id BLOB NOT NULL,"
+        " name TEXT, description TEXT, image_hash BLOB, image_key BLOB, image_nonce BLOB,"
+        " admin_pubkeys BLOB, admin_count INTEGER DEFAULT 0, last_message_id TEXT,"
+        " last_message_at INTEGER DEFAULT 0, last_message_processed_at INTEGER DEFAULT 0,"
+        " epoch INTEGER DEFAULT 0, state INTEGER DEFAULT 0);"
+        "INSERT INTO groups (mls_group_id, nostr_group_id, name, epoch, state)"
+        " VALUES (x'0102', zeroblob(32), 'Old', 4, 0);", NULL, NULL, NULL) == SQLITE_OK);
+    sqlite3_close(db);
+
+    MarmotStorage *s = marmot_storage_sqlite_new(db_path, NULL);
+    assert(s != NULL);
+    MarmotGroupId gid = marmot_group_id_new((const uint8_t *)"\x01\x02", 2);
+    MarmotGroup *g = NULL;
+    assert(s->find_group_by_mls_id(s->ctx, &gid, &g) == MARMOT_OK);
+    assert(g && strcmp(g->name, "Old") == 0 && g->epoch == 4 && g->group_data_version == 0);
+    g->group_data_version = 1;
+    assert(s->save_group(s->ctx, g) == MARMOT_OK);
+    marmot_group_free(g);
+    g = NULL;
+    assert(s->find_group_by_mls_id(s->ctx, &gid, &g) == MARMOT_OK);
+    assert(g && g->group_data_version == 1);
+    marmot_group_free(g);
+    marmot_group_id_free(&gid);
+    marmot_storage_free(s);
+}
+#endif
+
 #if MARMOT_TEST_HAVE_NOSTRDB
 /* Overwrite with `with` the byte `offset` bytes before every copy of
  * `marker` in the file (LMDB may keep older copies in freed pages). */
@@ -1194,6 +1243,7 @@ int main(int argc, char **argv)
             TEST(test_sqlite_secure_delete, "sqlite", NULL);
 #if MARMOT_TEST_HAVE_SQLITE3_HEADER
             TEST(test_sqlite_read_errors_are_not_absence, "sqlite", NULL);
+            TEST(test_sqlite_upgrades_groups_table, "sqlite", NULL);
 #endif
             total_backends++;
         } else {
