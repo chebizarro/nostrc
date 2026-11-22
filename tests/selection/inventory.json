@@ -31753,7 +31753,7 @@
         },
         {
           "path": "gnome/grotto-panels/packaging/debian/changelog",
-          "pattern": "(?m)^grotto-panels \\(([0-9.]+)-1\\)"
+          "pattern": "\\Agrotto-panels \\(([0-9.]+)-1\\)"
         },
         {
           "path": "gnome/grotto-panels/packaging/rpm/grotto-panels.spec",

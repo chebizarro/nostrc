@@ -46,8 +46,10 @@ static void command_done(GObject *source, GAsyncResult *result, gpointer data) {
 }
 
 int main(int argc, char **argv) {
-  g_assert_cmpint(argc, ==, 2); /* Installed canonical XML, never a source-tree path. */
-  adw_init();
+  /* Keep unsuppressed transport validation separate from native GTK cache lifetime. */
+  g_assert_true(argc == 2 || (argc == 3 && !strcmp(argv[2], "--host-identity")));
+  gboolean host_identity = argc == 3;
+  if (host_identity) adw_init();
   g_autoptr(GError) error = NULL;
   g_autofree char *xml = NULL;
   g_assert_true(g_file_get_contents(argv[1], &xml, NULL, &error));
@@ -89,13 +91,16 @@ int main(int argc, char **argv) {
   g_assert_cmpstr(grotto_panels_item_get_metadata(item)->public_key, ==, "public-test-identity");
   g_assert_false(grotto_panels_service_can(service, GROTTO_PANEL_SET_PERMISSIONS));
   g_assert_false(grotto_panels_service_can(service, GROTTO_PANEL_RESUME));
-  GtkWidget *window = adw_window_new();
-  g_object_ref_sink(window);
-  GtkWidget *panel = grotto_identity_panel_new(service, NULL);
-  adw_window_set_content(ADW_WINDOW(window), panel);
-  gtk_window_present(GTK_WINDOW(window));
-  while (!gtk_widget_get_mapped(panel) && !timed_out) g_main_context_iteration(NULL, TRUE);
-  g_assert_false(timed_out);
+  GtkWidget *window = NULL;
+  if (host_identity) {
+    window = adw_window_new();
+    g_object_ref_sink(window);
+    GtkWidget *panel = grotto_identity_panel_new(service, NULL);
+    adw_window_set_content(ADW_WINDOW(window), panel);
+    gtk_window_present(GTK_WINDOW(window));
+    while (!gtk_widget_get_mapped(panel) && !timed_out) g_main_context_iteration(NULL, TRUE);
+    g_assert_false(timed_out);
+  }
   g_assert_true(grotto_panels_service_can(service, GROTTO_PANEL_SET_CLIENT_LABEL));
   GrottoPanelCommandArgs args = {.principal = "app:test", .label = "Test label"};
   grotto_panels_service_invoke_async(service, GROTTO_PANEL_SET_CLIENT_LABEL, &args, NULL, command_done, NULL);
@@ -103,8 +108,10 @@ int main(int argc, char **argv) {
   g_assert_false(timed_out);
   g_assert_cmpuint(mutations, ==, 1);
   g_source_remove(watchdog);
-  gtk_window_destroy(GTK_WINDOW(window));
-  g_object_unref(window);
+  if (window) {
+    gtk_window_destroy(GTK_WINDOW(window));
+    g_object_unref(window);
+  }
   /* Drain the adapter's async snapshot references before closing its connection. */
   gpointer weak = service;
   g_object_add_weak_pointer(G_OBJECT(service), &weak);
@@ -116,6 +123,7 @@ int main(int argc, char **argv) {
   g_assert_no_error(error);
   g_assert_true(g_dbus_connection_close_sync(server, NULL, &error));
   g_assert_no_error(error);
-  g_print("PASS: installed pkg-config client, Control1 snapshots, Identity panel, daemon denial\n");
+  g_print("PASS: installed pkg-config client, Control1 snapshots, daemon denial%s\n",
+    host_identity ? ", Identity panel" : "");
   return 0;
 }

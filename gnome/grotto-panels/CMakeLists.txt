@@ -177,7 +177,11 @@ if(BUILD_TESTING)
   add_test(NAME grotto-panels/control1-service COMMAND test-grotto-panels-control1)
   set_tests_properties(grotto-panels/control1-service PROPERTIES TIMEOUT 30 ENVIRONMENT "G_DEBUG=fatal-warnings;GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}/test-schemas;GSETTINGS_BACKEND=memory")
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    add_test(NAME grotto-panels/installed-control1 COMMAND bash
+    add_test(NAME grotto-panels/installed-control1 COMMAND ${CMAKE_COMMAND} -E env
+      "CC=${CMAKE_C_COMPILER}"
+      "CFLAGS=${CMAKE_C_FLAGS} $<JOIN:$<TARGET_PROPERTY:grotto-control-client,COMPILE_OPTIONS>, >"
+      "LDFLAGS=${CMAKE_EXE_LINKER_FLAGS} $<JOIN:$<TARGET_PROPERTY:grotto-control-client,LINK_OPTIONS>, >"
+      bash
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/test-installed-control1.sh"
       "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_INSTALL_FULL_LIBDIR}")
     set_tests_properties(grotto-panels/installed-control1 PROPERTIES TIMEOUT 30)

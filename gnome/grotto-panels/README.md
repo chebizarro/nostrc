@@ -303,7 +303,12 @@ those helpers return NULL/false; the client does not install daemon policy/schem
 
 `ctest -R '^grotto-panels/installed-control1$'` stages `cmake --install` into a
 throwaway DESTDIR, compiles `tests/installed-control1.c` using **only installed
-pkg-config metadata**, and hosts Identity against a test Control1 implementation
-on a private bus/display. It proves snapshots and propagation of a daemon denial,
+pkg-config metadata**, against a test Control1 implementation on a private bus.
+The transport test also runs under ASan/UBSan without GUI leak suppressions.
+For native standalone Identity hosting, run `tests/test-installed-control1.sh
+<module-build-dir> <configured-full-libdir> --host-identity`; this exercises the
+same consumer with a real panel on a private bus/display. Neither route relaxes
+transport assertions or installs anything into the user's session.
+They prove snapshots and propagation of a daemon denial,
 not production caller authorization or live-session qualification. The existing
 Control1 and real-daemon Grotto/Settings suites retain those regression checks.
