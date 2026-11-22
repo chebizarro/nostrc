@@ -1,4 +1,4 @@
-prefix=@CMAKE_INSTALL_PREFIX@
+prefix=${pcfiledir}/@LIBNOSTR_PC_PREFIX_RELATIVE@
 exec_prefix=${prefix}
 libdir=${exec_prefix}/@CMAKE_INSTALL_LIBDIR@
 includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@/nostr
@@ -7,5 +7,7 @@ Name: libnostr
 Description: Nostr protocol implementation for C (core + optional GLib integration)
 Version: @NOSTR_VERSION@
 Requires: @NOSTR_PKG_REQUIRES@
+Requires.private: @NOSTR_PKG_REQUIRES_PRIVATE@
 Libs: -L${libdir} -lnostr
+Libs.private: @NOSTR_PKG_LIBS_PRIVATE@
 Cflags: -I${includedir}

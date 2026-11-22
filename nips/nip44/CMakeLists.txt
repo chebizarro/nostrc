@@ -40,6 +40,15 @@ include(GNUInstallDirs)
 install(TARGETS nostr_nip44_core ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(DIRECTORY ${NIP44_INC}/nostr/nip44/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip44)
 
+# Installed consumers (including libmarmot's Meson build) resolve this module
+# instead of finding an archive and manually reconstructing its dependencies.
+# NIP-44 is not independently versioned: the module tracks its libnostr bundle.
+file(RELATIVE_PATH NIP44_PC_PREFIX_RELATIVE
+  "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig" "${CMAKE_INSTALL_PREFIX}")
+configure_file(nostr-nip44.pc.in nostr-nip44.pc @ONLY)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-nip44.pc"
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+
 # Tests
 enable_testing()
 add_executable(test_nip44_roundtrip ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip44_roundtrip.c)
