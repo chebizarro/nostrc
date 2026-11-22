@@ -296,12 +296,16 @@ window; this is not a cross-file atomic snapshot. Protect staging as secret data
 Logs/config must never contain secret values. Secrets are not in the archive.
 
 Install root-only `secrets/spaces.credentials` in AWS credentials-file format
-with a single-bucket **PutObject-only**, no-delete credential. Set bucket lifecycle
-expiry to 30 days using a separate owner credential. The host cannot issue DeleteObject, but PutObject can overwrite known object
-names. This is **not immutable retention**: host compromise can destroy reachable
-recovery objects by overwrite. Before relying on hostile-host recovery, arrange
-independently controlled archival or storage-side immutable/versioned retention
-that the upload credential cannot undo; prove that mechanism in the restore drill. Enable `signet-backup.timer` only after a successful manual
+with a bucket-scoped **readwrite** credential. DigitalOcean Spaces scoped write
+access includes `DeleteObject`; it is not a PutObject-only or no-delete grant.
+Set bucket lifecycle expiry to 30 days using a separate owner credential.
+A compromised host can overwrite or delete reachable recovery objects. Object
+versioning can help recovery, but is not immutable retention when the credential
+can delete versions. Before relying on hostile-host recovery, arrange protected
+retention or a separate archival copy under independently controlled credentials
+that the host cannot undo; prove that mechanism in the restore drill.
+See [Spaces access permissions](https://docs.digitalocean.com/products/spaces/how-to/manage-access/).
+ Enable `signet-backup.timer` only after a successful manual
 `backup.sh`, verified upload and fresh-host restore. Failed uploads leave local
 staging and the previous successful reference intact; alert, do not report an
 off-host backup. Monitor staging disk use and remove only confirmed-off-host
