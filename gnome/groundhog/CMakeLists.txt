@@ -2820,6 +2820,9 @@ endif()
 if (TARGET groundhog-net AND TARGET groundhog-relay AND NOT GROUNDHOG_WITHOUT_TOR)
   message(STATUS "Groundhog network modes and Tor: enabled")
   add_library(groundhog-net-relay STATIC src/net/gh-relay-soup.c src/net/gh-relay-net.c)
+  if (BUILD_TESTING)
+    target_compile_definitions(groundhog-net-relay PRIVATE GH_RELAY_NET_TEST_HOOKS=1)
+  endif()
   target_link_libraries(groundhog-net-relay PUBLIC groundhog-net groundhog-relay)
   target_compile_options(groundhog-net-relay PRIVATE -Wall -Wextra -Werror)
   target_link_libraries(groundhog PRIVATE groundhog-net-relay)
@@ -2840,6 +2843,20 @@ if (TARGET groundhog-net AND TARGET groundhog-relay AND NOT GROUNDHOG_WITHOUT_TO
     add_test(NAME groundhog-net COMMAND test-groundhog-net)
     set_tests_properties(groundhog-net PROPERTIES TIMEOUT 120
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    # Compile the real dispatcher again without its fixture hook. Linking it
+    # directly prevents the testing archive's dispatcher from being selected.
+    add_executable(test-groundhog-net-production tests/net/test_relay_soup.c
+      tests/net/socks5-fixture.c src/net/gh-relay-net.c)
+    target_compile_definitions(test-groundhog-net-production PRIVATE GH_NET_PRODUCTION_TESTS=1)
+    target_include_directories(test-groundhog-net-production PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/net ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay)
+    target_link_libraries(test-groundhog-net-production PRIVATE groundhog-nip46-session groundhog-net-relay)
+    target_compile_options(test-groundhog-net-production PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(test-groundhog-net-production groundhog-test-schemas)
+    add_test(NAME groundhog-net-production COMMAND test-groundhog-net-production
+      -p /groundhog/net/direct-untrusted-socket-filter)
+    set_tests_properties(groundhog-net-production PROPERTIES TIMEOUT 20
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals;NOSTRC_TEST_ISOLATION=1")
     # W16 review B1 (PD-6): no Groundhog TLS connection offers to resume a
     # session (src/net/gh-net-tls.h). A plain program, not a GTest one:
     # glib-networking disables resumption in any process that called

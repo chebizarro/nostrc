@@ -1125,22 +1125,30 @@ test_direct_untrusted_socket_filter(void)
   Tripwire trip = { 0 };
   tripwire_init(&trip);
   const gchar *hosts[] = { "127.0.0.1", REBIND_HOST };
-  for (guint i = 0; i < G_N_ELEMENTS(hosts); i++) {
-    g_autofree gchar *url = g_strdup_printf("wss://%s:%u/relay", hosts[i], trip.port);
-    ScopeSeen seen = { 0 };
-    GhRelayScope *scope = open_scope(1, url, &seen);
-    wait_at_least(&seen.errors, 1);
-    g_assert_cmpuint(trip.accepted, ==, 0);
-    gh_relay_scope_cancel(scope);
-    gh_relay_scope_unref(scope);
-    PublishSeen sent = { 0 };
-    GhRelayPublish *publish = start_publish(url, "must never reach a private socket", &sent);
-    wait_at_least(&sent.done, 1);
-    g_assert_cmpuint(trip.accepted, ==, 0);
-    g_assert_cmpint(sent.outcome, ==, GH_RELAY_PUBLISH_CONNECTION_FAILED);
-    gh_relay_publish_unref(publish);
-    g_free(seen.last_error);
-    g_free(sent.message);
+#ifdef GH_NET_PRODUCTION_TESTS
+  g_assert_cmpstr(g_getenv("NOSTRC_TEST_ISOLATION"), ==, "1");
+  const gchar *schemes[] = { "ws", "wss" };
+#else
+  const gchar *schemes[] = { "wss" };
+#endif
+  for (guint scheme = 0; scheme < G_N_ELEMENTS(schemes); scheme++) {
+    for (guint i = 0; i < G_N_ELEMENTS(hosts); i++) {
+      g_autofree gchar *url = g_strdup_printf("%s://%s:%u/relay", schemes[scheme], hosts[i], trip.port);
+      ScopeSeen seen = { 0 };
+      GhRelayScope *scope = open_scope(1, url, &seen);
+      wait_at_least(&seen.errors, 1);
+      g_assert_cmpuint(trip.accepted, ==, 0);
+      gh_relay_scope_cancel(scope);
+      gh_relay_scope_unref(scope);
+      PublishSeen sent = { 0 };
+      GhRelayPublish *publish = start_publish(url, "must never reach a private socket", &sent);
+      wait_at_least(&sent.done, 1);
+      g_assert_cmpuint(trip.accepted, ==, 0);
+      g_assert_cmpint(sent.outcome, ==, GH_RELAY_PUBLISH_CONNECTION_FAILED);
+      gh_relay_publish_unref(publish);
+      g_free(seen.last_error);
+      g_free(sent.message);
+    }
   }
   gboolean resolved = FALSE;
   for (guint i = 0; i < dns_names->len; i++)
