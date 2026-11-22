@@ -581,7 +581,7 @@ void nostr_relay_dispatch_control_envelope(NostrRelay *r, NostrEnvelope *envelop
             int64_t *val = (int64_t *)malloc(sizeof(int64_t));
             if (val) {
                 *val = (int64_t)ce->count;
-                go_channel_send(subscription->priv->count_result, val);
+                if (go_channel_send(subscription->priv->count_result, val) != 0) free(val);
             }
             nostr_subscription_unref(subscription);
         } else if (subscription) {
@@ -2365,11 +2365,12 @@ NostrEvent **nostr_relay_query_sync(NostrRelay *relay, GoContext *ctx, NostrFilt
     // Wait for events or until the subscription closes
     // nostrc-9o1: Use proper connection signals instead of arbitrary timeouts
     size_t received_count = 0;
+    char *closed_reason = NULL;
     GoSelectCase cases[] = {
         (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = subscription->events, .value = NULL, .recv_buf = NULL },
         (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = subscription->end_of_stored_events, .value = NULL, .recv_buf = NULL },
         (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = conn_ctx->done, .value = NULL, .recv_buf = NULL },
-        (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = subscription->closed_reason, .value = NULL, .recv_buf = NULL },
+        (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = subscription->closed_reason, .value = NULL, .recv_buf = (void **)&closed_reason },
     };
 
     while (true) {
@@ -2407,6 +2408,7 @@ NostrEvent **nostr_relay_query_sync(NostrRelay *relay, GoContext *ctx, NostrFilt
             return NULL;
         }
         case 3: { // Subscription closed by relay (CLOSED message)
+            free(closed_reason);
             // Relay sent CLOSED - return what we have so far
             nostr_subscription_unsubscribe(subscription);
             *event_count = (int)received_count;
