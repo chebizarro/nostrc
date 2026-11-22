@@ -1442,12 +1442,14 @@ gnostr_pool_subscribe_multi(GNostrPool                   *pool,
     
     GNostrPoolMultiSub *multi_sub = g_new0(GNostrPoolMultiSub, 1);
     multi_sub->pool = pool;
+    g_object_add_weak_pointer(G_OBJECT(pool), (gpointer *)&multi_sub->pool);
     
     /* Deep copy filters for multi-sub lifetime */
     multi_sub->filters = nostr_filters_new();
     if (!multi_sub->filters) {
         g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_CONNECTION_FAILED,
                             "failed to allocate filters");
+        g_object_remove_weak_pointer(G_OBJECT(pool), (gpointer *)&multi_sub->pool);
         g_free(multi_sub);
         return NULL;
     }
@@ -1526,6 +1528,8 @@ gnostr_pool_multi_sub_close(GNostrPoolMultiSub *multi_sub)
             g_signal_handler_disconnect(multi_sub->pool, multi_sub->relay_added_handler_id);
         if (multi_sub->relay_state_changed_handler_id > 0)
             g_signal_handler_disconnect(multi_sub->pool, multi_sub->relay_state_changed_handler_id);
+        g_object_remove_weak_pointer(G_OBJECT(multi_sub->pool), (gpointer *)&multi_sub->pool);
+        multi_sub->pool = NULL;
     }
     
     /* Close all relay subscriptions */
