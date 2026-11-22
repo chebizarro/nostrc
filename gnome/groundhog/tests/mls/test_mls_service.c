@@ -593,6 +593,47 @@ rename_group(App *alice, GhMlsGroup *ga, const gchar *name)
 
 
 static void
+test_round_launch_failure(gconstpointer data)
+{
+  guint boundary = GPOINTER_TO_UINT(data);
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_fake_clock = TRUE;
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Before launch failure", (const guint[]){ BOB }, 1);
+  GhMlsGroup *gb = join(bob, ALICE);
+  wait_live(ga);
+  gh_mls_service_test_fail_round_once(boundary);
+  if (boundary != 2)
+    g_test_expect_message(NULL, G_LOG_LEVEL_WARNING, "*cannot publish a group change:*");
+  OpWait changed = { 0 };
+  gh_mls_service_update_metadata_async(alice->service, ga, "Recovered launch", NULL, NULL,
+                                        on_changed, &changed);
+  spin_until(op_done, &changed, "failed launch completing its caller");
+  if (boundary != 2)
+    g_test_assert_expected_messages();
+  g_assert_false(changed.ok);
+  g_assert_nonnull(changed.error);
+  g_clear_error(&changed.error);
+  g_autofree gchar *pending = pending_commit_id(alice, ga);
+  g_assert_nonnull(pending);
+  gh_clock_fake_advance(alice->clock, 23 * G_USEC_PER_SEC);
+  NameWait recovered = { gb, "Recovered launch" };
+  spin_until(name_is, &recovered, "the durable Commit recovering without restaging");
+  g_autoptr(GPtrArray) events = published(&w.g, 445);
+  gboolean same = FALSE;
+  for (guint i = 0; i < events->len; i++) {
+    g_autofree gchar *id = nostr_event_get_id(g_ptr_array_index(events, i));
+    same |= g_strcmp0(id, pending) == 0;
+  }
+  g_assert_true(same);
+  world_down(&w);
+}
+
+static void
 track_max(GObject *group, GParamSpec *pspec, gpointer data)
 {
   (void)pspec;
@@ -4884,6 +4925,9 @@ main(int argc, char **argv)
   g_test_init(&argc, &argv, NULL);
   mls_world_init();
   g_test_add_func("/groundhog/mls-service/key-packages", test_key_packages);
+  g_test_add_data_func("/groundhog/mls-service/round-create-failure", GUINT_TO_POINTER(1), test_round_launch_failure);
+  g_test_add_data_func("/groundhog/mls-service/round-urls-failure", GUINT_TO_POINTER(2), test_round_launch_failure);
+  g_test_add_data_func("/groundhog/mls-service/round-start-failure", GUINT_TO_POINTER(3), test_round_launch_failure);
 #if GH_MLS_ADOPTED_KEY_PACKAGES
   g_test_add_func("/groundhog/mls-service/create-in-format", test_create_in_format);
 #endif

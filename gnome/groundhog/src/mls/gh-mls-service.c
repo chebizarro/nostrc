@@ -3815,26 +3815,44 @@ round_done(GhRelayPublish *publish, const GhRelayPublishSummary *summary, gpoint
   g_idle_add(round_free_idle, round);
 }
 
+#ifdef GH_MLS_TEST_HOOKS
+static guint test_round_failure;
+void gh_mls_service_test_fail_round_once(guint boundary) { test_round_failure = boundary; }
+#endif
+
 /* Publishes the staged Commit to its relays; takes publish. */
 static void
 round_start(GhMlsGroup *group, GhMlsCommitPublish *publish)
 {
   GhMlsService *self = group->service;
-  if (group->round || !running(self) || !publish->relay_urls || !publish->relay_urls[0]) {
+  if (group->round) {
     gh_mls_commit_publish_free(publish);
-    if (!group->round)
-      schedule_retry(self);
     return;
   }
+  if (!running(self) || !publish->relay_urls || !publish->relay_urls[0]) {
+    g_autoptr(GError) error = g_error_new_literal(GH_MLS_SERVICE_ERROR,
+      GH_MLS_SERVICE_ERROR_NO_RELAYS, "The group change has no available relays");
+    gh_mls_commit_publish_free(publish);
+    complete_waiters(group, error);
+    schedule_retry(self);
+    return;
+  }
+  guint failure = 0;
+#ifdef GH_MLS_TEST_HOOKS
+  failure = test_round_failure;
+  test_round_failure = 0;
+#endif
   Round *round = g_new0(Round, 1);
   round->group = group;
   round->publish = publish;
   g_autoptr(GError) error = NULL;
-  round->relay = gh_relay_publish_new(self->generation, publish->event_json, round_update,
+  round->relay = gh_relay_publish_new(self->generation, failure == 1 ? "{}" : publish->event_json, round_update,
                                       round_done, round, &error);
   if (!round->relay) {
     g_warning("Groundhog cannot publish a group change: %s", error->message);
     round_free(round);
+    complete_waiters(group, error);
+    schedule_retry(self);
     return;
   }
   if (self->publish_deadline)
@@ -3842,7 +3860,10 @@ round_start(GhMlsGroup *group, GhMlsCommitPublish *publish)
   guint added = 0;
   for (guint i = 0; publish->relay_urls[i]; i++) {
     g_autoptr(GError) url_error = NULL;
-    if (!gh_relay_publish_add_url(round->relay, publish->relay_urls[i], &url_error))
+    /* Fault injection changes only this attempt, never the durable Commit. */
+    if (failure == 3) { added++; continue; }
+    if (!gh_relay_publish_add_url(round->relay,
+                                  failure == 2 ? "invalid://relay" : publish->relay_urls[i], &url_error))
       continue;
     /* §4.3: MLS routing relays never learn the account. */
     gh_auth_policy_apply_publish(self->policy, round->relay, GH_AUTH_PURPOSE_MLS_ROUTING,
@@ -3850,7 +3871,11 @@ round_start(GhMlsGroup *group, GhMlsCommitPublish *publish)
     added++;
   }
   if (!added) {
+    g_set_error_literal(&error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NO_RELAYS,
+                        "The group change has no usable relay URLs");
     round_free(round);
+    complete_waiters(group, error);
+    schedule_retry(self);
     return;
   }
   group->round = round;
@@ -3858,6 +3883,8 @@ round_start(GhMlsGroup *group, GhMlsCommitPublish *publish)
     group->round = NULL;
     g_warning("Groundhog cannot publish a group change: %s", error->message);
     round_free(round);
+    complete_waiters(group, error);
+    schedule_retry(self);
   }
 }
 
