@@ -225,6 +225,7 @@ NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filte
     atomic_store(&m->created_time_us, now_us);
 
     nsync_mu_init(&sub->priv->sub_mutex);
+    nsync_mu_init(&sub->priv->fire_mutex);
     // Initialize refcount to 1 (nostrc-nr96)
     atomic_store(&sub->priv->refcount, 1);
     // Initialize wait group for lifecycle thread
@@ -970,14 +971,14 @@ void nostr_subscription_register_with_relay(NostrSubscription *sub) {
     nsync_mu_unlock(&sub->relay->priv->mutex);
 }
 
-static bool subscription_fire_locked(NostrSubscription *subscription, Error **err) {
+static char *subscription_prepare_fire_locked(NostrSubscription *subscription, bool *was_live, Error **err) {
     if (atomic_load(&subscription->priv->unsubbed) || go_context_is_canceled(subscription->context)) {
         if (err) *err = new_error(1, "subscription is canceled");
-        return false;
+        return NULL;
     }
     if (!subscription || !subscription->relay) {
         if (err) *err = new_error(1, "subscription or connection is NULL");
-        return false;
+        return NULL;
     }
     /* Reconnect publishes/replaces this pointer under the relay mutex.
      * We only need its presence here; nostr_relay_write owns the write path
@@ -987,7 +988,7 @@ static bool subscription_fire_locked(NostrSubscription *subscription, Error **er
     nsync_mu_unlock(&subscription->relay->priv->mutex);
     if (!has_connection) {
         if (err) *err = new_error(1, "subscription or connection is NULL");
-        return false;
+        return NULL;
     }
 
     /* nostrc-prqu.4: subscriptions created directly with nostr_subscription_new()
@@ -997,14 +998,12 @@ static bool subscription_fire_locked(NostrSubscription *subscription, Error **er
      * subscriptions from nostr_relay_prepare_subscription(). */
     nostr_subscription_register_with_relay(subscription);
 
-    /* Snapshot the filters pointer to prevent TOCTOU race (nostrc-m13c).
-     * Another thread could NULL subscription->filters between our check and use.
-     * The local snapshot is safe because the caller holds a ref (nostrc-nr96)
-     * and the GObject wrapper owns the filters (nostrc-aaf0). */
+    /* Retirement shares sub_mutex: borrowed filter data cannot be released
+     * until this serialization is complete. No filter pointer leaves it. */
     NostrFilters *filters = subscription->filters;
     if (!filters) {
         if (err) *err = new_error(1, "filters are NULL");
-        return false;
+        return NULL;
     }
 
     // Build the subscription message. Operation is REQ by default, or COUNT if count_result channel is set.
@@ -1012,7 +1011,7 @@ static bool subscription_fire_locked(NostrSubscription *subscription, Error **er
     // For multiple filters: ["OP","<id>",<filter1>,<filter2>,...]
     if (!subscription->priv->id) {
         if (err) *err = new_error(1, "subscription id is NULL");
-        return false;
+        return NULL;
     }
 
     size_t count = filters->count;
@@ -1027,7 +1026,7 @@ static bool subscription_fire_locked(NostrSubscription *subscription, Error **er
     char **filter_strs = (char **)calloc(count, sizeof(char *));
     if (!filter_strs) {
         if (err) *err = new_error(1, "oom for filter strings");
-        return false;
+        return NULL;
     }
     size_t filters_total_len = 0;
     for (size_t i = 0; i < count; ++i) {
@@ -1048,7 +1047,7 @@ static bool subscription_fire_locked(NostrSubscription *subscription, Error **er
                 for (size_t j = 0; j < i; ++j) free(filter_strs[j]);
                 free(filter_strs);
                 if (err) *err = new_error(1, "failed to serialize filter");
-                return false;
+                return NULL;
             }
         }
         filter_strs[i] = s;
@@ -1065,7 +1064,7 @@ static bool subscription_fire_locked(NostrSubscription *subscription, Error **er
         for (size_t i = 0; i < count; ++i) free(filter_strs[i]);
         free(filter_strs);
         if (err) *err = new_error(1, "oom for subscription message");
-        return false;
+        return NULL;
     }
     // Write prefix with OP
     int wrote = snprintf(sub_msg, needed + 1, "[\"%s\",\"%s\",", op, subscription->priv->id);
@@ -1081,64 +1080,48 @@ static bool subscription_fire_locked(NostrSubscription *subscription, Error **er
     sub_msg[offset++] = ']';
     sub_msg[offset] = '\0';
 
-    /* nostrc-prqu.7: wire trace at debug level only (NOSTR_LOG_LEVEL=debug);
-     * it used to go to stderr unconditionally and polluted CLI output. */
-    nostr_rl_log(NLOG_DEBUG, "sub", "sending: %s", sub_msg);
-
-    /* Mark the subscription live BEFORE the REQ is queued: the relay's
-     * message_loop may dispatch the first EVENT as soon as the frame is on
-     * the wire, and dispatch drops events for a subscription that is not yet
-     * live (seen as a lost stored event on a fast local relay, nostrc CI
-     * macOS run 36434000568). Restored if the write fails immediately. */
-    bool was_live = atomic_exchange(&subscription->priv->live, true);
-
-    // Send the subscription request via the relay
-    GoChannel *write_channel = nostr_relay_write(subscription->relay, sub_msg);
     for (size_t i = 0; i < count; ++i) free(filter_strs[i]);
     free(filter_strs);
-    free(sub_msg);
+    /* Publish live before enqueue so an immediate relay EVENT is deliverable.
+     * Retirement shares this mutex and will never wait for queue capacity. */
+    *was_live = atomic_exchange(&subscription->priv->live, true);
+    return sub_msg;
+}
 
-    /* Non-blocking check for immediate write failure only.
-     * DO NOT block here — this function may be called from the GTK main
-     * thread and any blocking wait stalls the entire UI.  The relay's
-     * writer thread completes the WebSocket send asynchronously; if the
-     * relay is truly dead, EOSE timeout / reconnect logic handles it. */
-    {
-        Error *write_err = NULL;
-        GoSelectCase cases[1];
-        cases[0].op = GO_SELECT_RECEIVE;
-        cases[0].chan = write_channel;
-        cases[0].recv_buf = (void **)&write_err;
-
-        GoSelectResult result = go_select_timeout(cases, 1, 0);
-
-        if (result.selected_case >= 0 && write_err) {
-            fprintf(stderr, "[nostr_subscription_fire] write failed: %s\n",
-                    write_err->message ? write_err->message : "unknown");
-            atomic_store(&subscription->priv->live, was_live);
-            if (err) *err = write_err;
-            else free_error(write_err); /* nostrc-vpha R1: nobody else owns it */
-            /* hq-e3ach: drop our reference. */
-            nostr_relay_write_answer_release(write_channel);
-            return false;
-        }
-        /* hq-e3ach: drop our reference; write_operations holds the other.
-         * An Error it sends after the check above is freed here, not left
-         * in the channel (nostrc-xbso R2). */
-        nostr_relay_write_answer_release(write_channel);
+/* Own @sub for the entire enqueue and cancellation reconciliation. Only the
+ * serialized frame crosses the lock boundary, never borrowed filter data. */
+static bool subscription_enqueue_prepared(NostrSubscription *sub, char *msg, bool was_live, Error **err) {
+    nostr_rl_log(NLOG_DEBUG, "sub", "sending: %s", msg);
+    GoChannel *answer = nostr_relay_write(sub->relay, msg);
+    free(msg);
+    Error *write_err = NULL;
+    if (answer) {
+        /* Do not wait for the writer's reply. Queue admission itself may
+         * block, but never while holding sub_mutex. */
+        GoSelectCase cases[1] = {{.op = GO_SELECT_RECEIVE, .chan = answer,
+                                 .recv_buf = (void **)&write_err}};
+        (void)go_select_timeout(cases, 1, 0);
+        nostr_relay_write_answer_release(answer);
+    } else {
+        write_err = new_error(1, "failed to enqueue subscription");
     }
-
-    if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
-        fprintf(stderr, "[sub %s] fire: live=1\n", subscription->priv->id);
+    nsync_mu_lock(&sub->priv->sub_mutex);
+    bool retired = atomic_load(&sub->priv->unsubbed) || go_context_is_canceled(sub->context);
+    if (retired) atomic_store(&sub->priv->live, false);
+    else if (write_err) atomic_store(&sub->priv->live, was_live);
+    nsync_mu_unlock(&sub->priv->sub_mutex);
+    if (retired) {
+        /* Retirement can finish while enqueue waits for space. This CLOSE
+         * follows the raced REQ on the same queue, without blocking teardown
+         * or resurrecting a subscription whose borrowed filters were freed. */
+        nostr_subscription_close(sub, NULL);
+        if (!write_err) write_err = new_error(1, "subscription is canceled");
     }
-
-    // LIFECYCLE: Log subscription fired
-    if (getenv("NOSTR_DEBUG_LIFECYCLE")) {
-        fprintf(stderr, "[SUB_LIFECYCLE] FIRE sid=%s counter=%d relay=%s\n",
-                subscription->priv->id, subscription->priv->counter,
-                subscription->relay && subscription->relay->url ? subscription->relay->url : "null");
+    if (write_err) {
+        if (err) *err = write_err;
+        else free_error(write_err);
+        return false;
     }
-
     return true;
 }
 
@@ -1147,31 +1130,55 @@ bool nostr_subscription_fire(NostrSubscription *sub, Error **err) {
         if (err) *err = new_error(1, "subscription is NULL");
         return false;
     }
+    nostr_subscription_ref(sub);
+    /* Preserve concurrent REQ/refire order and write-failure rollback, but
+     * do not exclude EVENT delivery, unsubscribe or free while enqueue waits. */
+    nsync_mu_lock(&sub->priv->fire_mutex);
     nsync_mu_lock(&sub->priv->sub_mutex);
-    bool ok = subscription_fire_locked(sub, err);
+    bool was_live = false;
+    char *msg = subscription_prepare_fire_locked(sub, &was_live, err);
     nsync_mu_unlock(&sub->priv->sub_mutex);
+    bool ok = msg && subscription_enqueue_prepared(sub, msg, was_live, err);
+    nsync_mu_unlock(&sub->priv->fire_mutex);
+    nostr_subscription_unref(sub);
     return ok;
 }
 
 bool nostr_subscription_refire_since(NostrSubscription *sub, int64_t since, Error **err) {
-    if (!sub || !sub->filters || since <= 0) {
+    if (!sub || !sub->priv || since <= 0) {
         return nostr_subscription_fire(sub, err);
     }
 
-    /* nostrc-hmp: Serialize the whole read-copy/swap/fire/restore sequence.
+    nostr_subscription_ref(sub);
+    /* Preserve concurrent REQ/refire order and write-failure rollback, but
+     * do not exclude EVENT delivery, unsubscribe or free while enqueue waits. */
+    nsync_mu_lock(&sub->priv->fire_mutex);
+    /* nostrc-hmp: Serialize the read-copy/swap/serialize/restore sequence.
      * Concurrent refires (stale + new message_loop threads for a flapping
      * relay) otherwise free each other's temporary filters mid-iteration
      * (heap-use-after-free) and corrupt sub->filters. */
     nsync_mu_lock(&sub->priv->sub_mutex);
     if (atomic_load(&sub->priv->unsubbed) || go_context_is_canceled(sub->context)) {
         nsync_mu_unlock(&sub->priv->sub_mutex);
+        nsync_mu_unlock(&sub->priv->fire_mutex);
+        nostr_subscription_unref(sub);
         if (err) *err = new_error(1, "subscription is canceled");
+        return false;
+    }
+
+    if (!sub->filters) {
+        nsync_mu_unlock(&sub->priv->sub_mutex);
+        nsync_mu_unlock(&sub->priv->fire_mutex);
+        nostr_subscription_unref(sub);
+        if (err) *err = new_error(1, "filters are NULL");
         return false;
     }
 
     NostrFilters *copy = nostr_filters_new();
     if (!copy) {
         nsync_mu_unlock(&sub->priv->sub_mutex);
+        nsync_mu_unlock(&sub->priv->fire_mutex);
+        nostr_subscription_unref(sub);
         if (err) *err = new_error(1, "failed to allocate refire filters");
         return false;
     }
@@ -1181,6 +1188,8 @@ bool nostr_subscription_refire_since(NostrSubscription *sub, int64_t since, Erro
         if (!dup) {
             nostr_filters_free(copy);
             nsync_mu_unlock(&sub->priv->sub_mutex);
+            nsync_mu_unlock(&sub->priv->fire_mutex);
+            nostr_subscription_unref(sub);
             if (err) *err = new_error(1, "failed to copy refire filter");
             return false;
         }
@@ -1193,6 +1202,8 @@ bool nostr_subscription_refire_since(NostrSubscription *sub, int64_t since, Erro
             nostr_filter_clear(&tmp);
             nostr_filters_free(copy);
             nsync_mu_unlock(&sub->priv->sub_mutex);
+            nsync_mu_unlock(&sub->priv->fire_mutex);
+            nostr_subscription_unref(sub);
             if (err) *err = new_error(1, "failed to append refire filter");
             return false;
         }
@@ -1200,10 +1211,14 @@ bool nostr_subscription_refire_since(NostrSubscription *sub, int64_t since, Erro
 
     NostrFilters *orig = sub->filters;
     sub->filters = copy;
-    bool ok = subscription_fire_locked(sub, err);
+    bool was_live = false;
+    char *msg = subscription_prepare_fire_locked(sub, &was_live, err);
     sub->filters = orig;
     nostr_filters_free(copy);
     nsync_mu_unlock(&sub->priv->sub_mutex);
+    bool ok = msg && subscription_enqueue_prepared(sub, msg, was_live, err);
+    nsync_mu_unlock(&sub->priv->fire_mutex);
+    nostr_subscription_unref(sub);
     return ok;
 }
 

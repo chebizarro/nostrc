@@ -2023,7 +2023,7 @@ GoChannel *nostr_relay_write(NostrRelay *r, char *msg) {
     req->msg = msg_copy;
     req->answer = chan;
 
-    // Enqueue request (non-blocking); if fails and context canceled, return error
+    // Enqueue may block while the write queue is full; callers must not hold subscription locks.
     if (go_channel_send(r->priv->write_queue, req) != 0) {
         // Fallback: if cannot enqueue, surface error
         write_error(chan);

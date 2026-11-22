@@ -1030,6 +1030,7 @@
           "libnostr_relay_write_unsent",
           "libnostr_store_txn_audit",
           "libnostr_subscription_dispatch",
+          "libnostr_subscription_enqueue",
           "test_relay_teardown_leaks"
         ],
         "core.linux.asan": [
@@ -1046,6 +1047,7 @@
           "libnostr_relay_write_unsent",
           "libnostr_store_txn_audit",
           "libnostr_subscription_dispatch",
+          "libnostr_subscription_enqueue",
           "test_relay_teardown_leaks"
         ]
       },
@@ -6129,11 +6131,13 @@
     },
     "sanitizer.test_relay_teardown_leaks": {
       "build_targets": [
-        "test_relay_teardown_leaks"
+        "test_relay_teardown_leaks",
+        "test_subscription_enqueue"
       ],
       "cost": "ordinary",
       "ctest_tests": {
         "groundhog.linux.sanitizers": [
+          "libnostr_subscription_enqueue",
           "test_relay_teardown_leaks"
         ]
       },
@@ -14019,6 +14023,7 @@
           "libnostr_relay_write_unsent",
           "libnostr_store_txn_audit",
           "libnostr_subscription_dispatch",
+          "libnostr_subscription_enqueue",
           "test_relay_teardown_leaks"
         ],
         "grotto.linux": [
@@ -14035,6 +14040,7 @@
           "libnostr_relay_write_unsent",
           "libnostr_store_txn_audit",
           "libnostr_subscription_dispatch",
+          "libnostr_subscription_enqueue",
           "test_relay_teardown_leaks"
         ],
         "core.linux": [
@@ -14051,6 +14057,7 @@
           "libnostr_relay_write_unsent",
           "libnostr_store_txn_audit",
           "libnostr_subscription_dispatch",
+          "libnostr_subscription_enqueue",
           "test_relay_teardown_leaks"
         ],
         "grotto.linux.asan_ubsan": [
@@ -14067,6 +14074,7 @@
           "libnostr_relay_write_unsent",
           "libnostr_store_txn_audit",
           "libnostr_subscription_dispatch",
+          "libnostr_subscription_enqueue",
           "test_relay_teardown_leaks"
         ],
         "groundhog.mdk08": [
@@ -14083,6 +14091,7 @@
           "libnostr_relay_write_unsent",
           "libnostr_store_txn_audit",
           "libnostr_subscription_dispatch",
+          "libnostr_subscription_enqueue",
           "test_relay_teardown_leaks"
         ],
         "groundhog.mdk011": [
@@ -14099,6 +14108,7 @@
           "libnostr_relay_write_unsent",
           "libnostr_store_txn_audit",
           "libnostr_subscription_dispatch",
+          "libnostr_subscription_enqueue",
           "test_relay_teardown_leaks"
         ]
       },
@@ -14116,7 +14126,8 @@
         "test_relay_teardown_leaks",
         "test_relay_write_unsent",
         "test_store_txn_audit",
-        "test_subscription_dispatch"
+        "test_subscription_dispatch",
+        "test_subscription_enqueue"
       ],
       "runtime_inputs": []
     },
