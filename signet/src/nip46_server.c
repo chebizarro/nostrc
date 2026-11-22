@@ -46,6 +46,7 @@
 #include "relay_pool_private.h"
 #include <nostr-keys.h>
 #include <secure_buf.h>
+#include "secret_json.h"
 
 /* NIP modules */
 #include <nostr/nip04.h>
@@ -73,7 +74,7 @@ static char *signet_json_quote_string(const char *s) {
 
   JsonGenerator *g = json_generator_new();
   if (!g) {
-    g_object_unref(b);
+    signet_secret_json_builder_unref(b);
     return NULL;
   }
 
@@ -82,20 +83,20 @@ static char *signet_json_quote_string(const char *s) {
   json_generator_set_pretty(g, FALSE);
   char *array_json = json_generator_to_data(g, NULL);
 
-  json_node_free(root);
-  g_object_unref(g);
-  g_object_unref(b);
+  signet_secret_json_node_unref(root);
+  signet_secret_json_generator_unref(g);
+  signet_secret_json_builder_unref(b);
 
   if (!array_json) return NULL;
 
   size_t len = strlen(array_json);
   if (len < 4) {
-    g_free(array_json);
+    signet_secret_gfree(array_json);
     return NULL;
   }
 
   char *quoted = g_strndup(array_json + 1, len - 2);
-  g_free(array_json);
+  signet_secret_gfree(array_json);
   return quoted;
 }
 
@@ -177,16 +178,16 @@ static void signet_audit_nip46(SignetAuditLogger *audit,
   json_builder_end_object(b);
 
   JsonGenerator *g = json_generator_new();
-  if (!g) { g_object_unref(b); return; }
+  if (!g) { signet_secret_json_builder_unref(b); return; }
 
   JsonNode *root = json_builder_get_root(b);
   json_generator_set_root(g, root);
   json_generator_set_pretty(g, FALSE);
   char *json = json_generator_to_data(g, NULL);
 
-  json_node_free(root);
-  g_object_unref(g);
-  g_object_unref(b);
+  signet_secret_json_node_unref(root);
+  signet_secret_json_generator_unref(g);
+  signet_secret_json_builder_unref(b);
 
   if (json) {
     (void)signet_audit_log_json(audit, SIGNET_AUDIT_EVENT_SIGN_REQUEST, json);
@@ -959,7 +960,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   if (err_str) {
     resp_json = nostr_nip46_response_build_err(req_id ? req_id : "", err_str);
   } else {
-    g_autofree char *result_json = NULL;
+    char *result_json = NULL;
     if (result_is_json) {
       result_json = g_strdup(result ? result : "\"\"");
     } else {
@@ -967,6 +968,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
     }
     resp_json = nostr_nip46_response_build_ok(req_id ? req_id : "",
                                                result_json ? result_json : "\"\"");
+    signet_secret_gfree(result_json);
   }
 
   /* 9) Encrypt response (NIP-44 v2) */
