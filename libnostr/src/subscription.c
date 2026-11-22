@@ -397,6 +397,8 @@ void nostr_subscription_free(NostrSubscription *sub) {
                 eosed ? 1 : 0, unsubbed ? 1 : 0);
     }
 
+    nostr_subscription_unsubscribe(sub);
+
     // IMPORTANT: Remove from relay map FIRST to prevent message_loop from
     // dispatching events to this subscription while we're freeing it.
     // nostrc-sub-uaf: Hold relay priv mutex while removing to serialise with
@@ -823,17 +825,17 @@ void nostr_subscription_unsubscribe(NostrSubscription *sub) {
                 already_unsubbed ? 1 : 0, eosed ? 1 : 0);
     }
 
-    // Idempotent: ensure we only execute unsubscribe logic once
+    /* Serialize retirement with filter serialization/refire. Once this returns,
+     * no admitted fire can still read caller-owned filters. */
+    nsync_mu_lock(&sub->priv->sub_mutex);
     if (atomic_exchange(&sub->priv->unsubbed, true)) {
+        nsync_mu_unlock(&sub->priv->sub_mutex);
         return;
     }
-
-    // Cancel the subscription's context (idempotent; first claimant wins,
-    // nostrc-val0v)
-    {
-        CancelFunc cancel = subscription_claim_cancel(sub);
-        if (cancel) cancel(sub->context);
-    }
+    CancelFunc cancel = sub->priv->cancel;
+    sub->priv->cancel = NULL;
+    nsync_mu_unlock(&sub->priv->sub_mutex);
+    if (cancel) cancel(sub->context);
     nostr_metric_counter_add("sub_unsubscribe", 1);
 
     // Mark as no longer live; CLOSE will be handled separately if needed
@@ -968,7 +970,11 @@ void nostr_subscription_register_with_relay(NostrSubscription *sub) {
     nsync_mu_unlock(&sub->relay->priv->mutex);
 }
 
-bool nostr_subscription_fire(NostrSubscription *subscription, Error **err) {
+static bool subscription_fire_locked(NostrSubscription *subscription, Error **err) {
+    if (atomic_load(&subscription->priv->unsubbed) || go_context_is_canceled(subscription->context)) {
+        if (err) *err = new_error(1, "subscription is canceled");
+        return false;
+    }
     if (!subscription || !subscription->relay) {
         if (err) *err = new_error(1, "subscription or connection is NULL");
         return false;
@@ -1136,6 +1142,17 @@ bool nostr_subscription_fire(NostrSubscription *subscription, Error **err) {
     return true;
 }
 
+bool nostr_subscription_fire(NostrSubscription *sub, Error **err) {
+    if (!sub || !sub->priv) {
+        if (err) *err = new_error(1, "subscription is NULL");
+        return false;
+    }
+    nsync_mu_lock(&sub->priv->sub_mutex);
+    bool ok = subscription_fire_locked(sub, err);
+    nsync_mu_unlock(&sub->priv->sub_mutex);
+    return ok;
+}
+
 bool nostr_subscription_refire_since(NostrSubscription *sub, int64_t since, Error **err) {
     if (!sub || !sub->filters || since <= 0) {
         return nostr_subscription_fire(sub, err);
@@ -1146,6 +1163,11 @@ bool nostr_subscription_refire_since(NostrSubscription *sub, int64_t since, Erro
      * relay) otherwise free each other's temporary filters mid-iteration
      * (heap-use-after-free) and corrupt sub->filters. */
     nsync_mu_lock(&sub->priv->sub_mutex);
+    if (atomic_load(&sub->priv->unsubbed) || go_context_is_canceled(sub->context)) {
+        nsync_mu_unlock(&sub->priv->sub_mutex);
+        if (err) *err = new_error(1, "subscription is canceled");
+        return false;
+    }
 
     NostrFilters *copy = nostr_filters_new();
     if (!copy) {
@@ -1178,7 +1200,7 @@ bool nostr_subscription_refire_since(NostrSubscription *sub, int64_t since, Erro
 
     NostrFilters *orig = sub->filters;
     sub->filters = copy;
-    bool ok = nostr_subscription_fire(sub, err);
+    bool ok = subscription_fire_locked(sub, err);
     sub->filters = orig;
     nostr_filters_free(copy);
     nsync_mu_unlock(&sub->priv->sub_mutex);
@@ -1474,6 +1496,9 @@ AsyncCleanupHandle *nostr_subscription_free_async(NostrSubscription *sub, uint64
     atomic_store(&handle->refs, 2); /* the caller's and the worker's */
     handle->timeout_ms = timeout_ms;
 
+    /* Revoke fire/refire before handing cleanup to another thread. The caller
+     * can release borrowed filters as soon as this API returns successfully. */
+    nostr_subscription_unsubscribe(sub);
     (void)pthread_once(&g_async_cleanup_exit_once, async_cleanup_register_exit_wait);
     async_cleanup_running_add(1);
     /* Start cleanup thread */

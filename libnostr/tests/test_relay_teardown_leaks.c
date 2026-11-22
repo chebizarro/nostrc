@@ -617,6 +617,34 @@ static void test_publish_timeout_during_disconnect(void) {
     puts("  [ok] publish timeout cannot free a detached disconnect waiter");
 }
 
+static void test_async_retirement_revokes_refire(void) {
+    NostrRelay *relay = relay_for_port(srv.port);
+    Error *err = NULL;
+    CHECK(nostr_relay_connect(relay, &err));
+    CHECK(nostr_relay_wait_established(relay, 10000, &err));
+    NostrFilters *filters = nostr_filters_new();
+    NostrFilter filter = {0};
+    CHECK(nostr_filters_add(filters, &filter));
+    NostrSubscription *sub = nostr_relay_prepare_subscription(relay, NULL, filters);
+    CHECK(sub && nostr_subscription_fire(sub, &err));
+    nostr_subscription_ref(sub); /* a reconnect snapshot still holds this ref */
+    AsyncCleanupHandle *handle = nostr_subscription_free_async(sub, 10000);
+    CHECK(handle);
+    nostr_subscription_cleanup_abandon(handle);
+    nostr_filters_free(filters); /* permitted immediately, not after worker completion */
+    CHECK(!nostr_subscription_refire_since(sub, 1, &err));
+    CHECK(err);
+    free_error(err);
+    err = NULL;
+    CHECK(!nostr_subscription_fire(sub, &err));
+    CHECK(err);
+    free_error(err);
+    nostr_subscription_unref(sub);
+    nostr_relay_free(relay);
+    WAIT_FOR(atomic_load(&srv.open) == 0);
+    puts("  [ok] async retirement revokes refire before releasing borrowed filters");
+}
+
 static void test_close_rejects_inflight_dial(void) {
     int base = nostr_connection_unreleased_count();
     NostrRelay *relay = relay_for_port(srv.port);
@@ -796,6 +824,7 @@ int main(void) {
     test_retirement_ignores_replacement_lease();
     test_losing_dial_ignores_winner_lease();
     test_publish_timeout_during_disconnect();
+    test_async_retirement_revokes_refire();
     test_close_answers_writes_when_not_connected();
 
     server_stop();
