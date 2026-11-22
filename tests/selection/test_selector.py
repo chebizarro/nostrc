@@ -153,7 +153,7 @@ class PolicyTests(unittest.TestCase):
     def test_nip78_source_and_fixture_select_only_its_checks(self):
         p = s.load_inventory(ROOT / "tests/selection/inventory.json")
         for path in ("nips/nip78/src/nip78.c", "nips/nip78/tests/test_nip78.c",
-                     "nips/nip78/include/nostr/nip78/nip78.h", "nips/nip78/nip78.pc.in"):
+                     "nips/nip78/include/nostr/nip78/nip78.h", "nips/nip78/CMakeLists.txt"):
             with self.subTest(path=path):
                 result = plan(p, paths=(path,))
                 self.assertEqual(result["effective_mode"], "affected")

@@ -23,6 +23,14 @@ function(declare_component_version name major minor micro)
 
   set(_version "${major}.${minor}.${micro}")
 
+  # project(name) can leave empty normal variables shadowing these cache
+  # entries on reconfigure (CMP0126). Publish the declaration to the caller
+  # as well, so VERSION/SOVERSION and .pc files cannot silently become empty.
+  set(${name}_VERSION_MAJOR "${major}" PARENT_SCOPE)
+  set(${name}_VERSION_MINOR "${minor}" PARENT_SCOPE)
+  set(${name}_VERSION_MICRO "${micro}" PARENT_SCOPE)
+  set(${name}_VERSION "${_version}" PARENT_SCOPE)
+
   set(${name}_VERSION_MAJOR "${major}" CACHE STRING
     "${name} major version" FORCE)
   set(${name}_VERSION_MINOR "${minor}" CACHE STRING

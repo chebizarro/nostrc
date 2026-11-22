@@ -27,7 +27,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
-declare_component_version(LIBGO 0 3 0)
+declare_component_version(LIBGO 0 3 1)
 
 # Optional: enable more aggressive local optimizations for libgo
 include(CheckCCompilerFlag)

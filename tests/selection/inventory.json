@@ -32902,9 +32902,9 @@
         "core.macos.asan"
       ],
       "coverage_gap": "root_asan_execution_contract",
-      "source_sha256": "6e87f66cb2998ef3ed24234a42560252f4a9cda8c7ea198ff9e78a7e4f67a15d",
+      "source_sha256": "2e2cd3f6c38b54838e8859877171753bce1c3c9b6366015841fa812d8054be61",
       "unsupported_reason": "Root Linux/macOS ASan profiles exist; three original exclusions, separate audit/fuzz invocations, ambient setup suffixes and complete postbuild/runtime union remain gaps.",
-      "workflow_sha256": "bbb3eed4ff6e47769ffb9510ae0fdf1e926a6b716777f2e7cf3bd8f74616fe1e"
+      "workflow_sha256": "c805d65bec3e4639eef1685778edd260361dada72c1affdc916043b3832e13a8"
     },
     ".github/workflows/release-validation.yml:identity": {
       "matrix_source": "",

@@ -37,7 +37,6 @@ endif()
 # libporthome's installed static closure needs the public KDF implementation,
 # not a private-source copy. The optional GLib layer is not part of that closure.
 include(GNUInstallDirs)
-install(TARGETS nostr_nip44_core ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(DIRECTORY ${NIP44_INC}/nostr/nip44/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip44)
 
 # Tests
@@ -82,3 +81,7 @@ target_link_libraries(nip44_demo_encrypt PRIVATE nostr nostr_nip44_core OpenSSL:
 add_executable(nip44_vector_demo ${CMAKE_CURRENT_SOURCE_DIR}/examples/nip44_vector_demo.c)
 target_include_directories(nip44_vector_demo PRIVATE ${NIP44_INC})
 target_link_libraries(nip44_vector_demo PRIVATE nostr nostr_nip44_core OpenSSL::Crypto)
+
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcNipPackage.cmake")
+declare_component_version(nip44 0 1 1)
+nostrc_install_nip(nostr_nip44_core nip44 "nostr >= 2.5.2" "" EXTERNAL_PRIVATE openssl libsecp256k1)
