@@ -738,6 +738,38 @@ static void test_adoption_write_failure_retries(void) {
 
 /* --------------------------------- main ---------------------------------- */
 
+static void test_protected_passkey_psk(void) {
+  char *key = tmp_path("psk"), *link = tmp_path("psk-link"), *path = tmp_path("psk.ini");
+  write_file(key, MASTER_KEY "\n");
+  char *ini = g_strdup_printf("[passkeys]\nsync_key_file=%s\n", key);
+  write_file(path, ini); g_free(ini);
+  SignetConfig cfg;
+  CHECK(signet_config_load(path, &cfg) == 0 && cfg.passkeys_sync_psk_set);
+  signet_config_clear(&cfg);
+  CHECK(g_chmod(key, 0644) == 0);
+  CHECK(signet_config_load(path, &cfg) != 0);
+  CHECK(g_chmod(key, 0600) == 0);
+  CHECK(symlink(key, link) == 0);
+  g_setenv("SIGNET_PASSKEYS_SYNC_KEY_FILE", link, TRUE);
+  CHECK(signet_config_load(path, &cfg) != 0);
+  g_unsetenv("SIGNET_PASSKEYS_SYNC_KEY_FILE");
+  write_file(key, "not-hex");
+  CHECK(signet_config_load(path, &cfg) != 0);
+  char oversized[4098]; memset(oversized, 'a', sizeof(oversized)-1); oversized[sizeof(oversized)-1] = 0;
+  write_file(key, oversized);
+  CHECK(signet_config_load(path, &cfg) != 0);
+  g_setenv("SIGNET_REQUIRE_ENCRYPTED_DB", "true", TRUE);
+  write_file(path, "[passkeys]\nsync_key=" MASTER_KEY "\n");
+  CHECK(signet_config_load(path, &cfg) != 0);
+  write_file(path, "[passkeys]\n");
+  g_setenv("SIGNET_PASSKEYS_SYNC_KEY", MASTER_KEY, TRUE);
+  CHECK(signet_config_load(path, &cfg) != 0);
+  g_unsetenv("SIGNET_PASSKEYS_SYNC_KEY");
+  g_unsetenv("SIGNET_REQUIRE_ENCRYPTED_DB");
+  unlink(key); unlink(link); unlink(path); g_free(key); g_free(link); g_free(path);
+  puts("test_protected_passkey_psk: PASS");
+}
+
 int main(void) {
   GError *err = NULL;
   g_tmpdir = g_dir_make_tmp("signet-config-reload-XXXXXX", &err);
@@ -757,6 +789,7 @@ int main(void) {
   g_setenv("SIGNET_BUNKER_NSEC_FILE", nsec_path, TRUE);
 
   printf("test_config_reload:\n");
+  test_protected_passkey_psk();
   test_adoption_write_failure_retries();
   test_signed_d2_writeback();
   test_invalid_candidate_retains_last_valid();

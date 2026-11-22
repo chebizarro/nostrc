@@ -195,32 +195,32 @@ static bool signet_hex_to_bytes32(const char *hex, uint8_t out[32]) {
   return true;
 }
 
-static void signet_config_resolve_passkey_psk(SignetConfig *cfg) {
-  if (!cfg) return;
+static bool signet_config_encrypted_required(void) {
+  const char *v = g_getenv("SIGNET_REQUIRE_ENCRYPTED_DB");
+  return v && (!g_ascii_strcasecmp(v, "true") || !strcmp(v, "1") ||
+               !g_ascii_strcasecmp(v, "yes") || !g_ascii_strcasecmp(v, "on"));
+}
+
+static int signet_config_resolve_passkey_psk(SignetConfig *cfg) {
+  if (!cfg) return -1;
   cfg->passkeys_sync_psk_set = false;
   secure_wipe(cfg->passkeys_sync_psk, sizeof(cfg->passkeys_sync_psk));
+  if (cfg->passkeys_sync_key[0] &&
+      (signet_config_encrypted_required() || cfg->passkeys_sync_key_file[0])) return -1;
 
-  char candidate[SIGNET_MAX_HEX_32_STRLEN];
-  candidate[0] = '\0';
-  if (cfg->passkeys_sync_key[0]) {
-    signet_strlcpy(candidate, cfg->passkeys_sync_key, sizeof(candidate));
-  } else if (cfg->passkeys_sync_key_file[0]) {
-    gchar *contents = NULL;
-    gsize len = 0;
-    if (g_file_get_contents(cfg->passkeys_sync_key_file, &contents, &len, NULL) && contents) {
-      g_strstrip(contents);
-      signet_strlcpy(candidate, contents, sizeof(candidate));
-    }
-    if (contents) {
-      secure_wipe(contents, len);
-      g_free(contents);
-    }
+  char *contents = NULL;
+  const char *candidate = cfg->passkeys_sync_key;
+  if (cfg->passkeys_sync_key_file[0]) {
+    if (signet_secret_input_file(cfg->passkeys_sync_key_file, &contents) != 0) return -1;
+    candidate = contents;
   }
-
-  if (candidate[0] && signet_hex_to_bytes32(candidate, cfg->passkeys_sync_psk)) {
-    cfg->passkeys_sync_psk_set = true;
+  int rc = 0;
+  if (candidate[0]) {
+    if (strlen(candidate) != 64 || !signet_hex_to_bytes32(candidate, cfg->passkeys_sync_psk)) rc = -1;
+    else cfg->passkeys_sync_psk_set = true;
   }
-  secure_wipe(candidate, sizeof(candidate));
+  sodium_free(contents);
+  return rc;
 }
 
 /* ------------------------------ init/clear -------------------------------- */
@@ -685,7 +685,11 @@ int signet_config_load(const char *path, SignetConfig *out_cfg) {
     signet_config_clear(out_cfg);
     return -1;
   }
-  signet_config_resolve_passkey_psk(out_cfg);
+  if (signet_config_resolve_passkey_psk(out_cfg) != 0) {
+    g_printerr("signet: invalid or unprotected passkey sync key input\n");
+    signet_config_clear(out_cfg);
+    return -1;
+  }
 
   return 0;
 }
