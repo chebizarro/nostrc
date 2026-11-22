@@ -594,7 +594,8 @@ static GPtrArray *select_ids(sqlite3_stmt *st) {
 }
 
 int nsr_outbox_supersede(NsrOutbox *ob, const char *replace_key, const char *keep_id,
-                         int64_t created_at, int64_t now) {
+                         int64_t created_at, int64_t now, GPtrArray **affected_ids) {
+  if (affected_ids) *affected_ids = NULL;
   if (!replace_key) return 0;
   g_mutex_lock(&ob->lock);
   sqlite3_stmt *st = prep(ob,
@@ -615,13 +616,15 @@ int nsr_outbox_supersede(NsrOutbox *ob, const char *replace_key, const char *kee
     if (exec(ob, "COMMIT") != 0) n = -1;
   }
   g_free(detail);
-  g_ptr_array_unref(ids);
+  if (n > 0 && affected_ids) *affected_ids = g_steal_pointer(&ids);
+  g_clear_pointer(&ids, g_ptr_array_unref);
   g_mutex_unlock(&ob->lock);
   return n;
 }
 
 int nsr_outbox_cancel_ref(NsrOutbox *ob, const char *pubkey, const char *ref,
-                          gboolean is_coordinate, int64_t now) {
+                          gboolean is_coordinate, int64_t now, GPtrArray **affected_ids) {
+  if (affected_ids) *affected_ids = NULL;
   if (!pubkey || !ref) return 0;
   g_mutex_lock(&ob->lock);
   sqlite3_stmt *st = prep(ob, is_coordinate
@@ -637,7 +640,8 @@ int nsr_outbox_cancel_ref(NsrOutbox *ob, const char *pubkey, const char *ref,
     n = settle_ids(ob, ids, "cancelled", "deleted by the author (NIP-09) before forwarding", now);
     if (exec(ob, "COMMIT") != 0) n = -1;
   }
-  g_ptr_array_unref(ids);
+  if (n > 0 && affected_ids) *affected_ids = g_steal_pointer(&ids);
+  g_clear_pointer(&ids, g_ptr_array_unref);
   g_mutex_unlock(&ob->lock);
   return n;
 }

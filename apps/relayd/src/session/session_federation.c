@@ -124,6 +124,15 @@ static void notify(NsrFederation *f, const char *id, const char *relay, const ch
                 estate ? estate : "", f->observer_ud);
 }
 
+/* Outbox transitions are committed and its mutex is released before observers run. */
+static void notify_settled(NsrFederation *f, GPtrArray *ids, const char *state,
+                            const char *detail) {
+  if (!ids) return;
+  for (guint i = 0; i < ids->len; i++)
+    notify(f, ids->pdata[i], "", "cancelled", detail, state);
+  g_ptr_array_unref(ids);
+}
+
 /* ── Session bus / signer (engine thread) ─────────────────────────────── */
 
 static GDBusConnection *get_bus(NsrFederation *f) {
@@ -315,14 +324,21 @@ static void route_one(NsrFederation *f, NsrOutboxEvent *e, gint64 now) {
       NostrTag *t = nostr_tags_get(tags, i);
       const char *k = t ? nostr_tag_get_key(t) : NULL;
       if (!k || nostr_tag_size(t) < 2) continue;
-      if (strcmp(k, "e") == 0)
-        nsr_outbox_cancel_ref(f->outbox, e->pubkey, nostr_tag_get(t, 1), FALSE, now);
-      else if (strcmp(k, "a") == 0)
-        nsr_outbox_cancel_ref(f->outbox, e->pubkey, nostr_tag_get(t, 1), TRUE, now);
+      if (strcmp(k, "e") == 0 || strcmp(k, "a") == 0) {
+        GPtrArray *ids = NULL;
+        nsr_outbox_cancel_ref(f->outbox, e->pubkey, nostr_tag_get(t, 1),
+                              strcmp(k, "a") == 0, now, &ids);
+        notify_settled(f, ids, "cancelled", "deleted by the author (NIP-09) before forwarding");
+      }
     }
   }
-  if (e->replace_key)
-    nsr_outbox_supersede(f->outbox, e->replace_key, e->id, nostr_event_get_created_at(ev), now);
+  if (e->replace_key) {
+    GPtrArray *ids = NULL;
+    nsr_outbox_supersede(f->outbox, e->replace_key, e->id,
+                         nostr_event_get_created_at(ev), now, &ids);
+    g_autofree char *detail = g_strdup_printf("superseded by %s", e->id);
+    notify_settled(f, ids, "superseded", detail);
+  }
 
   NsrFedLookup lk = {lk_relay_list, lk_acked, f};
   GStrv relays = NULL;
