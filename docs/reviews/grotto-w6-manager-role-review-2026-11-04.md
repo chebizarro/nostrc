@@ -22,7 +22,7 @@ Those snapshots contain `preview`, caller `reason`/`purpose`, flow information a
 
 **Executed reproduction:** an executable authenticated as manager, with no approver path, submitted an unsigned kind-1 event containing `W6-UNPUBLISHED-CONTENT-REVIEW-SENTINEL`. An event-driven `ApprovalRequested` subscription established the pending boundary. Manager `ListRequests` returned the sentinel in **both** `preview` and `event_summary.preview`, for request `8069da5edac24c6357753d7067430757f4d92b40523b22ab4b826c112fb08c4f`. No approval or publication occurred; all nine decision modes were refused even for that live request.
 
-The shared adapter's public-field projection/credential-key rejection occurs **after** the reply enters the manager process (`apps/grotto/src/grotto-panels-control1-service.c:50-123,182-188`); it cannot repair daemon confidentiality. Legacy `GetApprovalInfo` and `ListPendingRequests` were refused, but this newly accessible route bypasses that read boundary.
+The shared adapter's public-field projection/credential-key rejection occurs **after** the reply enters the manager process (`gnome/grotto-panels/control-client/grotto-panels-control1-service.c:50-123,182-188`); it cannot repair daemon confidentiality. Legacy `GetApprovalInfo` and `ListPendingRequests` were refused, but this newly accessible route bypasses that read boundary.
 
 **Precondition/impact:** a legitimate or compromised trusted manager process plus any pending content-bearing request. This does **not** let an arbitrary Linux same-UID executable claim manager. It does expose private-before-publication request contents to the manager, contrary to this review's explicit contract. Secret/token text embedded in arbitrary preview/reason fields is a **plausible additional exposure**, not a demonstrated seed/token export.
 
@@ -49,7 +49,7 @@ W1's S1 transport wording remains intact: remote NIP-46 callers explicitly have 
 
 **Confirmed static UI path and real-daemon backend-error execution; failing-backend GTK rendering was not executed.**
 
-`ListIdentities` correctly reports `BackendUnavailable` on inventory failure (`apps/grotto/daemon/grotto_control.c:682-706`). But a non-status read failure only clears that model; it does not preserve an error state or change service availability (`apps/grotto/src/grotto-panels-control1-service.c:182-188`). Availability is determined by the separate successful status/role response (`:144-181`).
+`ListIdentities` correctly reports `BackendUnavailable` on inventory failure (`apps/grotto/daemon/grotto_control.c:682-706`). But a non-status read failure only clears that model; it does not preserve an error state or change service availability (`gnome/grotto-panels/control-client/grotto-panels-control1-service.c:182-188`). Availability is determined by the separate successful status/role response (`:144-181`).
 
 With no identity rows and `available == TRUE`, the real Identity panel says **“No Identity Yet”**, suggests creating/importing, and exposes its Add handoff (`gnome/grotto-panels/src/grotto-identity-panel.c:121-139`). The host banner still says security changes open in Grotto because the label capability remains true (`gnome/nostr-settings/src/ui/nss-window.c:175-183`). Thus “inventory unavailable” is indistinguishable from “inventory successfully empty.”
 
@@ -85,7 +85,7 @@ Manager: **GetStatus, ListIdentities, ListClients, ListPermissions, ListRequests
 | Delete identity | Canonical method is **RemoveIdentity**, not DeleteIdentity; denied. Legacy **ClearKey** also refused, with GLib permission-denied encoded as an unmapped remote error |
 | Remaining canonical privileged methods | StoreKeyWithMnemonic, ImportIdentity, SignProfileEvent, SelfTestIdentity, CancelIdentitySelfTest, GetIdentityMigration, ClearActivity: denied |
 
-The XML-driven test covers **22** non-allowlisted Control1 methods (`test-panel-mount.c:51-82`; canonical declarations `apps/grotto/data/org.nostr.Grotto.Control1.xml:16-68`). Its generated empty but well-typed inputs prove denial before backend/semantic processing, not successful approver backend execution. The supplement covers the valid modes and legacy interface omitted by that loop. Legacy guards are at `nips/nip55l/src/glib/signer_service_g.c:246-256,297-323,500-511`.
+The XML-driven test covers **22** non-allowlisted Control1 methods (`test-panel-mount.c:51-82`; canonical declarations `gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml:16-68`). Its generated empty but well-typed inputs prove denial before backend/semantic processing, not successful approver backend execution. The supplement covers the valid modes and legacy interface omitted by that loop. Legacy guards are at `nips/nip55l/src/glib/signer_service_g.c:246-256,297-323,500-511`.
 
 ### Read confidentiality
 

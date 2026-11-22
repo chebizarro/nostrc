@@ -33,7 +33,7 @@ def fragments():
         'libnostr_talstr': between(lib, '    if(NOT EXISTS "${LIBNOSTR_NDB_VENDOR_PATH}/src/bolt11/talstr.h")', '    add_library(nostrdb STATIC'),
         'libnostr_hex': between(lib, '    set(NDB_HEX_COMPAT', '    # Force-include'),
         'vendored_compat': between(text['components/nostrdb/CMakeLists.txt'], '  set(_nostrdb_compat', '  nostrc_add_vendored_nostrdb('),
-        'grotto_xml': between(text['apps/grotto/CMakeLists.txt'], 'set(GROTTO_CONTROL_XML ', 'install(FILES "${GROTTO_CONTROL_XML}"'),
+        'grotto_xml': between(text['apps/grotto/CMakeLists.txt'], 'set(GROTTO_CONTROL_XML ', 'add_library(grotto_control_core'),
         'gtk_version': between(text['nostr-gtk/CMakeLists.txt'], 'set(NOSTR_GTK_PUBLIC_VERSION_HEADER', '# ── Blueprint compilation'),
     }
 
@@ -69,6 +69,9 @@ class CoreSourceProducers(unittest.TestCase):
         fragment = fragment.replace(
             'get_filename_component(_nostrc_cmake_dir "${CMAKE_CURRENT_LIST_DIR}/../../cmake" ABSOLUTE)',
             'set(_nostrc_cmake_dir [==[' + str(ROOT / 'cmake') + ']==])')
+        # Historical producer fragments still read the same canonical XML bytes.
+        fragment = fragment.replace('${CMAKE_CURRENT_SOURCE_DIR}/data/org.nostr.Grotto.Control1.xml',
+                                    '${CMAKE_CURRENT_SOURCE_DIR}/../../gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml')
         script = build / 'producer.cmake'
         variables = {
             'CMAKE_CURRENT_SOURCE_DIR': str(ROOT / source),
@@ -176,7 +179,7 @@ class CoreConfigureWitnesses(Project):
                      'cmake/nostrdb-talstr.h.in', 'cmake/nostrdb-hex-compat.h.in',
                      'apps/gnostr/src/nostr-config.h.in', 'apps/gnostr/src/gnostr-build-info.h.in',
                      'apps/grotto/daemon/grotto_control_xml.h.in',
-                     'apps/grotto/data/org.nostr.Grotto.Control1.xml',
+                     'gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml',
                      'libnostr/include/nostr-config.h.in',
                      'nostr-gtk/include/nostr-gtk-1.0/nostr-gtk-version.h.in'):
             destination = self.root / path

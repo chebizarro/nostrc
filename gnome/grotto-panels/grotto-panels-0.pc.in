@@ -1,7 +1,7 @@
-prefix=@CMAKE_INSTALL_PREFIX@
+prefix=${pcfiledir}/@GROTTO_PC_PREFIX@
 exec_prefix=${prefix}
-libdir=@CMAKE_INSTALL_FULL_LIBDIR@
-includedir=@CMAKE_INSTALL_FULL_INCLUDEDIR@
+libdir=@GROTTO_PC_LIBDIR@
+includedir=@GROTTO_PC_INCLUDEDIR@
 
 Name: Grotto Panels
 Description: Injected public-metadata management panel scaffold

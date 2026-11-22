@@ -18,7 +18,7 @@ cp -a "$root/gnome/nostr-settings/packaging/debian" "$work/source/debian"
 (cd "$work/source" && dpkg-buildpackage -b -us -uc -j"${JOBS:-2}")
 deb=("$work"/nostr-settings_*.deb)
 test "${#deb[@]}" -eq 1
-dpkg-deb -f "${deb[0]}" Depends | grep -E 'libgrotto-panels-0-0 \(>= 0\.1\.0\)'
+dpkg-deb -f "${deb[0]}" Depends | grep -E 'libgrotto-panels-0-0 \(>= 0\.1\.2\)'
 dpkg-deb -x "${deb[0]}" "$work/payload"
 test -f "$work/payload/usr/share/dbus-1/services/org.nostr.Settings.service"
 test -f "$work/payload/usr/share/glib-2.0/schemas/org.nostr.Settings.gschema.xml"

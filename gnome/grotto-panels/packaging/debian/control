@@ -10,10 +10,12 @@ Homepage: https://github.com/chebizarro/nostrc
 
 Package: libgrotto-panels-0-0
 Architecture: any
+Replaces: grotto (<< 0.1.4~)
 Depends: ${shlibs:Depends}, ${misc:Depends}, libgtk-4-1 (>= 4.14), libadwaita-1-0 (>= 1.5)
 Description: Grotto public-metadata management panel runtime
  GTK and libadwaita management panel infrastructure with an injected public
- metadata service. This library does not contain signer policy or key custody.
+ metadata service, plus a separate Control1 client adapter. Neither library
+ contains signer policy or key custody.
 
 Package: libgrotto-panels-0-dev
 Section: libdevel
@@ -21,4 +23,5 @@ Architecture: any
 Depends: libgrotto-panels-0-0 (= ${binary:Version}), ${misc:Depends},
          libgtk-4-dev (>= 4.14), libadwaita-1-dev (>= 1.5)
 Description: Development files for the Grotto panels runtime
- Public headers, pkg-config metadata and CMake package for grotto-panels-0.
+ Public headers, pkg-config metadata and CMake package for grotto-panels-0
+ and grotto-control-client-0.

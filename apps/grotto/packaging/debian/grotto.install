@@ -5,7 +5,6 @@ usr/share/applications/org.nostr.Grotto.desktop
 usr/share/icons/hicolor/*/apps/org.nostr.Grotto*
 usr/share/dbus-1/services/org.nostr.Grotto.service
 usr/share/dbus-1/services/org.nostr.Signer.service
-usr/share/dbus-1/interfaces/org.nostr.Grotto.Control1.xml
 usr/share/glib-2.0/schemas/org.nostr.Grotto.gschema.xml
 usr/share/metainfo/org.nostr.Grotto.metainfo.xml
 usr/share/locale/*/LC_MESSAGES/grotto.mo

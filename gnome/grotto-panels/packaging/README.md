@@ -2,14 +2,18 @@
 
 The runtime provider is **libgrotto-panels-0-0** on Debian and **grotto-panels**
 on RPM systems. The SDK providers are **libgrotto-panels-0-dev** and
-**grotto-panels-devel**. All start at the component's initial unreleased 0.1.0.
-They own the public DSO/SONAME, headers, CMake config and `grotto-panels-0.pc`.
+**grotto-panels-devel**. The provider package version is 0.1.2; the separate client API starts at 0.1.0.
+They own both the public panels and Control1 client DSOs, headers, CMake config,
+`grotto-panels-0.pc`, `grotto-control-client-0.pc` and the canonical Control1 XML.
+Grotto packages must not claim that XML too.
+Debian `Replaces: grotto (<< 0.1.4~)` permits transfer of the unchanged XML
+from older Grotto packages without breaking an otherwise compatible installed app.
 The runtime is not hidden inside Grotto's private-library directory.
 
 Build the provider first from a repository archive containing this module and
 `cmake/VersionHelpers.cmake`. For Debian, copy `packaging/debian` from this
 module to the archive root's `debian/`, then run `dpkg-buildpackage -b -us -uc`.
-For RPM, create a `grotto-panels-0.1.0.tar.gz` root with the same module/helper
+For RPM, create a `grotto-panels-0.1.2.tar.gz` root with the same module/helper
 paths and use `packaging/rpm/grotto-panels.spec`.
 
 Both Grotto Debian recipes and both Grotto RPM recipes explicitly require the

@@ -276,7 +276,7 @@ Rendering iterates all returned rows without a kind exclusion (`apps/grotto/src/
 
 ### 4. Trust tiers: executed consumer-kind matrix
 
-Set through **Control1 `SetClientTrust`**, not by writing client files. Each call succeeded, and ListClients confirmed the requested `full`, `medium`, or `low` value. Explicit rows were cleared before each tier; subsequent prompt approvals were once-only. `SetPermissions` replaces scoped rows, whereas `SetClientTrust` changes tiers (`apps/grotto/data/org.nostr.Grotto.Control1.xml:20–27`; `daemon/grotto_control.c:701–712`).
+Set through **Control1 `SetClientTrust`**, not by writing client files. Each call succeeded, and ListClients confirmed the requested `full`, `medium`, or `low` value. Explicit rows were cleared before each tier; subsequent prompt approvals were once-only. `SetPermissions` replaces scoped rows, whereas `SetClientTrust` changes tiers (`gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml:20–27`; `daemon/grotto_control.c:701–712`).
 
 | Identical next request, absent explicit rows/flow consent | Full | Medium | Low after first consent |
 |---|---|---|---|

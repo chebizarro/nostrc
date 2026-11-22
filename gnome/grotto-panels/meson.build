@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-project('grotto-panels', 'c', version: '0.1.1', license: 'MIT',
+project('grotto-panels', 'c', version: '0.1.2', license: 'MIT',
   meson_version: '>=0.61', default_options: ['c_std=c11', 'warning_level=2'])
 gtk_dep = dependency('gtk4', version: '>=4.14')
 adw_dep = dependency('libadwaita-1', version: '>=1.5')
@@ -30,6 +30,21 @@ import('pkgconfig').generate(panels, filebase: 'grotto-panels-0', name: 'Grotto 
   subdirs: 'grotto-panels-0', requires: ['gtk4 >= 4.14', 'libadwaita-1 >= 1.5'])
 panels_dep = declare_dependency(link_with: panels, include_directories: inc, dependencies: [gtk_dep, adw_dep])
 meson.override_dependency('grotto-panels-0', panels_dep)
+control_client_version = '0.1.0'
+control_client_inc = include_directories('include/grotto-control-client-0')
+control_client = shared_library('grotto-control-client-0', 'control-client/grotto-panels-control1-service.c',
+  include_directories: control_client_inc, dependencies: [panels_dep, intl_dep],
+  c_args: ['-DGROTTO_CONTROL_CLIENT_COMPILATION', '-DGETTEXT_PACKAGE="grotto"'],
+  gnu_symbol_visibility: 'hidden', version: control_client_version, soversion: '0', install: true)
+install_headers('include/grotto-control-client-0/grotto-panels-control1-service.h', subdir: 'grotto-control-client-0')
+install_data('data/org.nostr.Grotto.Control1.xml', install_dir: get_option('datadir') / 'dbus-1/interfaces')
+import('pkgconfig').generate(control_client, filebase: 'grotto-control-client-0', name: 'Grotto Control1 Client',
+  version: control_client_version, description: 'Control1 transport adapter for injected Grotto panels services',
+  subdirs: 'grotto-control-client-0', requires: ['grotto-panels-0 >= 0.1.2'],
+  variables: ['interfacesdir=${prefix}/' + get_option('datadir') / 'dbus-1/interfaces'])
+control_client_dep = declare_dependency(link_with: control_client, include_directories: control_client_inc,
+  dependencies: panels_dep)
+meson.override_dependency('grotto-control-client-0', control_client_dep)
 if get_option('tests')
   python = import('python').find_installation('python3')
   clang = find_program('clang')
@@ -65,11 +80,10 @@ if get_option('tests')
       admission.full_path(), meson.current_build_dir(), clang.full_path()],
     depends: [panels, admission], suite: 'grotto-panels')
   control = executable('test-grotto-panels-control1', 'tests/test-control1.c',
-    '../../apps/grotto/src/grotto-panels-control1-service.c',
     '../../tests/common/nostrc-test-bus.c',
-    include_directories: include_directories('../../apps/grotto/src', '../../tests/common'),
-    c_args: ['-D_GNU_SOURCE', '-DGROTTO_CONTROL_XML_PATH="' + meson.current_source_dir() / '../../apps/grotto/data/org.nostr.Grotto.Control1.xml' + '"'],
-    dependencies: [panels_dep, dependency('gio-unix-2.0')])
+    include_directories: include_directories('../../tests/common'),
+    c_args: ['-D_GNU_SOURCE', '-DGROTTO_CONTROL_XML_PATH="' + meson.current_source_dir() / 'data/org.nostr.Grotto.Control1.xml' + '"'],
+    dependencies: [control_client_dep, dependency('gio-unix-2.0')])
   panel_schema = configure_file(input: '../../apps/grotto/data/org.nostr.Grotto.gschema.xml',
     output: 'org.nostr.Grotto.gschema.xml', copy: true)
   panel_test_schemas = custom_target('panel-test-schemas', input: panel_schema,

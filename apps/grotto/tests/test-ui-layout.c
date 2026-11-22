@@ -1913,14 +1913,19 @@ int main(int argc, char **argv) {
   NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE); nostrc_test_bus_up(bus); server = nostrc_test_bus_connect(bus);
   if (!gtk_init_check()) { nostrc_test_bus_down(bus); g_print("1..0 # SKIP GTK display unavailable\n"); return 77; }
   adw_init();
-  /* Resolve the shipped app icon even in an uninstalled container build. */
-  g_autofree gchar *data_dir = g_path_get_dirname(G10_CONTROL_XML);
-  g_autofree gchar *icons = g_build_filename(data_dir, "icons", NULL);
+  /* App icons and the shared Control1 contract have independent source roots. */
   GtkIconTheme *theme = gtk_icon_theme_get_for_display(gdk_display_get_default());
-  gtk_icon_theme_add_search_path(theme, icons);
+  g_auto(GStrv) search_paths = gtk_icon_theme_get_search_path(theme);
+  gsize n_paths = search_paths ? g_strv_length(search_paths) : 0;
+  g_autofree const char **icon_paths = g_new0(const char *, n_paths + 2);
+  icon_paths[0] = G10_ICON_DIR;
+  for (gsize i = 0; i < n_paths; i++) icon_paths[i + 1] = search_paths[i];
+  gtk_icon_theme_set_search_path(theme, icon_paths);
   g_assert_true(gtk_icon_theme_has_icon(theme, "org.nostr.Grotto"));
   g_autoptr(GtkIconPaintable) icon = gtk_icon_theme_lookup_icon(theme, "org.nostr.Grotto", NULL, 128, 1, GTK_TEXT_DIR_LTR, 0);
   g_assert_nonnull(gtk_icon_paintable_get_file(icon));
+  g_autoptr(GFile) shipped_icons = g_file_new_for_path(G10_ICON_DIR);
+  g_assert_true(g_file_has_prefix(gtk_icon_paintable_get_file(icon), shipped_icons));
   g_autofree gchar *icon_file = g_file_get_basename(gtk_icon_paintable_get_file(icon));
   g_assert_cmpstr(icon_file, ==, "org.nostr.Grotto.png");
   gpointer panel_class = g_type_class_ref(GROTTO_TYPE_IDENTITY_PANEL); g_type_class_unref(panel_class);

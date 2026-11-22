@@ -464,11 +464,11 @@ if(UNIX AND TARGET grotto-daemon AND TARGET nostr_nip46_core)
     find_program(G00_GLIB_COMPILE_SCHEMAS glib-compile-schemas REQUIRED)
     pkg_check_modules(G00_SOUP REQUIRED IMPORTED_TARGET libsoup-3.0)
     add_executable(test-bunker-e2e test-bunker-e2e.c bunker_test_relay.c
-        ../src/grotto-connection-link.c ../src/grotto-panels-control1-service.c)
+        ../src/grotto-connection-link.c)
     target_include_directories(test-bunker-e2e PRIVATE ${SIGNER_INCLUDE_DIRS}
         ${CMAKE_SOURCE_DIR}/apps/grotto/daemon ${CMAKE_SOURCE_DIR}/nips/nip55l/src/glib)
     target_link_libraries(test-bunker-e2e PRIVATE
-        ${SIGNER_TEST_LIBS} nostr_nip46_core nostr_nip55l_core grotto_control_core PkgConfig::G00_SOUP nostrc-test-bus grotto-panels)
+        ${SIGNER_TEST_LIBS} nostr_nip46_core nostr_nip55l_core grotto_control_core PkgConfig::G00_SOUP nostrc-test-bus grotto-panels GrottoPanels::ControlClient)
     target_link_directories(test-bunker-e2e PRIVATE ${SIGNER_TEST_LINK_DIRS})
     target_compile_features(test-bunker-e2e PRIVATE c_std_11)
     target_compile_options(test-bunker-e2e PRIVATE -Wall -Wextra -Werror)
@@ -596,9 +596,9 @@ if (TARGET grotto-daemon AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_definitio
 endif()
 
 include(identity-tests.cmake)
-add_executable(test-panel-inbox-model test-panel-inbox-model.c ../src/home-model.c ../src/grotto-panels-control1-service.c)
+add_executable(test-panel-inbox-model test-panel-inbox-model.c ../src/home-model.c)
 target_include_directories(test-panel-inbox-model PRIVATE ${SIGNER_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR})
-target_link_libraries(test-panel-inbox-model PRIVATE PkgConfig::GLIB nostrc-test-bus grotto-panels)
+target_link_libraries(test-panel-inbox-model PRIVATE PkgConfig::GLIB nostrc-test-bus grotto-panels GrottoPanels::ControlClient)
 target_compile_options(test-panel-inbox-model PRIVATE -Wall -Wextra -Werror)
 add_test(NAME signer/panel-inbox-model COMMAND test-panel-inbox-model)
 set_tests_properties(signer/panel-inbox-model PROPERTIES TIMEOUT 90 LABELS "signer;unit;panels;inbox" ENVIRONMENT "GSETTINGS_BACKEND=memory")
@@ -610,7 +610,8 @@ endif()
 target_include_directories(test-ui-layout PRIVATE ${SIGNER_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR})
 target_link_libraries(test-ui-layout PRIVATE grotto_app_test_core nostrc-test-bus)
 target_compile_definitions(test-ui-layout PRIVATE
-  G10_CONTROL_XML="${CMAKE_CURRENT_SOURCE_DIR}/../data/org.nostr.Grotto.Control1.xml"
+  G10_CONTROL_XML="${CMAKE_CURRENT_SOURCE_DIR}/../../../gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml"
+  G10_ICON_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../data/icons"
   G10_SCREENSHOT_DIR="${CMAKE_BINARY_DIR}/screenshots"
   G10_TEST_LOCALE_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-locales")
 find_program(G10_MSGFMT msgfmt REQUIRED)

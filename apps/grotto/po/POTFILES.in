@@ -23,7 +23,7 @@ src/i18n.c
 src/qr-code.c
 src/qr-scanner.c
 src/home-model.c
-src/grotto-panels-control1-service.c
+../../gnome/grotto-panels/control-client/grotto-panels-control1-service.c
 src/ui/signer-window.c
 src/grotto-profile-service.c
 src/ui/lock-screen.c

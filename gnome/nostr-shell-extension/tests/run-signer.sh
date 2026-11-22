@@ -3,6 +3,8 @@
 set -eu
 GJS=${1:-gjs}
 here=$(cd "$(dirname "$0")" && pwd)
+repo_root=$(cd "$here/../../.." && pwd)
+control_xml="$repo_root/gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml"
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/nostr-signer-test-XXXXXX")
 trap 'rm -rf "$tmp"' EXIT INT TERM
 mkdir -p "$tmp/services"
@@ -26,5 +28,5 @@ cat > "$tmp/bus.conf" <<CONF
 </busconfig>
 CONF
 cd "$here/.."
-NSE_TEST_TMP="$tmp" GIO_USE_VFS=local GSETTINGS_BACKEND=memory \
+NSE_CONTROL1_XML="$control_xml" NSE_TEST_TMP="$tmp" GIO_USE_VFS=local GSETTINGS_BACKEND=memory \
     dbus-run-session --config-file="$tmp/bus.conf" -- "$GJS" -m tests/test-signer.js

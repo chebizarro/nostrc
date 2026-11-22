@@ -46,7 +46,7 @@ manifest installer; Nix/desktop-bundle builds currently leave that host off.
 ## Installing the panels dependency
 
 Grotto's native packages are not standalone: install **libgrotto-panels-0-0**
-(Debian/Ubuntu) or **grotto-panels** (RPM), version **0.1.0 or later**, for the
+(Debian/Ubuntu) or **grotto-panels** (RPM), version **0.1.2 or later**, for the
 same architecture before installing Grotto. Building Grotto also requires
 **libgrotto-panels-0-dev** or **grotto-panels-devel** respectively.
 
