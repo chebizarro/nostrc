@@ -3354,6 +3354,54 @@ test_welcome_with_forged_member_rejected(void)
     marmot_free(bob.m);
 }
 
+/* The GroupInfo signer must be an admin of the joined legacy state;
+ * an empty admin list retains the legacy any-member policy. */
+static void
+test_welcome_legacy_inviter_admin(void)
+{
+    for (int mode = 0; mode < 3; mode++) {
+        Member alice, bob;
+        member_init(&alice, "Alice");
+        member_init(&bob, "Bob");
+        char *kp = key_package(&bob);
+        const char *kps[] = {kp};
+        MarmotGroupConfig cfg = {0};
+        cfg.name = "Inviter policy";
+        cfg.admin_pubkeys = (uint8_t (*)[32])(mode == 2 ? bob.pk : alice.pk);
+        cfg.admin_count = mode == 0 ? 0 : 1;
+        MarmotCreateGroupResult cg = {0};
+        OK(marmot_create_group(alice.m, alice.pk, kps, 1, &cfg, &cg));
+#ifdef MARMOT_TEST_HOOKS
+        if (mode == 1) {
+            uint8_t wrapper[32];
+            randombytes_buf(wrapper, sizeof(wrapper));
+            MarmotWelcome *w = NULL;
+            OK(marmot_process_welcome(bob.m, wrapper, cg.welcome_rumor_jsons[0], &w));
+            marmot_test_welcome_admin_alloc_fail = true;
+            MarmotError err = marmot_accept_welcome(bob.m, w);
+            marmot_test_welcome_admin_alloc_fail = false;
+            CHECK(err == MARMOT_ERR_MEMORY, "admin allocation failure: %d", err);
+            MarmotWelcome **pending = NULL;
+            size_t count = 0;
+            OK(marmot_get_pending_welcomes(bob.m, NULL, &pending, &count));
+            CHECK(count == 1 && pending[0]->state == MARMOT_WELCOME_STATE_PENDING,
+                  "allocation failure keeps invitation retryable");
+            for (size_t i = 0; i < count; i++) marmot_welcome_free(pending[i]);
+            free(pending);
+            OK(marmot_accept_welcome(bob.m, w));
+            marmot_welcome_free(w);
+        } else
+#endif
+        expect_join(&bob, cg.welcome_rumor_jsons[0],
+                    mode == 2 ? MARMOT_ERR_ADMIN_ONLY : MARMOT_OK,
+                    "legacy inviter admin policy");
+        marmot_create_group_result_free(&cg);
+        free(kp);
+        marmot_free(alice.m);
+        marmot_free(bob.m);
+    }
+}
+
 /* Review W20 N1: marmot_process_welcome_from() takes the NIP-59 seal's
  * author explicitly.  The join's sender exemption then rests on it, not on
  * the rumor: a rumor naming another author is refused, and a rumor without
@@ -8792,6 +8840,7 @@ main(int argc, char **argv)
     RUN(test_forged_member_identity_rejected);
     RUN(test_welcome_with_forged_member_rejected);
     RUN(test_welcome_sender_from_seal);
+    RUN(test_welcome_legacy_inviter_admin);
     RUN(test_account_proof_enrollment);
     RUN(test_add_refused_when_joiners_would_reject);
     RUN(test_create_group_needs_enrollment);
