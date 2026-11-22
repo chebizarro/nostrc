@@ -1,0 +1,11 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+libdir=@CMAKE_INSTALL_FULL_LIBDIR@
+includedir=@CMAKE_INSTALL_FULL_INCLUDEDIR@
+
+Name: @NIP_PC_NAME@
+Description: Nostr @NIP_PC_NAME@ library
+Version: @NIP_PC_VERSION@
+Requires: @NIP_PC_REQUIRES@
+Requires.private: @NIP_PC_REQUIRES_PRIVATE@
+Libs: -L${libdir} -l@NIP_PC_LIBRARY@
+Cflags: -I${includedir}@NIP_PC_CFLAGS@

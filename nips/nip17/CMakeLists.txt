@@ -28,7 +28,7 @@ target_link_libraries(nostr_nip17_core
 
 # Install headers
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
-        DESTINATION include
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
         FILES_MATCHING PATTERN "*.h")
 
 # Tests
@@ -63,3 +63,13 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples/example.c)
         nostr_nip44_core
     )
 endif()
+
+# Preserve the OBJECT target for in-tree consumers; packages need an archive.
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcNipPackage.cmake")
+set_target_properties(nostr_nip17_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_library(nip17 STATIC $<TARGET_OBJECTS:nostr_nip17_core>)
+set_target_properties(nip17 PROPERTIES OUTPUT_NAME nostr_nip17_core)
+target_link_libraries(nip17 INTERFACE nostr_nip17_core)
+target_compile_definitions(nip17 INTERFACE NOSTR_NIP17_CORE_STATIC_DEFINE)
+declare_component_version(nip17 0 1 0)
+nostrc_install_nip(nip17 nip17 "nostr >= 2.5.1" "nip44 >= 0.1.0 openssl")

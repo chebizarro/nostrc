@@ -31,7 +31,7 @@ target_link_libraries(nostr_nip51_core
 
 # Install headers
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
-        DESTINATION include
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
         FILES_MATCHING PATTERN "*.h")
 
 # Tests
@@ -70,3 +70,13 @@ if(BUILD_TESTING)
     target_link_libraries(test_nip51_failures PRIVATE nostr nostr_nip44_core PkgConfig::JANSSON)
     add_test(NAME test_nip51_failures COMMAND test_nip51_failures)
 endif()
+
+# Preserve the OBJECT target for in-tree consumers; packages need an archive.
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcNipPackage.cmake")
+set_target_properties(nostr_nip51_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_library(nip51 STATIC $<TARGET_OBJECTS:nostr_nip51_core>)
+set_target_properties(nip51 PROPERTIES OUTPUT_NAME nostr_nip51_core)
+target_link_libraries(nip51 INTERFACE nostr_nip51_core)
+target_compile_definitions(nip51 INTERFACE NOSTR_NIP51_CORE_STATIC_DEFINE)
+declare_component_version(nip51 0 1 0)
+nostrc_install_nip(nip51 nip51 "nostr >= 2.5.1" "nip44 >= 0.1.0 jansson")

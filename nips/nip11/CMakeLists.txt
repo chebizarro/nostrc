@@ -37,3 +37,7 @@ if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip11.c)
     add_test(NAME test_nip11 COMMAND test_nip11)
 endif()
 
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcNipPackage.cmake")
+declare_component_version(nip11 0 1 0)
+nostrc_install_nip(nip11 nip11 "nostr >= 2.5.1" "libnostr-json libcurl")
+install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} FILES_MATCHING PATTERN "*.h")

@@ -26,7 +26,7 @@ find_package(OpenSSL REQUIRED)
 target_link_libraries(nostr_nip98 PUBLIC nostr OpenSSL::Crypto)
 
 # Install headers
-install(DIRECTORY ${NIP98_INC}/nostr/nip98/ DESTINATION include/nostr/nip98)
+install(DIRECTORY ${NIP98_INC}/nostr/nip98/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip98)
 
 # Tests
 enable_testing()
@@ -40,3 +40,7 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests)
         add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
     endforeach()
 endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcNipPackage.cmake")
+declare_component_version(nip98 0 1 0)
+nostrc_install_nip(nostr_nip98 nip98 "nostr >= 2.5.1" "openssl")

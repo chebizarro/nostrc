@@ -2,7 +2,7 @@
 include(CMakeFindDependencyMacro)
 find_dependency(PkgConfig)
 foreach(component IN LISTS nostrc_FIND_COMPONENTS)
-  if(NOT component MATCHES "^(bud02|blossom|porthome|vault|vault-marmot)$")
+  if(NOT component MATCHES "^(bud02|blossom|porthome|vault|vault-marmot|nip04|nip11|nip17|nip44|nip46|nip46-glib|nip51|nip98)$")
     set(nostrc_${component}_FOUND FALSE)
     continue()
   endif()

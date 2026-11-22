@@ -13,7 +13,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
-declare_component_version(NOSTR_JSON 2 0 0)
+declare_component_version(NOSTR_JSON 2 0 1)
 
 # Specify the C standard
 set(CMAKE_C_STANDARD 11)
