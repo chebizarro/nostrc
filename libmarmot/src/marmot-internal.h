@@ -16,6 +16,10 @@
 extern "C" {
 #endif
 
+#ifdef MARMOT_TEST_HOOKS
+extern MARMOT_TEST_API bool marmot_test_welcome_admin_alloc_fail;
+#endif
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Marmot instance (opaque in public header)
  * ──────────────────────────────────────────────────────────────────────── */

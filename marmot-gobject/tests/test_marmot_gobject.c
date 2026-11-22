@@ -1364,6 +1364,43 @@ test_client_signal_handler_may_reenter(void)
     g_object_unref(member_store);
 }
 
+/* Destroy a production signal source without dispatching its context. */
+static void
+test_client_signal_source_destroyed(void)
+{
+    GMainContext *context = g_main_context_new();
+    g_main_context_push_thread_default(context);
+    MarmotGobjectClient *client = new_memory_client(NULL);
+    g_main_context_pop_thread_default(context);
+    g_autofree gchar *pk = nostr_key_get_public(TEST_CREATOR_SK_HEX);
+    gchar **welcomes = NULL;
+    const gchar *empty[] = {NULL};
+    MarmotGobjectGroup *group = create_group_sync(client, pk, empty, "Abandoned", "",
+                                                  NULL, NULL, &welcomes);
+    const gchar *gid = marmot_gobject_group_get_mls_group_id(group);
+    g_autofree gchar *commit = rename_sync(client, gid, "Changed");
+    AsyncFixture *f = async_fixture_new();
+    marmot_gobject_client_merge_pending_commit_async(client, gid, NULL, async_callback, f);
+    g_main_loop_run(f->loop);
+    GError *error = NULL;
+    g_assert_true(marmot_gobject_client_merge_pending_commit_finish(client, f->result, &error));
+    g_assert_no_error(error);
+    async_fixture_free(f);
+    /* Only client signals attach to this fresh private context. */
+    GSource *source = g_main_context_find_source_by_id(context, 1);
+    g_assert_nonnull(source);
+    g_assert_cmpstr(g_source_get_name(source), ==, "[marmot-gobject] client signal");
+    gpointer weak_client = client;
+    g_object_add_weak_pointer(G_OBJECT(client), &weak_client);
+    g_object_unref(client);
+    g_assert_nonnull(weak_client); /* the undispatched source owns it */
+    g_source_destroy(source);
+    g_assert_null(weak_client);
+    g_object_unref(group);
+    g_strfreev(welcomes);
+    g_main_context_unref(context);
+}
+
 /* ── W17b addendum C1: concurrent calls on one client are serialized ── */
 
 typedef struct {
@@ -2605,6 +2642,7 @@ main(int argc, char *argv[])
 
     /* 11. Concurrency */
     g_test_add_func("/marmot-gobject/threads/concurrent-object-creation", test_concurrent_object_creation);
+    g_test_add_func("/marmot-gobject/client/signal-source-destroyed", test_client_signal_source_destroyed);
 
     /* 12. Edge cases */
     g_test_add_func("/marmot-gobject/edge/group-empty-strings", test_group_empty_strings);

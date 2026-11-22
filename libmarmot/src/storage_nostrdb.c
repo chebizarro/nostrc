@@ -25,8 +25,7 @@
 #include <errno.h>
 
 #if __has_include("nostrdb.h")
-#include "nostrdb.h"
-#include "lmdb.h"
+#include "nostrdb_headers.h"
 #define HAVE_NOSTRDB 1
 #else
 #define HAVE_NOSTRDB 0
@@ -729,6 +728,67 @@ ndb_messages(void *ctx, const MarmotGroupId *gid,
     mdb_txn_abort(txn);
     *out = arr;
     *out_count = added;
+    return MARMOT_OK;
+}
+
+/* A single LMDB snapshot scan; only matching epochs leave the backend. */
+static MarmotError
+ndb_messages_in_epochs(void *ctx, const MarmotGroupId *gid, uint64_t from, uint64_t to,
+                        MarmotMessage ***out, size_t *out_count)
+{
+    NdbCtx *nc = ctx;
+    *out = NULL;
+    *out_count = 0;
+    if (from > to) return MARMOT_OK;
+    MDB_txn *txn;
+    if (mdb_txn_begin(nc->mls_env, NULL, MDB_RDONLY, &txn) != 0)
+        return MARMOT_ERR_STORAGE;
+    MDB_cursor *cur;
+    if (mdb_cursor_open(txn, nc->dbi_messages, &cur) != 0) {
+        mdb_txn_abort(txn);
+        return MARMOT_ERR_STORAGE;
+    }
+    MarmotMessage **arr = NULL;
+    size_t count = 0, cap = 0;
+    MarmotError err = MARMOT_OK;
+    MDB_val k, v;
+    int rc = mdb_cursor_get(cur, &k, &v, MDB_FIRST);
+    while (rc == 0) {
+        MarmotMessage *msg = k.mv_size == 32
+            ? deserialize_message(k.mv_data, v.mv_data, v.mv_size) : NULL;
+        if (!msg) {
+            err = MARMOT_ERR_STORAGE;
+            break;
+        }
+        if (!marmot_group_id_equal(&msg->mls_group_id, gid) ||
+            msg->epoch < from || msg->epoch > to) {
+            marmot_message_free(msg);
+        } else {
+            if (count == cap) {
+                size_t next = cap ? cap * 2 : 16;
+                MarmotMessage **grown = realloc(arr, next * sizeof(*arr));
+                if (!grown) {
+                    marmot_message_free(msg);
+                    err = MARMOT_ERR_MEMORY;
+                    break;
+                }
+                arr = grown;
+                cap = next;
+            }
+            arr[count++] = msg;
+        }
+        rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
+    }
+    if (rc != 0 && rc != MDB_NOTFOUND) err = MARMOT_ERR_STORAGE;
+    mdb_cursor_close(cur);
+    mdb_txn_abort(txn);
+    if (err != MARMOT_OK) {
+        for (size_t i = 0; i < count; i++) marmot_message_free(arr[i]);
+        free(arr);
+        return err;
+    }
+    *out = arr;
+    *out_count = count;
     return MARMOT_OK;
 }
 
@@ -1704,6 +1764,7 @@ marmot_storage_nostrdb_new(void *ndb_handle, const char *mls_state_dir)
     s->save_group = ndb_save_group;
     s->delete_group = ndb_delete_group;
     s->messages = ndb_messages;
+    s->messages_in_epochs = ndb_messages_in_epochs;
     s->last_message = ndb_last_message;
     s->save_message = ndb_save_message;
     s->find_message_by_id = ndb_find_message_by_id;

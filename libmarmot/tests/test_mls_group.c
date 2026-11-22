@@ -255,6 +255,46 @@ TEST(test_self_update)
     mls_group_free(&group);
 }
 
+TEST(test_self_update_preserves_leaf_capabilities)
+{
+    MlsGroup group;
+    uint8_t sig_sk[MLS_SIG_SK_LEN];
+    assert(create_alice_group(&group, sig_sk) == 0);
+    MlsLeafNode *leaf = &group.tree.nodes[0].leaf;
+    leaf->cap_extensions = realloc(leaf->cap_extensions,
+        (leaf->cap_extension_count + 1) * sizeof(uint16_t));
+    assert(leaf->cap_extensions);
+    leaf->cap_extensions[leaf->cap_extension_count++] = 0xbeef;
+    MlsTlsBuf ext;
+    assert(mls_tls_buf_init(&ext, 8) == 0);
+    assert(mls_tls_write_u16(&ext, 0xbeef) == 0 &&
+           mls_tls_write_opaque16(&ext, NULL, 0) == 0);
+    free(leaf->extensions_data);
+    leaf->extensions_data = ext.data;
+    leaf->extensions_len = ext.len;
+    MlsLeafNode before;
+    assert(mls_leaf_node_clone(&before, leaf) == 0);
+    MlsCommitResult result;
+    assert(mls_group_self_update(&group, &result) == 0);
+    leaf = &group.tree.nodes[0].leaf;
+#define SAME_CAP(field, count) \
+    assert(leaf->count == before.count && \
+           memcmp(leaf->field, before.field, before.count * sizeof(uint16_t)) == 0)
+    SAME_CAP(versions, version_count);
+    SAME_CAP(ciphersuites, ciphersuite_count);
+    SAME_CAP(cap_extensions, cap_extension_count);
+    SAME_CAP(proposals, proposal_count);
+    SAME_CAP(cap_credentials, cap_credential_count);
+#undef SAME_CAP
+    assert(leaf->extensions_len == before.extensions_len &&
+           memcmp(leaf->extensions_data, before.extensions_data, before.extensions_len) == 0);
+    assert(mls_leaf_node_verify_signature(leaf, group.group_id, group.group_id_len, 0) == 0);
+    assert(memcmp(leaf->encryption_key, before.encryption_key, MLS_KEM_PK_LEN) != 0);
+    mls_leaf_node_clear(&before);
+    mls_commit_result_clear(&result);
+    mls_group_free(&group);
+}
+
 TEST(test_self_update_multiple)
 {
     MlsGroup group;
@@ -2888,6 +2928,8 @@ typedef enum {
     PATH_LEAF_DUPLICATE_SIGNATURE_KEY,  /* review W16 M4 */
     PATH_NODE_KEY_IN_TREE,              /* review W16 M3 */
     PATH_NODE_KEY_REPEATED,             /* review W16 M3 */
+    PATH_NODE_SECRET_MISMATCH_LOW,
+    PATH_NODE_SECRET_MISMATCH_HIGH,
     PATH_LEAF_CASE_COUNT
 } PathLeafCase;
 
@@ -2896,6 +2938,7 @@ static const char *const path_leaf_case_names[PATH_LEAF_CASE_COUNT] = {
     "duplicate encryption key", "unsupported GroupContext extension",
     "another member's signature key", "path node key already in the tree",
     "path node key repeated within the path",
+    "lowest path key disagrees with its secret", "highest path key disagrees with its secret",
 };
 
 /* Signing key of the member whose signature key PATH_LEAF_DUPLICATE_-
@@ -2952,8 +2995,14 @@ build_update_path_for_test(const MlsGroup *committer,
                                             path->nodes[i].encryption_key) == 0);
         sodium_memzero(node_sk, sizeof(node_sk));
     }
-    /* Receivers do not yet match node keys against the path secrets
-     * (nostrc-11r1), so only the §12.4.2 freshness rule can reject these. */
+    /* Freshness and path-secret consistency are independent checks. */
+    if (leaf_case == PATH_NODE_SECRET_MISMATCH_LOW ||
+        leaf_case == PATH_NODE_SECRET_MISMATCH_HIGH) {
+        uint8_t unrelated_sk[MLS_KEM_SK_LEN];
+        uint32_t at = leaf_case == PATH_NODE_SECRET_MISMATCH_LOW ? 0 : fdp_len - 1;
+        assert(mls_crypto_kem_keygen(unrelated_sk, path->nodes[at].encryption_key) == 0);
+        sodium_memzero(unrelated_sk, sizeof(unrelated_sk));
+    }
     if (leaf_case == PATH_NODE_KEY_IN_TREE)
         memcpy(path->nodes[fdp_len - 1].encryption_key, dup_key, MLS_KEM_PK_LEN);
     if (leaf_case == PATH_NODE_KEY_REPEATED) {
@@ -4592,6 +4641,7 @@ int main(void)
     printf(" Self-update:\n");
     RUN(test_self_update);
     RUN(test_self_update_multiple);
+    RUN(test_self_update_preserves_leaf_capabilities);
     RUN(test_encrypt_after_self_update);
 
     printf(" Add member:\n");

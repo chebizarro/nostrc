@@ -212,6 +212,13 @@ target_compile_options(marmot PRIVATE
 )
 
 # ─── pkg-config ──────────────────────────────────────────────────────────
+set(MARMOT_PC_REQUIRES_PRIVATE "nostr libnostrgo")
+if(SQLITE3_FOUND)
+  string(APPEND MARMOT_PC_REQUIRES_PRIVATE " sqlite3")
+endif()
+if(LMDB_FOUND)
+  string(APPEND MARMOT_PC_REQUIRES_PRIVATE " lmdb")
+endif()
 configure_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/marmot.pc.in
   ${CMAKE_CURRENT_BINARY_DIR}/marmot.pc
@@ -410,6 +417,9 @@ if(BUILD_TESTING)
   target_link_libraries(test_storage_contract PRIVATE marmot)
   target_include_directories(test_storage_contract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   add_test(NAME marmot_test_storage_contract COMMAND test_storage_contract)
+  if(TARGET nostrdb AND LMDB_FOUND)
+    add_test(NAME marmot_test_nostrdb_epochs COMMAND test_storage_contract --nostrdb-epochs)
+  endif()
 
   # Test: MIP-04 media encryption
   add_executable(test_media ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_media.c)

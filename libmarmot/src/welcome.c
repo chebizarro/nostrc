@@ -30,6 +30,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef MARMOT_TEST_HOOKS
+bool marmot_test_welcome_admin_alloc_fail;
+#endif
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Internal base64 helpers (shared with credentials.c)
  * ──────────────────────────────────────────────────────────────────────── */
@@ -439,9 +443,17 @@ legacy_group_from_mls(const MlsGroup *mls, MarmotGroup **out, char ***relays_out
 
     if (gde->admin_count > 0 && gde->admins) {
         group->admin_count = gde->admin_count;
-        group->admin_pubkeys = malloc(gde->admin_count * 32);
-        if (group->admin_pubkeys)
-            memcpy(group->admin_pubkeys, gde->admins, gde->admin_count * 32);
+        bool allocate = true;
+#ifdef MARMOT_TEST_HOOKS
+        allocate = !marmot_test_welcome_admin_alloc_fail;
+#endif
+        group->admin_pubkeys = allocate ? malloc(gde->admin_count * 32) : NULL;
+        if (!group->admin_pubkeys) {
+            marmot_group_free(group);
+            marmot_group_data_extension_free(gde);
+            return MARMOT_ERR_MEMORY;
+        }
+        memcpy(group->admin_pubkeys, gde->admins, gde->admin_count * 32);
     }
 
     if (gde->image_hash) {
@@ -908,6 +920,28 @@ welcome_open(Marmot *m, const MarmotWelcome *welcome, const uint8_t *data, size_
         }
     } else {
         bind_err = welcome_tree_bound(m, &mls_group, signer_leaf, welcome);
+        if (bind_err == MARMOT_OK) {
+            MarmotGroup *joined = NULL;
+            char **relays = NULL;
+            size_t relay_count = 0;
+            bind_err = legacy_group_from_mls(&mls_group, &joined, &relays, &relay_count);
+            if (bind_err != MARMOT_OK)
+                bind_reason = bind_err == MARMOT_ERR_MEMORY ? NULL
+                    : "missing or malformed marmot_group_data (0xF2EE)";
+            if (bind_err == MARMOT_OK && joined->admin_count > 0) {
+                uint8_t inviter[32];
+                bool admin = false;
+                if (marmot_mls_sender_identity(&mls_group, signer_leaf, inviter) == 0)
+                    for (size_t i = 0; i < joined->admin_count; i++)
+                        admin |= sodium_memcmp(inviter, joined->admin_pubkeys[i], 32) == 0;
+                if (!admin) {
+                    bind_err = MARMOT_ERR_ADMIN_ONLY;
+                    bind_reason = "welcome not sent by an admin of the group";
+                }
+            }
+            marmot_group_free(joined);
+            marmot_adopted_relays_free(relays, relay_count);
+        }
     }
     if (bind_err != MARMOT_OK) {
         mls_group_free(&mls_group);

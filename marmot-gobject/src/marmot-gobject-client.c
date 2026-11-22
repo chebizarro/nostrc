@@ -324,14 +324,20 @@ typedef struct {
     GObject *object;
 } QueuedSignal;
 
+static void
+queued_signal_free(gpointer user_data)
+{
+    QueuedSignal *queued = user_data;
+    g_object_unref(queued->object);
+    g_object_unref(queued->client);
+    g_free(queued);
+}
+
 static gboolean
 emit_queued_signal(gpointer user_data)
 {
     QueuedSignal *queued = user_data;
     g_signal_emit(queued->client, queued->signal_id, 0, queued->object);
-    g_object_unref(queued->object);
-    g_object_unref(queued->client);
-    g_free(queued);
     return G_SOURCE_REMOVE;
 }
 
@@ -356,7 +362,7 @@ queue_client_signal(MarmotGobjectClient *self, guint signal_id, GObject *object)
     queued->object = g_object_ref(object);
     GSource *source = g_idle_source_new();
     g_source_set_priority(source, G_PRIORITY_DEFAULT);
-    g_source_set_callback(source, emit_queued_signal, queued, NULL);
+    g_source_set_callback(source, emit_queued_signal, queued, queued_signal_free);
     g_source_set_static_name(source, "[marmot-gobject] client signal");
     g_source_attach(source, self->context);
     g_source_unref(source);

@@ -779,6 +779,91 @@ faults_disarm(Member *x)
 
 /* ── Tests ────────────────────────────────────────────────────────────── */
 
+static void
+expect_relay_urls(Member *x, const MarmotGroupId *gid, const char *const *urls, size_t n)
+{
+    MarmotGroupRelay *relays = NULL;
+    size_t count = 0;
+    OK(marmot_get_group_relay_urls(x->m, gid, &relays, &count));
+    CHECK(count == n, "%s relay count %zu != %zu", x->name, count, n);
+    for (size_t i = 0; i < count; i++) {
+        CHECK(strcmp(relays[i].relay_url, urls[i]) == 0, "%s relay %zu", x->name, i);
+        free(relays[i].relay_url);
+        marmot_group_id_free(&relays[i].mls_group_id);
+    }
+    free(relays);
+}
+
+static void
+test_group_data_relays_follow_commit(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *urls[] = {"wss://nos.lol", "wss://relay.nostr.band"};
+    MarmotGroupConfig cfg = {0};
+    cfg.relay_urls = urls;
+    cfg.relay_count = 2;
+    char *commit = NULL;
+    OK(marmot_update_group_metadata(t.alice.m, &t.gid, &cfg, &commit));
+    merge(&t.alice, &t.gid);
+    expect_relay_urls(&t.alice, &t.gid, (const char *const *)urls, 2);
+
+    /* A failed group-record write must restore the relay mirror too. */
+    MarmotGroupRelay *before = NULL;
+    size_t n_before = 0;
+    OK(marmot_get_group_relay_urls(t.bob.m, &t.gid, &before, &n_before));
+    const char **old = calloc(n_before ? n_before : 1, sizeof(*old));
+    CHECK(old, "old relays");
+    for (size_t i = 0; i < n_before; i++) old[i] = before[i].relay_url;
+    faults_arm(&t.bob);
+    g_faults.fail_at = 4;
+    MarmotError err;
+    deliver(&t.bob, commit, &err, NULL);
+    faults_disarm(&t.bob);
+    CHECK(err == MARMOT_ERR_STORAGE_CONSTRAINT, "failed record: %d", err);
+    expect_relay_urls(&t.bob, &t.gid, old, n_before);
+    for (size_t i = 0; i < n_before; i++) {
+        free(before[i].relay_url);
+        marmot_group_id_free(&before[i].mls_group_id);
+    }
+    free(before);
+    free(old);
+    expect_commit(&t.bob, commit, "relay update");
+    expect_commit(&t.charlie, commit, "relay update");
+    for (size_t i = 0; i < 3; i++)
+        expect_relay_urls(t.all[i], &t.gid, (const char *const *)urls, 2);
+    free(commit);
+    trio_clear(&t);
+}
+
+/* A no-op GroupContextExtensions proposal is still privileged, even when
+ * the only resulting state difference is the committer's UpdatePath. */
+static void
+test_noop_group_context_commit_is_privileged(void)
+{
+    Trio t;
+    trio_init(&t);
+    MlsGroup g;
+    load_mls(&t.charlie, &t.gid, &g);
+    char *event = forge_extensions_commit(&t.charlie, &t.gid,
+                                           g.extensions_data, g.extensions_len, t.nostr_gid);
+    mls_group_free(&g);
+    Snapshot before;
+    snapshot(&t.alice, &t.gid, &before);
+    MarmotError err;
+    deliver(&t.alice, event, &err, NULL);
+    CHECK(err == MARMOT_ERR_COMMIT_FROM_NON_ADMIN, "non-admin no-op GCE: %d", err);
+    expect_unchanged(&t.alice, &t.gid, &before, "no-op GCE refused");
+    snapshot_clear(&before);
+    free(event);
+    load_mls(&t.alice, &t.gid, &g);
+    event = forge_extensions_commit(&t.alice, &t.gid, g.extensions_data, g.extensions_len, t.nostr_gid);
+    mls_group_free(&g);
+    expect_commit(&t.bob, event, "admin no-op GCE");
+    free(event);
+    trio_clear(&t);
+}
+
 /* Alice renames the group; Bob and Charlie process the published kind:445
  * and everyone agrees on the metadata and the epoch (was: the Commit was
  * discarded and receivers treated every kind:445 as an application
@@ -3352,6 +3437,54 @@ test_welcome_with_forged_member_rejected(void)
     marmot_free(mallory.m);
     marmot_free(alice.m);
     marmot_free(bob.m);
+}
+
+/* The GroupInfo signer must be an admin of the joined legacy state;
+ * an empty admin list retains the legacy any-member policy. */
+static void
+test_welcome_legacy_inviter_admin(void)
+{
+    for (int mode = 0; mode < 3; mode++) {
+        Member alice, bob;
+        member_init(&alice, "Alice");
+        member_init(&bob, "Bob");
+        char *kp = key_package(&bob);
+        const char *kps[] = {kp};
+        MarmotGroupConfig cfg = {0};
+        cfg.name = "Inviter policy";
+        cfg.admin_pubkeys = (uint8_t (*)[32])(mode == 2 ? bob.pk : alice.pk);
+        cfg.admin_count = mode == 0 ? 0 : 1;
+        MarmotCreateGroupResult cg = {0};
+        OK(marmot_create_group(alice.m, alice.pk, kps, 1, &cfg, &cg));
+#ifdef MARMOT_TEST_HOOKS
+        if (mode == 1) {
+            uint8_t wrapper[32];
+            randombytes_buf(wrapper, sizeof(wrapper));
+            MarmotWelcome *w = NULL;
+            OK(marmot_process_welcome(bob.m, wrapper, cg.welcome_rumor_jsons[0], &w));
+            marmot_test_welcome_admin_alloc_fail = true;
+            MarmotError err = marmot_accept_welcome(bob.m, w);
+            marmot_test_welcome_admin_alloc_fail = false;
+            CHECK(err == MARMOT_ERR_MEMORY, "admin allocation failure: %d", err);
+            MarmotWelcome **pending = NULL;
+            size_t count = 0;
+            OK(marmot_get_pending_welcomes(bob.m, NULL, &pending, &count));
+            CHECK(count == 1 && pending[0]->state == MARMOT_WELCOME_STATE_PENDING,
+                  "allocation failure keeps invitation retryable");
+            for (size_t i = 0; i < count; i++) marmot_welcome_free(pending[i]);
+            free(pending);
+            OK(marmot_accept_welcome(bob.m, w));
+            marmot_welcome_free(w);
+        } else
+#endif
+        expect_join(&bob, cg.welcome_rumor_jsons[0],
+                    mode == 2 ? MARMOT_ERR_ADMIN_ONLY : MARMOT_OK,
+                    "legacy inviter admin policy");
+        marmot_create_group_result_free(&cg);
+        free(kp);
+        marmot_free(alice.m);
+        marmot_free(bob.m);
+    }
 }
 
 /* Review W20 N1: marmot_process_welcome_from() takes the NIP-59 seal's
@@ -8749,6 +8882,8 @@ main(int argc, char **argv)
     RUN(test_member_cannot_post_as_another);
     RUN(test_inner_event_delivered_once);
     RUN(test_rename_reaches_every_member);
+    RUN(test_group_data_relays_follow_commit);
+    RUN(test_noop_group_context_commit_is_privileged);
     RUN(test_events_signed_by_fresh_ephemeral_keys);
     RUN(test_group_events_have_strictly_increasing_created_at);
     RUN(test_group_event_lead_is_bounded);
@@ -8792,6 +8927,7 @@ main(int argc, char **argv)
     RUN(test_forged_member_identity_rejected);
     RUN(test_welcome_with_forged_member_rejected);
     RUN(test_welcome_sender_from_seal);
+    RUN(test_welcome_legacy_inviter_admin);
     RUN(test_account_proof_enrollment);
     RUN(test_add_refused_when_joiners_would_reject);
     RUN(test_create_group_needs_enrollment);

@@ -219,6 +219,11 @@ group_derive_epoch(MlsGroup *group,
  *     common ancestor a Welcome hands to each joiner (RFC 9420 §12.4.3.1,
  *     nostrc-il4i)
  */
+static int leaf_node_validate(const MlsGroup *group, const MlsLeafNode *leaf,
+                               uint8_t expected_source, uint32_t leaf_index,
+                               const MlsLeafNode *replaced,
+                               const uint8_t *group_extensions, size_t group_extensions_len);
+
 static int
 generate_update_path(MlsGroup *group,
                      const uint32_t *added_leaves, size_t added_leaf_count,
@@ -229,10 +234,6 @@ generate_update_path(MlsGroup *group,
 {
     if (secret_count > 0 && (!secret_nodes || !out_node_secrets)) return -1;
     /* The committer's credential is carried over from its current leaf. */
-    const MlsLeafNode *cur_leaf =
-        &group->tree.nodes[mls_tree_leaf_to_node(group->own_leaf_index)].leaf;
-    const uint8_t *credential_identity = cur_leaf->credential_identity;
-    size_t cred_len = cur_leaf->credential_identity_len;
     uint32_t n_leaves = group->tree.n_leaves;
     uint8_t *path_context = NULL;
     size_t path_context_len = 0;
@@ -253,43 +254,15 @@ generate_update_path(MlsGroup *group,
     if (mls_crypto_kem_keygen(new_enc_sk, new_enc_pk) != 0)
         return -1;
 
-    /* Build new leaf node */
+    /* Keep the member's advertised capabilities and leaf extensions. */
     MlsLeafNode *old_leaf = &group->tree.nodes[mls_tree_leaf_to_node(group->own_leaf_index)].leaf;
-    memset(&path_out->leaf_node, 0, sizeof(MlsLeafNode));
+    if (mls_leaf_node_clone(&path_out->leaf_node, old_leaf) != 0) goto fail;
     memcpy(path_out->leaf_node.encryption_key, new_enc_pk, MLS_KEM_PK_LEN);
-    /* Preserve signing key from existing leaf */
-    memcpy(path_out->leaf_node.signature_key, old_leaf->signature_key, MLS_SIG_PK_LEN);
-    path_out->leaf_node.credential_type = MLS_CREDENTIAL_BASIC;
-    if (cred_len > 0 && credential_identity) {
-        path_out->leaf_node.credential_identity = malloc(cred_len);
-        if (!path_out->leaf_node.credential_identity) goto fail;
-        memcpy(path_out->leaf_node.credential_identity, credential_identity, cred_len);
-        path_out->leaf_node.credential_identity_len = cred_len;
-    } else if (old_leaf->credential_identity_len > 0) {
-        path_out->leaf_node.credential_identity = malloc(old_leaf->credential_identity_len);
-        if (!path_out->leaf_node.credential_identity) goto fail;
-        memcpy(path_out->leaf_node.credential_identity,
-               old_leaf->credential_identity, old_leaf->credential_identity_len);
-        path_out->leaf_node.credential_identity_len = old_leaf->credential_identity_len;
-    }
     path_out->leaf_node.leaf_node_source = MLS_LEAF_NODE_SOURCE_COMMIT;
-    /* Capabilities (RFC 9420 §7.2; nostrc-prqu.10): the group's profile's
-     * (an adopted leaf must keep advertising app_data_update, nostrc-
-     * qp24.5.1). */
-    if ((group->profile == MARMOT_GROUP_PROFILE_ADOPTED
-             ? mls_leaf_node_set_adopted_capabilities(&path_out->leaf_node)
-             : mls_leaf_node_set_marmot_capabilities(&path_out->leaf_node)) != 0)
-        goto fail;
-    /* The LeafNode extensions carry over, and with the signature key and the
-     * credential they bind, so does the account proof: it must not be
-     * dropped from a member's leaf (nostrc-7vyi; receivers check). */
-    if (old_leaf->extensions_len > 0) {
-        path_out->leaf_node.extensions_data = malloc(old_leaf->extensions_len);
-        if (!path_out->leaf_node.extensions_data) goto fail;
-        memcpy(path_out->leaf_node.extensions_data, old_leaf->extensions_data,
-               old_leaf->extensions_len);
-        path_out->leaf_node.extensions_len = old_leaf->extensions_len;
-    }
+    path_out->leaf_node.lifetime_not_before = path_out->leaf_node.lifetime_not_after = 0;
+    free(path_out->leaf_node.parent_hash);
+    path_out->leaf_node.parent_hash = NULL;
+    path_out->leaf_node.parent_hash_len = 0;
 
     /* Generate path secrets for each filtered direct path node */
     uint8_t path_secrets[64][MLS_HASH_LEN];
@@ -411,6 +384,11 @@ generate_update_path(MlsGroup *group,
     if (mls_leaf_node_sign(&path_out->leaf_node, group->own_signature_key,
                            group->group_id, group->group_id_len,
                            group->own_leaf_index) != 0)
+        goto fail;
+
+    if (leaf_node_validate(group, &path_out->leaf_node, MLS_LEAF_NODE_SOURCE_COMMIT,
+                            group->own_leaf_index, old_leaf,
+                            group->extensions_data, group->extensions_len) != 0)
         goto fail;
 
     mls_leaf_node_clear(&group->tree.nodes[own_node].leaf);
@@ -4812,16 +4790,19 @@ process_commit_impl(MlsGroup *group,
                 staged_rc = MARMOT_ERR_INTERNAL;
                 goto staged_fail;
             }
-            if (memcmp(node_pk, commit.path.nodes[i].encryption_key,
-                       MLS_KEM_PK_LEN) == 0 &&
-                remember_own_path_key(group, fdp[i], node_sk, node_pk) != 0) {
+            int key_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            if (sodium_memcmp(node_pk, commit.path.nodes[i].encryption_key,
+                               MLS_KEM_PK_LEN) == 0)
+                key_rc = remember_own_path_key(group, fdp[i], node_sk, node_pk) == 0
+                             ? 0 : MARMOT_ERR_INTERNAL;
+            if (key_rc != 0) {
                 mls_commit_clear(&commit);
                 sodium_memzero(node_sk, sizeof(node_sk));
                 sodium_memzero(node_pk, sizeof(node_pk));
                 sodium_memzero(psk_secret, sizeof(psk_secret));
                 sodium_memzero(our_path_secret, sizeof(our_path_secret));
                 sodium_memzero(current_secret, sizeof(current_secret));
-                staged_rc = MARMOT_ERR_INTERNAL;
+                staged_rc = key_rc;
                 goto staged_fail;
             }
             sodium_memzero(node_sk, sizeof(node_sk));
