@@ -10,7 +10,9 @@ libgit2/curl/SQLite build dependencies into a signer-only package.
 - **Debian/Ubuntu**: copy `debian/` to a complete monorepo source root's
   `debian/`, then `dpkg-buildpackage -us -uc -b`. CMake builds
   `apps/grotto/all` and installs only `build/apps/grotto`; BUILD_TESTING is off.
-  GUI and daemon are not split. Breaks/Replaces handles the old 0.1.0-1 split.
+  GUI and daemon are not split. Breaks/Replaces handles split `grotto-daemon` packages predating 0.1.2,
+  including the previously shipped 0.1.1-alpha1 package. RPM and Arch also
+  replace the retired split daemon package.
 - **RPM**: `rpm/grotto.spec`; use a complete local `grotto-0.1.1-alpha1.tar.gz`
   with root `grotto-0.1.1-alpha1/`, including checked-out submodules, not GitHub's
   incomplete source archive. Build with `rpmbuild -ba`. The dependency floor,
