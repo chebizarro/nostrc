@@ -437,3 +437,14 @@ independent review before tag approval; local builds cannot stand in for them.
 References: [DO create flags](https://docs.digitalocean.com/reference/doctl/reference/compute/droplet/create/),
 [Caddy global options](https://caddyserver.com/docs/caddyfile/options),
 [deployment plan](../../docs/plans/signet-production-deployment-2026-11-06.md).
+
+### Legacy plaintext migration
+
+Required-encryption startup refuses automatic plaintext migration. Run
+`signetctl migrate-db` offline as an explicit owner operation. Its
+`.plaintext-backup` is created exclusively with mode 0600; an existing path is
+refused, not overwritten. Verify the encrypted database before removing that
+plaintext copy and any separately retained legacy copies. Unlinking is not a
+secure erase guarantee on SSD, copy-on-write or snapshot storage; handle those
+copies under the storage owner's secure-deletion policy. Do not restart the
+production service until plaintext copies are dealt with.
