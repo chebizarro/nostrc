@@ -440,6 +440,8 @@ typedef struct {
   gboolean closed;
   gchar *closed_reason;
   guint events_at_close;
+  guint closed_count;
+  gboolean close_on_first;
 } Backfill;
 
 static void
@@ -450,6 +452,7 @@ on_backfill_event(GNostrSubscription *sub G_GNUC_UNUSED, const gchar *json, gpoi
   g_assert_nonnull(content);
   guint index = (guint)g_ascii_strtoull(content + strlen("\"stored "), NULL, 10);
   g_array_append_val(b->indices, index);
+  if (b->close_on_first && b->indices->len == 1) gnostr_subscription_close(sub);
 }
 
 static void
@@ -470,6 +473,7 @@ on_backfill_closed(GNostrSubscription *sub G_GNUC_UNUSED, const gchar *reason,
     b->closed_reason = g_strdup(reason);
     b->events_at_close = b->indices->len;
   }
+  b->closed_count++;
   b->closed = TRUE;
 }
 
@@ -741,7 +745,7 @@ test_fire_reaches_auth_required_relay(void)
 
 static GMutex terminal_mutex;
 static GCond terminal_changed;
-static gboolean monitor_finished;
+static gboolean monitor_finished, monitor_paused, monitor_ready, monitor_release;
 
 static void terminal_monitor_barrier(NostrSubscription *sub, gboolean finished) {
   if (!finished) {
@@ -751,6 +755,11 @@ static void terminal_monitor_barrier(NostrSubscription *sub, gboolean finished) 
     g_assert_cmpint(go_select_timeout(&receive, 1, WAIT_BOUND_S * 1000).selected_case, ==, 0);
     g_assert_nonnull(reason);
     g_assert_cmpint(go_channel_try_send(closed, reason), ==, 0);
+    g_mutex_lock(&terminal_mutex);
+    monitor_ready = TRUE;
+    g_cond_broadcast(&terminal_changed);
+    while (monitor_paused && !monitor_release) g_cond_wait(&terminal_changed, &terminal_mutex);
+    g_mutex_unlock(&terminal_mutex);
     return; /* Every EVENT and CLOSED is now in the real core channels. */
   }
   g_mutex_lock(&terminal_mutex);
@@ -802,6 +811,64 @@ static void test_relay_closed_survives_overflow(void) {
   g_ptr_array_unref(server.stored);
   g_array_unref(b.indices);
   g_free(b.closed_reason);
+}
+
+static void run_explicit_close_preserves_relay_reason(gboolean from_event) {
+  BurstRelay server = { .stored = stored_events(), .closed_reason = "restricted: fixture" };
+  relay_start(&server);
+  GNostrRelay *relay = connect_relay(&server);
+  Backfill b = { .indices = g_array_new(FALSE, FALSE, sizeof(guint)), .close_on_first = from_event };
+  GNostrSubscription *sub = gnostr_subscription_new(relay, kind1_filters());
+  g_signal_connect(sub, "event", G_CALLBACK(on_backfill_event), &b);
+  g_signal_connect(sub, "closed", G_CALLBACK(on_backfill_closed), &b);
+  monitor_finished = monitor_ready = monitor_release = FALSE;
+  monitor_paused = !from_event;
+  gnostr_subscription_test_set_monitor_hook(terminal_monitor_barrier);
+  GError *error = NULL;
+  g_assert_true(gnostr_subscription_fire(sub, &error));
+  g_assert_no_error(error);
+  gint64 deadline = g_get_monotonic_time() + WAIT_BOUND_S * G_USEC_PER_SEC;
+  g_mutex_lock(&terminal_mutex);
+  while (!(from_event ? monitor_finished : monitor_ready))
+    g_assert_true(g_cond_wait_until(&terminal_changed, &terminal_mutex, deadline));
+  g_mutex_unlock(&terminal_mutex);
+  if (!from_event) {
+    gnostr_subscription_close(sub); /* core CLOSED is queued, not consumed */
+    g_assert_false(b.closed); /* terminal cannot overtake queued events */
+    gnostr_subscription_close(sub);
+  }
+  g_mutex_lock(&terminal_mutex);
+  monitor_release = TRUE;
+  g_cond_broadcast(&terminal_changed);
+  while (!monitor_finished) g_assert_true(g_cond_wait_until(&terminal_changed, &terminal_mutex, deadline));
+  monitor_paused = FALSE;
+  g_mutex_unlock(&terminal_mutex);
+  gnostr_subscription_test_set_monitor_hook(NULL);
+  gboolean timed_out = FALSE;
+  guint bound = g_timeout_add_seconds(WAIT_BOUND_S, on_bound, &timed_out);
+  while (!b.closed && !timed_out) g_main_context_iteration(NULL, TRUE);
+  g_assert_false(timed_out);
+  g_source_remove(bound);
+  g_assert_cmpstr(b.closed_reason, ==, server.closed_reason);
+  g_assert_cmpuint(b.events_at_close, ==, N_STORED);
+  g_assert_cmpuint(b.closed_count, ==, 1);
+  gnostr_subscription_close(sub);
+  g_assert_cmpuint(b.closed_count, ==, 1);
+  g_signal_handlers_disconnect_by_data(sub, &b);
+  g_object_unref(sub);
+  gnostr_relay_disconnect(relay);
+  g_object_unref(relay);
+  relay_stop(&server);
+  g_ptr_array_unref(server.stored);
+  g_array_unref(b.indices);
+  g_free(b.closed_reason);
+}
+
+static void test_explicit_close_preserves_queued_relay_reason(void) {
+  run_explicit_close_preserves_relay_reason(FALSE);
+}
+static void test_handler_close_preserves_queued_relay_reason(void) {
+  run_explicit_close_preserves_relay_reason(TRUE);
 }
 
 typedef struct { gboolean done; guint count; } PoolRound;
@@ -918,5 +985,7 @@ main(int argc, char **argv)
   g_test_add_func("/nostr-gobject/pool/paginate-burst", test_paginate_burst);
   g_test_add_func("/nostr-gobject/pool/stream-burst", test_stream_burst);
   g_test_add_func("/nostr-gobject/subscription/relay-closed-survives-overflow", test_relay_closed_survives_overflow);
+  g_test_add_func("/nostr-gobject/subscription/explicit-close-preserves-relay-reason", test_explicit_close_preserves_queued_relay_reason);
+  g_test_add_func("/nostr-gobject/subscription/handler-close-preserves-relay-reason", test_handler_close_preserves_queued_relay_reason);
   return g_test_run();
 }
