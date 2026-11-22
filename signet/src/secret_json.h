@@ -15,6 +15,7 @@ void signet_secret_json_parser_unref(JsonParser *parser);
 void signet_secret_json_builder_unref(JsonBuilder *builder);
 void signet_secret_json_generator_unref(JsonGenerator *generator);
 void signet_secret_gfree(char *text);
+void signet_secret_bytes_free(void *data, size_t size);
 
 typedef JsonParser SignetSecretJsonParser;
 typedef JsonBuilder SignetSecretJsonBuilder;

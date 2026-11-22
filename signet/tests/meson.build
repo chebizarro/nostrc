@@ -470,3 +470,10 @@ test_secret_json = executable('test_secret_json',
   dependencies: signet_deps + [in_tree_dep],
   c_args: signet_test_c_args + ['-DSIGNET_ENABLE_TEST_HOOKS=1'], install: false)
 test('secret_json', test_secret_json)
+
+test_bootstrap_wipe = executable('test_bootstrap_wipe',
+  'test_bootstrap_wipe.c', '../src/secret_json.c',
+  link_with: signet_core, include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args + ['-DSIGNET_ENABLE_TEST_HOOKS=1'], install: false)
+test('bootstrap_wipe', test_bootstrap_wipe)

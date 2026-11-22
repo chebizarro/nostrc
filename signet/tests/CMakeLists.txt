@@ -140,6 +140,9 @@ signet_add_test_executable(test_adopt_existing)
 signet_add_test_executable(test_reissue_connect)
 # Test-local observer implementation; production helper has no observer unless
 # the explicit test-hook build is selected. This compiles real management code.
+signet_add_test_executable(test_bootstrap_wipe test_bootstrap_wipe.c ../src/secret_json.c)
+target_compile_definitions(test_bootstrap_wipe PRIVATE SIGNET_ENABLE_TEST_HOOKS=1)
+add_test(NAME bootstrap_wipe COMMAND test_bootstrap_wipe)
 signet_add_test_executable(test_secret_json test_secret_json.c ../src/secret_json.c)
 target_compile_definitions(test_secret_json PRIVATE SIGNET_ENABLE_TEST_HOOKS=1)
 add_test(NAME secret_json COMMAND test_secret_json)

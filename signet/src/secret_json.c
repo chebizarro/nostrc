@@ -10,14 +10,17 @@ void signet_secret_json_set_wipe_hook(void (*hook)(const void *, size_t)) {
 }
 #endif
 
-void signet_secret_gfree(char *text) {
-  if (!text) return;
-  size_t len = strlen(text);
-  secure_wipe(text, len);
+void signet_secret_bytes_free(void *data, size_t size) {
+  if (!data) return;
+  secure_wipe(data, size);
 #ifdef SIGNET_ENABLE_TEST_HOOKS
-  if (wipe_hook) wipe_hook(text, len);
+  if (wipe_hook) wipe_hook(data, size);
 #endif
-  g_free(text);
+  g_free(data);
+}
+
+void signet_secret_gfree(char *text) {
+  if (text) signet_secret_bytes_free(text, strlen(text));
 }
 
 void signet_secret_json_wipe(JsonNode *node) {
