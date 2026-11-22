@@ -18,6 +18,7 @@
 #include <pthread.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <nsync.h>
@@ -73,8 +74,8 @@ struct NostrMockRelayServer {
 
     /* Service thread */
     pthread_t service_thread;
-    volatile int running;
-    volatile int should_stop;
+    atomic_int running;
+    atomic_int should_stop;
 
     /* Thread safety */
     nsync_mu mutex;
@@ -165,6 +166,8 @@ NostrMockRelayServerConfig nostr_mock_server_config_default(void) {
 NostrMockRelayServer *nostr_mock_server_new(const NostrMockRelayServerConfig *config) {
     NostrMockRelayServer *server = calloc(1, sizeof(NostrMockRelayServer));
     if (!server) return NULL;
+    atomic_init(&server->running, 0);
+    atomic_init(&server->should_stop, 0);
 
     /* Apply config or defaults */
     NostrMockRelayServerConfig cfg = config ? *config : nostr_mock_server_config_default();

@@ -14,6 +14,7 @@
 #include "select.h"
 
 #include <stdlib.h>
+#include <stdatomic.h>
 #include <string.h>
 #include <stdio.h>
 #include <nsync.h>
@@ -44,8 +45,8 @@ struct NostrMockRelay {
 
     /* Shutdown coordination */
     GoChannel *shutdown_chan;
-    volatile int shutdown;
-    volatile int running;
+    atomic_int shutdown;
+    atomic_int running;
 
     /* Seeded events store */
     EventNode *seeded_events;
@@ -102,6 +103,8 @@ NostrMockRelayConfig nostr_mock_relay_config_default(void) {
 NostrMockRelay *nostr_mock_relay_new(const NostrMockRelayConfig *config) {
     NostrMockRelay *mock = calloc(1, sizeof(NostrMockRelay));
     if (!mock) return NULL;
+    atomic_init(&mock->running, 0);
+    atomic_init(&mock->shutdown, 0);
 
     if (config) {
         mock->config = *config;
