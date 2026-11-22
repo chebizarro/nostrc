@@ -1215,6 +1215,10 @@ not read (its validity rules need the frozen unsafe-host set): such a tag is
   older databases on open) and nostrdb (group record version 2) backends;
   0 means unknown (adopted groups, records stored before). Application
   storage backends must persist it too (nostrc-x215).
+- **nostrdb Welcome records keep their outcome across the upgrade
+  (nostrc-d1oq).** Welcomes are now stored whole; records written before
+  (event JSON only) read back with the outcome their `wproc` marker
+  recorded, so accepted, declined and failed invitations stay processed.
 - **Deferred Commits are reported when our pending Commit is cleared
   (nostrc-8gbp).** New `marmot_clear_pending_commit_with_results()` returns
   the `MarmotMessageResult` of each Commit it applies (deferred behind ours

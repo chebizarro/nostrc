@@ -895,8 +895,11 @@ ndb_save_processed_message(void *ctx, const uint8_t wrapper_id[32],
  * [32: welcomer] [4: member_count] [4: state] [32: wrapper_event_id]
  *
  * Records written before nostrc-d1oq hold only the NUL-terminated
- * event_json (a JSON object or empty, so never starting with 1) and read
- * back as pending Welcomes with that JSON alone; anything else is corrupt.
+ * event_json (a JSON object or empty, so never starting with 1); anything
+ * else is corrupt.  Their outcome (accepted, declined, failed) was recorded
+ * only by the "wproc" marker save_processed_welcome() also writes under the
+ * Welcome's id, so a record that reads as pending takes that marker's state
+ * (welcome_apply_processed()).
  */
 #define NDB_WELCOME_VERSION 1
 
@@ -1052,6 +1055,31 @@ fail:
     return NULL;
 }
 
+/* A Welcome that reads as pending but has a "wproc" marker under its id
+ * (review M1 of nostrc-d1oq: every record written before d1oq, which kept
+ * no state) was already processed: the marker's state is the outcome.  In
+ * the caller's read transaction.  A damaged marker is a storage error. */
+static MarmotError
+welcome_apply_processed(NdbCtx *nc, MDB_txn *txn, MarmotWelcome *w)
+{
+    if (w->state != MARMOT_WELCOME_STATE_PENDING) return MARMOT_OK;
+    uint8_t kbuf[64];
+    size_t kl = make_kv_key("wproc", w->id, 32, kbuf, sizeof(kbuf));
+    if (kl == 0) return MARMOT_ERR_STORAGE;
+    MDB_val k = { .mv_size = kl, .mv_data = kbuf };
+    MDB_val v;
+    bool found = false;
+    MarmotError err = ndb_lookup(mdb_get(txn, nc->dbi_kv, &k, &v), &found);
+    if (err != MARMOT_OK || !found) return err;
+    if (v.mv_size < 1) return MARMOT_ERR_STORAGE;
+    uint8_t state = ((const uint8_t *)v.mv_data)[0];
+    if (state != MARMOT_WELCOME_STATE_ACCEPTED && state != MARMOT_WELCOME_STATE_DECLINED &&
+        state != MARMOT_WELCOME_STATE_FAILED)
+        return MARMOT_ERR_STORAGE;
+    w->state = (MarmotWelcomeState)state;
+    return MARMOT_OK;
+}
+
 static MarmotError
 ndb_save_welcome(void *ctx, const MarmotWelcome *w)
 {
@@ -1093,6 +1121,13 @@ ndb_find_welcome_by_event_id(void *ctx, const uint8_t event_id[32], MarmotWelcom
     MarmotError err = ndb_lookup(mdb_get(txn, nc->dbi_welcomes, &k, &v), &found);
     if (found && !(*out = deserialize_welcome(event_id, v.mv_data, v.mv_size)))
         err = MARMOT_ERR_STORAGE;
+    if (err == MARMOT_OK && *out) {
+        err = welcome_apply_processed(nc, txn, *out);
+        if (err != MARMOT_OK) {
+            marmot_welcome_free(*out);
+            *out = NULL;
+        }
+    }
     mdb_txn_abort(txn);
     return err;
 }
@@ -1134,6 +1169,8 @@ ndb_pending_welcomes(void *ctx, const MarmotPagination *pg,
         MarmotWelcome *w = k.mv_size == 32
             ? deserialize_welcome(k.mv_data, v.mv_data, v.mv_size) : NULL;
         if (!w) { err = MARMOT_ERR_STORAGE; break; }
+        err = welcome_apply_processed(nc, txn, w);
+        if (err != MARMOT_OK) { marmot_welcome_free(w); break; }
         if (w->state != MARMOT_WELCOME_STATE_PENDING || seen++ < skip) {
             marmot_welcome_free(w);
         } else {
