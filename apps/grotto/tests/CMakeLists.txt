@@ -611,6 +611,7 @@ target_include_directories(test-ui-layout PRIVATE ${SIGNER_INCLUDE_DIRS} ${CMAKE
 target_link_libraries(test-ui-layout PRIVATE grotto_app_test_core nostrc-test-bus)
 target_compile_definitions(test-ui-layout PRIVATE
   G10_CONTROL_XML="${CMAKE_CURRENT_SOURCE_DIR}/../../../gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml"
+  G10_ICON_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../data/icons"
   G10_SCREENSHOT_DIR="${CMAKE_BINARY_DIR}/screenshots"
   G10_TEST_LOCALE_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-locales")
 find_program(G10_MSGFMT msgfmt REQUIRED)
