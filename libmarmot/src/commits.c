@@ -2277,10 +2277,24 @@ marmot_commit_clear_pending(Marmot *m, MarmotGroup *group,
             memset(&r, 0, sizeof(r));
             MarmotError perr = marmot_commit_process_inbound(m, group, d->epoch, d->msg,
                                                              d->msg_len, d->event_id, &r);
-            if (results && perr == MARMOT_OK && r.type == MARMOT_RESULT_COMMIT)
-                results[n_results++] = r;   /* moved: the caller frees it */
-            else
+            if (results && perr == MARMOT_OK && r.type == MARMOT_RESULT_COMMIT) {
+                /* The next deferred Commit may change this roster again.
+                 * Capture it while it still belongs to this result. A read
+                 * failure fails the transaction rather than misattributing
+                 * the final roster to another committer. */
+                if (!r.commit.updated_group ||
+                    r.commit.updated_group->state == MARMOT_GROUP_STATE_ACTIVE)
+                    err = marmot_get_group_member_identities(m, gid,
+                              &r.commit_roster.members, &r.commit_roster.count);
+                if (err == MARMOT_OK) {
+                    r.commit_roster.present = true;
+                    results[n_results++] = r;   /* moved: the caller frees it */
+                } else {
+                    marmot_message_result_free(&r);
+                }
+            } else {
                 marmot_message_result_free(&r);
+            }
         }
         if (err == MARMOT_OK && results && n_results > 0) {
             *out_results = results;

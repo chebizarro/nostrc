@@ -56,13 +56,13 @@ typedef enum {
  *
  * One occupied leaf. One account may have several (devices).
  */
-typedef struct {
+struct MarmotMemberIdentity {
     uint8_t account_pubkey[32];
     uint8_t signature_key[32];
     uint32_t leaf_index;
     MarmotMemberIdentityStatus status;
     bool welcome_signer;
-} MarmotMemberIdentity;
+};
 
 /**
  * marmot_get_group_member_identities:

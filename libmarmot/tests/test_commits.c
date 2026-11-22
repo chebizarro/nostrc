@@ -1845,6 +1845,26 @@ test_cleared_pending_reports_deferred_committers(void)
     CHECK(res[0].commit.committer_leaf != UINT32_MAX, "with her leaf");
     CHECK(res[0].commit.updated_group && res[0].commit.updated_group->name &&
           strcmp(res[0].commit.updated_group->name, "Alice's") == 0, "the group it made");
+    CHECK(res[0].commit_roster.present, "deferred Commit has its own roster");
+    MarmotMemberIdentity *live = NULL;
+    size_t n_live = 0;
+    OK(marmot_get_group_member_identities(t.bob.m, &t.gid, &live, &n_live));
+    CHECK(res[0].commit_roster.count == n_live && n_live == 3, "complete roster");
+    for (size_t i = 0; i < n_live; i++) {
+        const MarmotMemberIdentity *saved = &res[0].commit_roster.members[i];
+        CHECK(saved->leaf_index == live[i].leaf_index && saved->status == live[i].status &&
+              saved->welcome_signer == live[i].welcome_signer &&
+              memcmp(saved->account_pubkey, live[i].account_pubkey, 32) == 0 &&
+              memcmp(saved->signature_key, live[i].signature_key, 32) == 0,
+              "snapshot matches the roster of this Commit");
+    }
+    /* A subsequent Commit renews Bob's leaf; it must not mutate the
+     * already-returned snapshot or borrow its allocation. */
+    char *later = rename_group(&t.bob, &t.gid, "Later");
+    CHECK(memcmp(res[0].commit_roster.members, live, n_live * sizeof(*live)) == 0,
+          "snapshot survives later state writes");
+    free(live);
+    free(later);
     marmot_message_results_free(res, n);
 
     /* Nothing pending any more: nothing to report. */
