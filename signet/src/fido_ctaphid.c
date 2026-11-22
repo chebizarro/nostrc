@@ -16,6 +16,7 @@
 
 #if defined(__linux__)
 #include <fcntl.h>
+#include <grp.h>
 #include <linux/input.h>
 #include <linux/uhid.h>
 #include <sys/types.h>
@@ -154,6 +155,9 @@ struct SignetFidoCtapHid {
   SignetFidoService *fido;
   char *agent_id;
   char *device_name;
+  char *owner_group;
+  SignetCtapAuthorize authorize;
+  void *authorize_data;
   uint16_t vendor_id;
   uint16_t product_id;
   uint16_t version;
@@ -263,6 +267,18 @@ static int ctap2_get_info(SignetFidoCtapHid *dev, uint8_t **out, size_t *out_len
   return bb_finish(&b, out, out_len);
 }
 
+static bool authorization_configured(const SignetFidoCtapHid *dev) {
+  return dev && dev->enabled && dev->owner_group && dev->owner_group[0] && dev->authorize;
+}
+
+static bool authorize_operation(SignetFidoCtapHid *dev, bool make_credential,
+                                const char *rp_id, const uint8_t *client_data_hash,
+                                const uint8_t *request_cbor, size_t request_cbor_len) {
+  return authorization_configured(dev) &&
+         dev->authorize(dev->authorize_data, dev->owner_group, dev->agent_id,
+                        make_credential, rp_id, client_data_hash, request_cbor, request_cbor_len);
+}
+
 static int ctap2_make_credential(SignetFidoCtapHid *dev, const uint8_t *p, size_t n,
                                   uint8_t **out, size_t *out_len) {
   SignetFidoCborMakeCredential d;
@@ -284,6 +300,12 @@ static int ctap2_make_credential(SignetFidoCtapHid *dev, const uint8_t *p, size_
       !d.rp_id || !d.user_handle || d.user_handle_len == 0 || !d.algs || d.alg_count == 0) {
     signet_fido_cbor_make_credential_clear(&d);
     *out = (uint8_t *)malloc(1); if (!*out) return -1; **out = CTAP2_ERR_MISSING_PARAMETER; *out_len = 1; return 0;
+  }
+
+  if (!authorize_operation(dev, true, d.rp_id, d.client_data_hash, p, n)) {
+    signet_fido_cbor_make_credential_clear(&d);
+    *out = (uint8_t *)malloc(1); if (!*out) return -1;
+    **out = CTAP2_ERR_OPERATION_DENIED; *out_len = 1; return 0;
   }
 
   SignetFidoMakeCredentialRequest req = {
@@ -339,6 +361,12 @@ static int ctap2_get_assertion(SignetFidoCtapHid *dev, const uint8_t *p, size_t 
     *out = (uint8_t *)malloc(1); if (!*out) return -1; **out = CTAP2_ERR_MISSING_PARAMETER; *out_len = 1; return 0;
   }
 
+  if (!authorize_operation(dev, false, d.rp_id, d.client_data_hash, p, n)) {
+    signet_fido_cbor_get_assertion_clear(&d);
+    *out = (uint8_t *)malloc(1); if (!*out) return -1;
+    **out = CTAP2_ERR_OPERATION_DENIED; *out_len = 1; return 0;
+  }
+
   SignetFidoGetAssertionRequest req = {
     .rp_id = d.rp_id,
     .client_data_hash = d.client_data_hash,
@@ -380,6 +408,11 @@ static int process_ctap2(SignetFidoCtapHid *dev, const uint8_t *payload, size_t 
   uint8_t cmd = payload[0];
   const uint8_t *params = payload + 1;
   size_t params_len = payload_len - 1;
+  if ((cmd == CTAP2_MAKE_CREDENTIAL || cmd == CTAP2_GET_ASSERTION) &&
+      !authorization_configured(dev)) {
+    *out = (uint8_t *)malloc(1); if (!*out) return -1;
+    **out = CTAP2_ERR_OPERATION_DENIED; *out_len = 1; return 0;
+  }
   switch (cmd) {
     case CTAP2_GET_INFO: return ctap2_get_info(dev, out, out_len);
     case CTAP2_MAKE_CREDENTIAL: return ctap2_make_credential(dev, params, params_len, out, out_len);
@@ -485,6 +518,9 @@ SignetFidoCtapHid *signet_fido_ctaphid_new(const SignetFidoCtapHidConfig *cfg) {
   if (!dev) return NULL;
   dev->enabled = cfg ? cfg->enabled : false;
   dev->fido = cfg ? cfg->fido : NULL;
+  dev->owner_group = g_strdup(cfg ? cfg->owner_group : NULL);
+  dev->authorize = cfg ? cfg->authorize : NULL;
+  dev->authorize_data = cfg ? cfg->authorize_data : NULL;
   dev->agent_id = g_strdup((cfg && cfg->agent_id && cfg->agent_id[0]) ? cfg->agent_id : "default");
   dev->device_name = g_strdup((cfg && cfg->device_name) ? cfg->device_name : "Signet virtual FIDO2 authenticator");
   dev->vendor_id = (cfg && cfg->vendor_id) ? cfg->vendor_id : 0x1209;
@@ -511,11 +547,21 @@ int signet_ctaphid_test_process_frames(SignetFidoService *fido,
                                        size_t *out_frames_len) {
   if (out_frames) *out_frames = NULL;
   if (out_frames_len) *out_frames_len = 0;
-  if (!frames || !out_frames || !out_frames_len || frames_len == 0 ||
-      frames_len % SIGNET_CTAPHID_REPORT_SIZE != 0) return -1;
   SignetFidoCtapHidConfig cfg = { .enabled = true, .fido = fido, .agent_id = agent_id, .aaguid = aaguid };
   SignetFidoCtapHid *dev = signet_fido_ctaphid_new(&cfg);
   if (!dev) return -1;
+  int rc = signet_fido_ctaphid_process_frames(dev, frames, frames_len, out_frames, out_frames_len);
+  signet_fido_ctaphid_free(dev);
+  return rc;
+}
+
+int signet_fido_ctaphid_process_frames(SignetFidoCtapHid *dev,
+                                      const uint8_t *frames, size_t frames_len,
+                                      uint8_t **out_frames, size_t *out_frames_len) {
+  if (out_frames) *out_frames = NULL;
+  if (out_frames_len) *out_frames_len = 0;
+  if (!dev || !frames || !out_frames || !out_frames_len || frames_len == 0 ||
+      frames_len % SIGNET_CTAPHID_REPORT_SIZE != 0) return -1;
   ByteBuf responses; bb_init(&responses);
   int rc = 1;
   for (size_t off = 0; off < frames_len; off += SIGNET_CTAPHID_REPORT_SIZE) {
@@ -525,7 +571,6 @@ int signet_ctaphid_test_process_frames(SignetFidoService *fido,
   }
   if (rc == 0) rc = bb_finish(&responses, out_frames, out_frames_len);
   else bb_free(&responses);
-  signet_fido_ctaphid_free(dev);
   return rc;
 }
 
@@ -586,13 +631,14 @@ static gboolean uhid_io_cb(GIOChannel *source, GIOCondition cond, gpointer data)
     if (n != (ssize_t)sizeof(ev)) continue;
     if (ev.type == UHID_OUTPUT) {
       if (ev.u.output.size < SIGNET_CTAPHID_REPORT_SIZE) continue;
-      ByteBuf responses; bb_init(&responses);
-      int rc = process_frame(dev, ev.u.output.data, &responses);
-      if (rc >= 0 && responses.len > 0) {
-        if (uhid_send_frames(dev, responses.data, responses.len) != 0)
+      uint8_t *responses = NULL; size_t responses_len = 0;
+      int rc = signet_fido_ctaphid_process_frames(dev, ev.u.output.data,
+                    SIGNET_CTAPHID_REPORT_SIZE, &responses, &responses_len);
+      if (rc >= 0 && responses_len > 0) {
+        if (uhid_send_frames(dev, responses, responses_len) != 0)
           g_warning("[signetd] virtual CTAP write failed: %s", strerror(errno));
       }
-      bb_free(&responses);
+      free(responses);
     }
   }
   return G_SOURCE_CONTINUE;
@@ -600,8 +646,16 @@ static gboolean uhid_io_cb(GIOChannel *source, GIOCondition cond, gpointer data)
 
 int signet_fido_ctaphid_start(SignetFidoCtapHid *dev) {
   if (!dev || !dev->enabled) return 0;
+  if (!authorization_configured(dev)) {
+    g_warning("[signetd] virtual CTAP refused: explicit owner group and authorization/consent backend required");
+    return -1;
+  }
   if (!dev->fido || !signet_fido_service_is_enabled(dev->fido)) {
     g_warning("[signetd] virtual CTAP requested but passkey service is not enabled");
+    return -1;
+  }
+  if (!getgrnam(dev->owner_group)) {
+    g_warning("[signetd] virtual CTAP refused: owner group does not exist");
     return -1;
   }
   if (dev->fd >= 0) return 0;
@@ -652,6 +706,10 @@ void signet_fido_ctaphid_stop(SignetFidoCtapHid *dev) {
 #else
 int signet_fido_ctaphid_start(SignetFidoCtapHid *dev) {
   if (!dev || !dev->enabled) return 0;
+  if (!authorization_configured(dev)) {
+    g_warning("[signetd] virtual CTAP refused: explicit owner group and authorization/consent backend required");
+    return -1;
+  }
   g_warning("[signetd] virtual CTAP-HID requires Linux /dev/uhid; disabled on this platform");
   return -1;
 }
@@ -665,5 +723,6 @@ void signet_fido_ctaphid_free(SignetFidoCtapHid *dev) {
   for (size_t i = 0; i < SIGNET_CTAPHID_MAX_CHANNELS; i++) clear_channel(&dev->channels[i]);
   g_free(dev->agent_id);
   g_free(dev->device_name);
+  g_free(dev->owner_group);
   free(dev);
 }

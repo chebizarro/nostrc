@@ -144,8 +144,9 @@ attestation = none
 # Headless UP is always asserted after Signet policy approval. UV-required ceremonies
 # default-deny unless this explicit opt-in is true.
 allow_headless_uv = false
-# Optional Linux-only /dev/uhid virtual CTAP-HID device for browser/libfido2 use.
-# Disabled by default; requires SIGNET_ENABLE_PASSKEYS build, Linux, and /dev/uhid access.
+# Unsupported Linux-only /dev/uhid virtual CTAP-HID profile. The daemon refuses
+# startup when enabled: no caller-authorization/consent backend is installed.
+# /dev/uhid permission or a claimed CTAP channel ID is not caller authorization.
 virtual_ctap = false
 # Single-instance fleet PSK (64 hex chars); no cross-instance sync at launch.
 # Keep separately from exported containers and backup objects. Prefer a mounted
