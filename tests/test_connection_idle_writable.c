@@ -45,7 +45,6 @@
         }                                                                    \
     } while (0)
 
-#define TEST_PORT 48731
 #define IDLE_WINDOW_SECONDS 2.0
 /* An idle busy-poll burns ~1.0 CPU-second per wall second.  A healthy loop
  * (50 ms poll timeout on client + server contexts) burns a few ms.  0.5 s
@@ -120,19 +119,23 @@ int main(void) {
     /* --- Start local WebSocket server --- */
     struct lws_context_creation_info info;
     memset(&info, 0, sizeof info);
-    info.port = TEST_PORT;
+    info.port = 0;
     info.iface = "127.0.0.1";
     info.protocols = g_srv_protocols;
     info.gid = (gid_t)-1;
     info.uid = (uid_t)-1;
     g_srv_ctx = lws_create_context(&info);
     CHECK(g_srv_ctx, "failed to create local ws server context");
+    struct lws_vhost *vhost = lws_get_vhost_by_name(g_srv_ctx, "default");
+    CHECK(vhost, "missing server vhost");
+    int port = lws_get_vhost_listen_port(vhost);
+    CHECK(port > 0, "missing bound server port");
     pthread_t srv;
     CHECK(pthread_create(&srv, NULL, server_thread, NULL) == 0, "check");
 
     /* --- Connect libnostr client --- */
     char url[64];
-    snprintf(url, sizeof url, "ws://127.0.0.1:%d", TEST_PORT);
+    snprintf(url, sizeof url, "ws://127.0.0.1:%d", port);
     NostrConnection *conn = nostr_connection_new(url);
     CHECK(conn, "nostr_connection_new failed (is port free?)");
 
