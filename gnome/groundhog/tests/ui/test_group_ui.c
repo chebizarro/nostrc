@@ -537,9 +537,23 @@ test_references(void)
   g_assert_nonnull(strstr(gh_group_contact_copy(TRUE, TRUE), "not your IP address"));
   g_assert_nonnull(strstr(gh_group_contact_copy(TRUE, TRUE), "Create"));
 
+  /* NIP-29 group IDs are opaque, including case, spaces and apostrophes. */
+  const gchar *opaque_ids[] = { "Bad Id", "a'b", NULL };
+  for (guint i = 0; opaque_ids[i]; i++) {
+    g_autofree gchar *opaque_reference = g_strconcat("host'", opaque_ids[i], NULL);
+    g_assert_true(gh_group_parse_reference(opaque_reference, &relay, &group, &code, &error));
+    g_assert_no_error(error);
+    g_assert_cmpstr(relay, ==, "wss://host");
+    g_assert_cmpstr(group, ==, opaque_ids[i]);
+    g_assert_null(code);
+    g_clear_pointer(&relay, g_free);
+    g_clear_pointer(&group, g_free);
+  }
+
   /* Not group addresses: said in words, nothing parsed. */
-  const gchar *bad[] = { "", "   ", "npub1xyz", "groups.example.com", "host'Bad Id",
-                         "https://example.com/'x", "host'a'b", NULL };
+  const gchar *bad[] = { "", "   ", "npub1xyz", "groups.example.com",
+                         "https://example.com/'x", "host'bad\037id",
+                         "host'bad\177id", "host'bad\302\205id", NULL };
   for (guint i = 0; bad[i]; i++) {
     g_assert_false(gh_group_parse_reference(bad[i], &relay, &group, &code, &error));
     g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
