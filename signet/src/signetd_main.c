@@ -671,8 +671,16 @@ int main(int argc, char **argv) {
     .max_entries = cfg.replay_max_entries,
     .ttl_seconds = cfg.replay_ttl_seconds,
     .skew_seconds = cfg.replay_skew_seconds,
+    .max_entries_per_scope = 512,
+    .refuse_when_full = true,
   };
   SignetReplayCache *replay = signet_replay_cache_new(&replay_cfg);
+  if (!replay) {
+    sodium_free(db_key);
+    signet_audit_logger_free(audit);
+    signet_config_clear(&cfg);
+    return 1;
+  }
 
   /* 3) Key store (SQLCipher + mlock'd hot cache) */
   SignetKeyStoreConfig ks_cfg = {

@@ -488,12 +488,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   if (!remote_signer_pubkey_hex || !remote_signer_secret_key_hex ||
       !client_pubkey_hex || !ciphertext) return false;
 
-  /* 1) Replay check (by outer event id). The replay cache has its own lock;
-   * do not hold the NIP-46 server session mutex across crypto, policy, or I/O. */
   SignetReplayResult rr = SIGNET_REPLAY_OK;
-  if (s->replay && event_id_hex && event_id_hex[0]) {
-    rr = signet_replay_check_and_mark(s->replay, event_id_hex, created_at, now);
-  }
 
   /* 2) Decrypt request content (NIP-44 v2) */
   char *plain = NULL;
@@ -533,6 +528,13 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
     parse_ok = (nostr_nip46_request_parse(plain, &req) == 0);
   }
 
+  /* Reject undecryptable/malformed requests without spending replay room.
+   * Charge valid requests to their signed envelope author; production uses
+   * per-client quotas and refuses full caches instead of evicting live ids. */
+  if (s->replay && dec_ok && parse_ok)
+    rr = signet_replay_check_and_mark_scoped(s->replay, client_pubkey_hex,
+                                             event_id_hex, created_at, now);
+
   const char *method = parse_ok ? req.method : NULL;
   const char *req_id = parse_ok ? req.id : NULL;
 
@@ -551,7 +553,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   const char *pre_code = NULL;
   char *pre_err = NULL;
 
-  if (parse_ok && method) {
+  if (parse_ok && method && rr == SIGNET_REPLAY_OK) {
     if (strcmp(method, "connect") == 0) {
       const char *requested_signer = (req.params && req.n_params >= 1) ? req.params[0] : NULL;
       const char *provided_secret = (req.params && req.n_params >= 2) ? req.params[1] : NULL;
@@ -715,6 +717,9 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   } else if (rr == SIGNET_REPLAY_TOO_FAR_IN_FUTURE) {
     code = "replay_in_future";
     err_str = g_strdup("replay rejected (in future)");
+  } else if (rr == SIGNET_REPLAY_FULL) {
+    code = "replay_full";
+    err_str = g_strdup("replay protection capacity exhausted");
   } else if (rr == SIGNET_REPLAY_INVALID) {
     code = "replay_invalid";
     err_str = g_strdup("replay rejected (malformed event id/timestamp)");

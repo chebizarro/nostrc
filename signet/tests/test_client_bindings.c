@@ -42,6 +42,7 @@
 #include "signet/revocation.h"
 #include "signet/store.h"
 #include "signet/audit_logger.h"
+#include "signet/replay_cache.h"
 #include "signet/health_server.h" /* g_signet_metrics */
 
 #include <nostr-keys.h>
@@ -224,6 +225,7 @@ typedef struct {
   SignetPolicyEngine *pe;
   SignetAuditLogger *audit;
   SignetNip46Server *srv;
+  SignetReplayCache *replay;
   char *db_path;
   char *policy_path;
   char *audit_path;
@@ -238,9 +240,8 @@ typedef struct {
 
 static void n46_new_server(N46Fixture *f) {
   SignetNip46ServerConfig ncfg = { .identity = "bunker", .fido = NULL };
-  /* No relay pool (response publish is a no-op) and no replay cache (replay
-   * semantics are covered by the NIP-46 server's own tests). */
-  f->srv = signet_nip46_server_new(NULL, f->pe, f->ks, NULL, f->audit, &ncfg);
+  /* No relay pool: audit/metrics observe the actual request entrypoint. */
+  f->srv = signet_nip46_server_new(NULL, f->pe, f->ks, f->replay, f->audit, &ncfg);
   CHECK(f->srv != NULL);
 }
 
@@ -316,6 +317,7 @@ static void n46_setup(N46Fixture *f) {
 
 static void n46_teardown(N46Fixture *f) {
   signet_nip46_server_free(f->srv);
+  signet_replay_cache_free(f->replay);
   signet_policy_engine_free(f->pe);
   signet_policy_store_free(f->ps);
   signet_key_store_free(f->ks);
@@ -1300,7 +1302,39 @@ static void test_spent_secret_reuse_rejected(bool cache_only) {
   printf("test_spent_secret_reuse_rejected (%s): PASS\n", n46_mode_name(cache_only));
 }
 
+static void test_nip46_replay_capacity(bool cache_only) {
+  N46Fixture f; n46_setup_mode(&f, cache_only);
+  signet_nip46_server_free(f.srv);
+  SignetReplayCacheConfig cfg = {.max_entries = 3, .ttl_seconds = 600,
+    .skew_seconds = 120, .max_entries_per_scope = 2, .refuse_when_full = true};
+  f.replay = signet_replay_cache_new(&cfg); CHECK(f.replay);
+  n46_new_server(&f);
+  int64_t now = time(NULL);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "pair", now));
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "first", now));
+  CHECK(!n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "quota", now));
+  n46_expect_last_audit(&f, "get_public_key", "error", "replay_full");
+  char second_sk[65], second_pk[65]; gen_keypair_hex(second_sk, second_pk);
+  char *fresh = NULL; char agent_pk[65];
+  CHECK(signet_key_store_reissue_connect_secret(f.ks, "stew", NULL, f.bunker_pk_hex,
+    NULL, 0, agent_pk, &fresh, NULL) == 0 && fresh);
+  CHECK(n46_connect(&f, second_sk, second_pk, fresh, "second-pair", now));
+  sodium_memzero(fresh, strlen(fresh)); g_free(fresh);
+  CHECK(!n46_get_public_key(&f, second_sk, second_pk, "global-full", now));
+  n46_expect_last_audit(&f, "get_public_key", "error", "replay_full");
+  CHECK(!n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "first", now));
+  n46_expect_last_audit(&f, "get_public_key", "error", "replay_duplicate");
+  CHECK(!n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, NULL, now));
+  n46_expect_last_audit(&f, "get_public_key", "error", "replay_invalid");
+  n46_expect_binding(&f, f.client_pk_hex, "stew", now);
+  sodium_memzero(second_sk, sizeof(second_sk));
+  n46_teardown(&f);
+  puts("test_nip46_replay_capacity: PASS");
+}
+
 int main(void) {
+  test_nip46_replay_capacity(false);
+  test_nip46_replay_capacity(true);
   if (sodium_init() < 0) {
     fprintf(stderr, "sodium_init failed\n");
     return 1;

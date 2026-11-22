@@ -453,3 +453,9 @@ Production configuration (`SIGNET_REQUIRE_ENCRYPTED_DB=true`) requires `wss://`
 relay URLs, as does deployment preflight. Local development can explicitly set
 `SIGNET_REQUIRE_ENCRYPTED_DB=false` to use a loopback `ws://` fixture; this is
 not a production deployment profile.
+
+NIP-46 replay protection retains unexpired ids even at capacity: a full cache
+or client quota is refused, never evicted to admit another request. Each signed
+client may hold at most 512 ids within the replay retention window; the total
+remains bounded by `[replay] max_entries`. Undecryptable or malformed requests
+are not marked. Capacity refusal does not authorize a pairing.
