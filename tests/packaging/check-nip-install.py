@@ -43,6 +43,7 @@ def main():
     if not libdir.is_absolute():
         libdir = prefix / libdir
     run(['cmake', '-DTEST_BINARY_DIR=' + str(build / 'external-pc-check'),
+         '-DTEST_JOBS=' + str(args.jobs),
          '-P', Path(__file__).with_name('check-external-pc.cmake')])
     run(['cmake', '--install', build])
     env = os.environ.copy()

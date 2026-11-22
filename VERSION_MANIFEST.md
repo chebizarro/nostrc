@@ -1943,3 +1943,8 @@ unchanged. libgo remains 0.3.1 (unchanged metadata). No release tags changed.
 The test-only test_relay_eose tool installs under the configured bindir instead
 of overwriting its build output (nostrc-kqzht). No independently versioned
 component/API change; BUILD_TESTING=OFF packages still omit the tool.
+
+External pkg-config fixture portability (nostrc-56nz5): no version bump. Test-only
+correction replaces implementation-specific static/sysroot output assertions
+with a compiled/runnable SDK-archives + shared-external-library consumer. Shipped
+metadata, headers, libraries and ABI policy are unchanged.

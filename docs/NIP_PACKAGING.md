@@ -33,6 +33,11 @@ position-independent. The JSON provider (`libnostr-json`) remains shared even
 when `BUILD_SHARED_LIBS=OFF`; `pkg-config --static` does not imply a fully static
 executable or availability of static system libraries.
 
+The packaging check exercises the same contract with a small compiled fixture:
+private SDK archive dependencies must link to a shared external library without
+pulling its unavailable static-only dependencies. It checks the required library
+flags and runs the consumer, not implementation-specific pkg-config/sysroot output.
+
 With `BUILD_TESTING=ON`, build the selected NIP test targets instead of the
 unrestricted `all` target: some unrelated root tests assume disabled NIPs exist.
 The packaging recipe above uses `BUILD_TESTING=OFF` and builds the subset in full.
