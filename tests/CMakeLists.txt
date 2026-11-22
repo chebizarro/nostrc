@@ -631,3 +631,8 @@ set_tests_properties(profile_fetch_stress PROPERTIES
 )
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/TestInventory.cmake")
+
+add_executable(test_url_normalize test_url_normalize.c)
+target_link_libraries(test_url_normalize PRIVATE nostr_internal_test)
+apply_sanitizers(test_url_normalize)
+add_test(NAME url_normalize COMMAND test_url_normalize)

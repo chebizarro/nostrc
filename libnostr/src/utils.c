@@ -5,99 +5,54 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <pthread.h>
 #include <nsync.h>
 
-// Helper function to trim leading and trailing whitespace
-static char *nostr_trim_whitespace(char *str) {
-    char *end;
-
-    // Trim leading space
-    while (isspace((unsigned char)*str))
-        str++;
-
-    if (*str == 0) {
-        return str;
-    }
-
-
-    // Trim trailing space
-    end = str + strlen(str) - 1;
-    while (end > str && isspace((unsigned char)*end))
-        end--;
-
-    end[1] = '\0';
-
-    return str;
-}
-
-// NormalizeURL normalizes the url and replaces http://, https:// schemes with ws://, wss://
+/* Preserve path/query case; only the scheme and host are case-insensitive. */
 char *nostr_normalize_url(const char *u) {
-    if (!u || strlen(u) == 0) {
-        return strdup("");
+    if (!u) return strdup("");
+    while (isspace((unsigned char)*u)) u++;
+    size_t len = strlen(u);
+    while (len && isspace((unsigned char)u[len - 1])) len--;
+    char *input = strndup(u, len);
+    if (!input || !len) return input;
+
+    const char *rest = input;
+    const char *scheme = "wss://";
+    char *owned_scheme = NULL;
+    if (strncasecmp(input, "https://", 8) == 0) rest += 8;
+    else if (strncasecmp(input, "http://", 7) == 0) { rest += 7; scheme = "ws://"; }
+    else if (strncasecmp(input, "wss://", 6) == 0) rest += 6;
+    else if (strncasecmp(input, "ws://", 5) == 0) { rest += 5; scheme = "ws://"; }
+    else if (strstr(input, "://")) {
+        char *separator = strstr(input, "://");
+        owned_scheme = strndup(input, (size_t)(separator + 3 - input));
+        if (!owned_scheme) { free(input); return NULL; }
+        for (char *p = owned_scheme; *p; p++) *p = (char)tolower((unsigned char)*p);
+        scheme = owned_scheme;
+        rest = separator + 3;
     }
+    else if (strncasecmp(input, "localhost", 9) == 0 &&
+             (!input[9] || strchr(":/?#", input[9]))) scheme = "ws://";
+    char *url = malloc(strlen(scheme) + strlen(rest) + 1);
+    if (!url) { free(owned_scheme); free(input); return NULL; }
+    strcpy(url, scheme);
+    strcat(url, rest);
+    free(input);
+    size_t scheme_len = strlen(scheme);
+    free(owned_scheme);
 
-    char *url = strdup(u);
-    if (!url)
-        return NULL;
-
-    url = nostr_trim_whitespace(url);
-
-    for (char *p = url; *p; ++p) {
-        *p = tolower((unsigned char)*p);
+    char *host = url + scheme_len;
+    char *authority_end = host + strcspn(host, "/?#");
+    for (char *p = host; p < authority_end; p++)
+        if (*p == '@') host = p + 1;
+    for (char *p = host; p < authority_end; p++)
+        *p = (char)tolower((unsigned char)*p);
+    if (!strpbrk(authority_end, "?#")) {
+        char *end = url + strlen(url);
+        while (end > authority_end && end[-1] == '/') *--end = '\0';
     }
-
-    if (strstr(url, "localhost") == url) {
-        char *temp = (char *)malloc(strlen("ws://") + strlen(url) + 1);
-        if (!temp) {
-            free(url);
-            return NULL;
-        }
-        strcpy(temp, "ws://");
-        strcat(temp, url);
-        free(url);
-        url = temp;
-    } else if (strncmp(url, "http", 4) != 0 && strncmp(url, "ws", 2) != 0) {
-        char *temp = (char *)malloc(strlen("wss://") + strlen(url) + 1);
-        if (!temp) {
-            free(url);
-            return NULL;
-        }
-        strcpy(temp, "wss://");
-        strcat(temp, url);
-        free(url);
-        url = temp;
-    }
-
-    char *scheme_end = strstr(url, "://");
-    if (scheme_end) {
-        char *scheme = strndup(url, scheme_end - url);
-        if (strcmp(scheme, "http") == 0) {
-            strcpy(scheme, "ws");
-        } else if (strcmp(scheme, "https") == 0) {
-            strcpy(scheme, "wss");
-        }
-        memcpy(url, scheme, strlen(scheme));
-        free(scheme);
-    }
-
-    // Normalize path
-    char *path = strchr(url, '/');
-    if (path) {
-        char *normalized_path = strdup(path);
-        if (!normalized_path) {
-            free(url);
-            return NULL;
-        }
-        char *end = normalized_path + strlen(normalized_path) - 1;
-        while (end > normalized_path && *end == '/') {
-            *end = '\0';
-            end--;
-        }
-        strcpy(path, normalized_path);
-        free(normalized_path);
-    }
-
     return url;
 }
 
