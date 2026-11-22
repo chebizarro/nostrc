@@ -1023,6 +1023,12 @@ static _Atomic(NostrRelayDialHook) g_reconnect_hook = NULL;
 static _Atomic(void *) g_reconnect_hook_data = NULL;
 static _Atomic(NostrRelayDialHook) g_retire_hook = NULL, g_lease_hook = NULL;
 static _Atomic(void *) g_retire_hook_data = NULL, g_lease_hook_data = NULL;
+static _Atomic(NostrRelayDialHook) g_loop_exit_hook;
+static _Atomic(void *) g_loop_exit_hook_data;
+void nostr_relay_test_set_loop_exit_hook(NostrRelayDialHook hook, void *data) {
+    atomic_store(&g_loop_exit_hook_data, data);
+    atomic_store(&g_loop_exit_hook, hook);
+}
 
 void nostr_relay_test_set_retire_hook(NostrRelayDialHook hook, void *data) {
     atomic_store(&g_retire_hook_data, data);
@@ -1117,6 +1123,7 @@ bool nostr_relay_connect_with_context(NostrRelay *relay, GoContext *cancel, Erro
     bool spawn = false;
     if (!lost && !closing) {
         relay->connection = conn;
+        relay->priv->connection_installation++;
         /* Reset reconnect state on successful connection (nostrc-4du) */
         relay->priv->reconnect_attempt = 0;
         relay->priv->backoff_ms = 0;
@@ -1142,6 +1149,9 @@ bool nostr_relay_connect_with_context(NostrRelay *relay, GoContext *cancel, Erro
     if (!spawn) {
         free(write_arg);
         free(loop_arg);
+        /* The live reader adopts this publication, including at retirement.
+         * Match the state transition of the initial publication below. */
+        relay_set_state(relay, NOSTR_RELAY_STATE_CONNECTED);
         return true;
     }
 
@@ -1456,6 +1466,7 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
     bool adopted = !closing && r->connection != NULL;
     if (!closing && !adopted) {
         r->connection = new_conn;
+        r->priv->connection_installation++;
     }
     NostrConnection *candidate = !closing ? r->connection : NULL;
     if (candidate) candidate->priv->relay_leases++;
@@ -1542,11 +1553,15 @@ static void init_cached_env(void) {
 /* fp-ieg8: hand reconnect ownership back to the pool. Must run on every exit
  * path out of message_loop, or a relay whose loop has died stays flagged as
  * self-managed and nothing ever dials it again. */
-static void relay_message_loop_retire(NostrRelay *r) {
-    if (!r || !r->priv) return;
+static bool relay_message_loop_retire(NostrRelay *r, const uint64_t *observed) {
+    if (!r || !r->priv) return true;
     nsync_mu_lock(&r->priv->mutex);
-    r->priv->message_loop_active = false;
+    bool replacement = observed && r->connection && !r->priv->closing &&
+        !go_context_is_canceled(r->priv->connection_context) &&
+        r->priv->connection_installation != *observed;
+    if (!replacement) r->priv->message_loop_active = false;
     nsync_mu_unlock(&r->priv->mutex);
+    return !replacement;
 }
 
 // Worker: reads messages from the connection, parses envelopes, dispatches,
@@ -1571,7 +1586,7 @@ static void *message_loop(void *arg) {
 
     if (!ctx) {
         if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: no context, exiting\n");
-        relay_message_loop_retire(r);
+        relay_message_loop_retire(r, NULL);
         go_wait_group_done(&r->priv->workers);
         return NULL;
     }
@@ -1587,7 +1602,7 @@ static void *message_loop(void *arg) {
     if (!buf || !priority_buf) {
         free(buf); free(priority_buf);
         if (ctx) go_context_unref(ctx);
-        relay_message_loop_retire(r);
+        relay_message_loop_retire(r, NULL);
         go_wait_group_done(&r->priv->workers);
         return NULL;
     }
@@ -1597,12 +1612,15 @@ static void *message_loop(void *arg) {
     int has_priority = 0;
     bool context_canceled = false;  /* Track if context was canceled (vs connection lost) */
 
+    uint64_t observed_installation = 0;
+read_again:
     /* Outer loop for reconnection (nostrc-4du) */
     for (;;) {
         /* Inner loop: process messages while connected */
         for (;;) {
             nsync_mu_lock(&r->priv->mutex);
             NostrConnection *conn = r->connection;
+            observed_installation = r->priv->connection_installation;
             nsync_mu_unlock(&r->priv->mutex);
             if (!conn) break;
 
@@ -1923,10 +1941,17 @@ static void *message_loop(void *arg) {
         /* Continue outer loop to try again */
     }  /* end outer reconnection loop */
 
+    NostrRelayDialHook exit_hook = atomic_load(&g_loop_exit_hook);
+    if (exit_hook) exit_hook(r, atomic_load(&g_loop_exit_hook_data));
+    /* The publisher saw an active reader and deliberately did not spawn one.
+     * Adopt its connection under the same mutex instead of orphaning it. */
+    if (!relay_message_loop_retire(r, &observed_installation)) {
+        has_priority = 0;
+        goto read_again;
+    }
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: exit\n");
     free(buf);
     free(priority_buf);
-    relay_message_loop_retire(r);
     go_context_unref(ctx);  // Release context reference (nostrc-0q4)
     go_wait_group_done(&r->priv->workers);  // Use local 'r', not freed 'arg'
     return NULL;

@@ -66,6 +66,7 @@ struct _NostrRelayPrivate {
     /* Connection-specific lease counts live in connection-private.h, protected
      * by this relay's mutex; any count reaching zero wakes retirement. */
     nsync_cv conn_leases_cv;
+    uint64_t connection_installation; /* increments at each published connection */
 
     /* Registered callbacks: connection state, NIP-42 AUTH challenge
      * (nostrc-7og), and every ["OK","id",ok,"reason"] message.
@@ -146,6 +147,7 @@ void nostr_relay_test_set_reconnect_hook(NostrRelayDialHook hook, void *data);
 void nostr_relay_test_set_retire_hook(NostrRelayDialHook hook, void *data);
 void nostr_relay_test_set_lease_hook(NostrRelayDialHook hook, void *data);
 void nostr_relay_test_set_pending_ok_hook(NostrRelayDialHook hook, void *data);
+void nostr_relay_test_set_loop_exit_hook(NostrRelayDialHook hook, void *data);
 
 /* nostrc-xbso: releases the caller's reference on an answer channel of
  * nostr_relay_write() it will not read (any more): closes it, so the writer's

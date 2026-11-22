@@ -102,6 +102,7 @@ static struct {
     atomic_int connections;   /* ESTABLISHED so far */
     atomic_int open;          /* currently open */
     atomic_bool drop;         /* close every open connection */
+    atomic_bool reject_handshake;
     atomic_bool paused;       /* service nothing: handshakes stay pending */
     int port;
 } srv;
@@ -112,6 +113,8 @@ static int server_cb(struct lws *wsi, enum lws_callback_reasons reason, void *us
     (void)in;
     (void)len;
     switch (reason) {
+    case LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION:
+        return atomic_load(&srv.reject_handshake) ? 1 : 0;
     case LWS_CALLBACK_ESTABLISHED:
         atomic_fetch_add(&srv.connections, 1);
         atomic_fetch_add(&srv.open, 1);
@@ -645,6 +648,58 @@ static void test_async_retirement_revokes_refire(void) {
     puts("  [ok] async retirement revokes refire before releasing borrowed filters");
 }
 
+static void disable_reconnect(NostrRelay *relay, void *unused) {
+    (void)unused;
+    nostr_relay_set_auto_reconnect(relay, false);
+}
+
+static void test_connect_during_reader_retirement(void) {
+    NostrRelay *relay = relay_for_port(srv.port);
+    Error *err = NULL;
+    CHECK(nostr_relay_connect(relay, &err));
+    CHECK(nostr_relay_wait_established(relay, 10000, &err));
+    DialBarrier exiting = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, false, false };
+    nostr_relay_test_set_reconnect_hook(disable_reconnect, NULL);
+    nostr_relay_test_set_loop_exit_hook(hold_before_publish, &exiting);
+    atomic_store(&srv.reject_handshake, true);
+    server_drop();
+    nostr_relay_reconnect_now(relay);
+    barrier_wait(&exiting); /* failed reconnect left no connection; loop will retire */
+    atomic_store(&srv.reject_handshake, false);
+    CHECK(nostr_relay_connect(relay, &err)); /* publisher relies on the existing reader */
+    CHECK(nostr_relay_wait_established(relay, 10000, &err));
+    NostrFilters *filters = nostr_filters_new();
+    NostrSubscription *sub = nostr_relay_prepare_subscription(relay, NULL, filters);
+    CHECK(sub && nostr_subscription_fire(sub, &err));
+    /* Feed the same framed input the connection callback would enqueue. Only
+     * the real message_loop can parse and route it to this subscription. */
+    WebSocketMessage *frame = calloc(1, sizeof(*frame));
+    CHECK(frame);
+    const char *id = nostr_subscription_get_id_const(sub);
+    frame->data = malloc(strlen(id) + 32);
+    CHECK(frame->data);
+    snprintf(frame->data, strlen(id) + 32, "[\"EOSE\",\"%s\"]", id);
+    frame->length = strlen(frame->data);
+    CHECK(go_channel_send(relay->connection->recv_channel, frame) == 0);
+    nostr_relay_test_set_loop_exit_hook(NULL, NULL);
+    nostr_relay_test_set_reconnect_hook(NULL, NULL);
+    barrier_release(&exiting);
+    GoSelectCase eose = { .op = GO_SELECT_RECEIVE, .chan = sub->end_of_stored_events };
+    CHECK(go_select_timeout(&eose, 1, 10000).selected_case == 0);
+    CHECK(nostr_relay_get_connection_state(relay) == NOSTR_RELAY_STATE_CONNECTED);
+    GoChannel *answer = nostr_relay_write(relay, "[\"CLOSE\",\"reader-proof\"]");
+    Error *write_error = NULL;
+    GoSelectCase written = { .op = GO_SELECT_RECEIVE, .chan = answer, .recv_buf = (void **)&write_error };
+    CHECK(go_select_timeout(&written, 1, 10000).selected_case == 0 && !write_error);
+    nostr_relay_write_answer_release(answer);
+    nostr_subscription_free(sub);
+    nostr_filters_free(filters);
+    nostr_relay_free(relay);
+    barrier_destroy(&exiting);
+    WAIT_FOR(atomic_load(&srv.open) == 0);
+    puts("  [ok] connect during reader retirement retains reader and writer ownership");
+}
+
 static void test_close_rejects_inflight_dial(void) {
     int base = nostr_connection_unreleased_count();
     NostrRelay *relay = relay_for_port(srv.port);
@@ -825,6 +880,7 @@ int main(void) {
     test_losing_dial_ignores_winner_lease();
     test_publish_timeout_during_disconnect();
     test_async_retirement_revokes_refire();
+    test_connect_during_reader_retirement();
     test_close_answers_writes_when_not_connected();
 
     server_stop();
