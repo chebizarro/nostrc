@@ -35,6 +35,8 @@
  * SPDX-License-Identifier: MIT
  */
 #include <nostr-gobject-1.0/nostr_relay.h>
+#include <nostr-gobject-1.0/nostr_pool.h>
+#include <nostr-gobject-1.0/nostr_simple_pool.h>
 #include <nostr-gobject-1.0/nostr_subscription.h>
 #include <nostr-event.h>
 #include <nostr-filter.h>
@@ -42,6 +44,7 @@
 #include <nostr-relay.h>
 #include <json.h>
 #include "nostr_subscription_test_hooks.h"
+#include "nostr_pool_test_hooks.h"
 
 #include <gio/gio.h>
 #include <glib.h>
@@ -733,6 +736,95 @@ test_fire_reaches_auth_required_relay(void)
   g_ptr_array_unref(server.stored);
 }
 
+typedef struct { gboolean done; guint count; } PoolRound;
+
+static void pool_query_done(GObject *source, GAsyncResult *result, gpointer data) {
+  PoolRound *round = data;
+  GError *error = NULL;
+  GPtrArray *events = GNOSTR_IS_POOL(source)
+      ? gnostr_pool_query_finish(GNOSTR_POOL(source), result, &error)
+      : gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), result, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(events);
+  round->count = events->len;
+  g_ptr_array_unref(events);
+  round->done = TRUE;
+}
+
+static void pool_batch(GNostrSimplePool *pool G_GNUC_UNUSED, GPtrArray *events, gpointer data) {
+  ((PoolRound *)data)->count += events->len;
+}
+
+static void pool_finalized(gpointer data, GObject *object G_GNUC_UNUSED) {
+  g_atomic_int_set((gint *)data, TRUE);
+  g_main_context_wakeup(g_main_context_default());
+}
+
+static GoSelectResult select_eose_first(GoSelectCase *cases, size_t count, uint64_t timeout G_GNUC_UNUSED) {
+  g_assert_cmpuint(count, ==, 2); /* single relay: EVENT, EOSE */
+  GoSelectResult result = go_select_timeout(&cases[1], 1, WAIT_BOUND_S * 1000);
+  g_assert_cmpint(result.selected_case, ==, 0);
+  result.selected_case = 1;
+  return result;
+}
+
+static void run_pool_burst(guint mode) {
+  BurstRelay server = { .stored = stored_events() };
+  relay_start(&server);
+  const gchar *urls[] = { server.url };
+  if (mode == 0) gnostr_pool_test_set_select_hook(select_eose_first);
+  for (guint i = 0; i < 16; i++) {
+    PoolRound round = {0};
+    GCancellable *cancel = g_cancellable_new();
+    GObject *pool = mode == 0 ? G_OBJECT(gnostr_pool_new()) : G_OBJECT(gnostr_simple_pool_new());
+    /* This libsoup fixture deliberately uses libnostr's compact backend;
+     * no jansson backend is loaded alongside json-glib (see fixture header). */
+    nostr_json_force_fallback(false);
+    NostrFilters *filters = kind1_filters();
+    if (mode == 0) {
+      gnostr_pool_query_urls_async(GNOSTR_POOL(pool), urls, 1, filters, cancel, pool_query_done, &round);
+      filters = NULL; /* transferred */
+    } else if (mode == 1) {
+      gnostr_simple_pool_query_single_async(GNOSTR_SIMPLE_POOL(pool), urls, 1,
+          &filters->filters[0], cancel, pool_query_done, &round);
+    } else {
+      g_signal_connect(pool, "events", G_CALLBACK(pool_batch), &round);
+      if (mode == 2)
+        gnostr_simple_pool_paginate_with_interval_async(GNOSTR_SIMPLE_POOL(pool), urls, 1,
+            &filters->filters[0], 0, cancel, NULL, NULL);
+      else
+        gnostr_simple_pool_subscribe_many_async(GNOSTR_SIMPLE_POOL(pool), urls, 1,
+            filters, cancel, NULL, NULL);
+    }
+    gboolean timed_out = FALSE;
+    guint bound = g_timeout_add_seconds(WAIT_BOUND_S, on_bound, &timed_out);
+    while (!(mode < 2 ? round.done : round.count >= N_STORED) && !timed_out)
+      g_main_context_iteration(NULL, TRUE);
+    g_assert_false(timed_out);
+    g_source_remove(bound);
+    g_assert_cmpuint(round.count, ==, N_STORED);
+    g_cancellable_cancel(cancel);
+    g_signal_handlers_disconnect_by_data(pool, &round);
+    gint finalized = FALSE;
+    g_object_weak_ref(pool, pool_finalized, &finalized);
+    g_object_unref(pool);
+    bound = g_timeout_add_seconds(WAIT_BOUND_S, on_bound, &timed_out);
+    while (!g_atomic_int_get(&finalized) && !timed_out) g_main_context_iteration(NULL, TRUE);
+    g_assert_false(timed_out);
+    g_source_remove(bound);
+    if (filters) nostr_filters_free(filters);
+    g_object_unref(cancel);
+  }
+  gnostr_pool_test_set_select_hook(NULL);
+  relay_stop(&server);
+  g_ptr_array_unref(server.stored);
+}
+
+static void test_pool_query_burst(void) { run_pool_burst(0); }
+static void test_simple_query_burst(void) { run_pool_burst(1); }
+static void test_paginate_burst(void) { run_pool_burst(2); }
+static void test_stream_burst(void) { run_pool_burst(3); }
+
 int
 main(int argc, char **argv)
 {
@@ -753,5 +845,9 @@ main(int argc, char **argv)
                   test_bounded_backfill_keeps_newest);
   g_test_add_func("/nostr-gobject/subscription/fire-reaches-auth-required-relay",
                   test_fire_reaches_auth_required_relay);
+  g_test_add_func("/nostr-gobject/pool/query-burst", test_pool_query_burst);
+  g_test_add_func("/nostr-gobject/pool/single-burst", test_simple_query_burst);
+  g_test_add_func("/nostr-gobject/pool/paginate-burst", test_paginate_burst);
+  g_test_add_func("/nostr-gobject/pool/stream-burst", test_stream_burst);
   return g_test_run();
 }

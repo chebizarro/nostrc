@@ -318,6 +318,12 @@ add_executable(string_array_test tests/string_array_test.c)
 add_executable(long_adder_stress_test tests/long_adder_stress_test.c)
 add_executable(go_select_closed_test tests/go_select_closed_test.c)
 add_executable(go_select_cancel_test tests/go_select_cancel_test.c)
+add_executable(go_channel_wakeup_test tests/go_channel_wakeup_test.c)
+target_link_libraries(go_channel_wakeup_test PRIVATE libgo ${NSYNC_LIB} pthread)
+apply_sanitizers(go_channel_wakeup_test)
+apply_warnings(go_channel_wakeup_test)
+add_test(NAME GoChannelWakeupTest COMMAND go_channel_wakeup_test)
+set_tests_properties(GoChannelWakeupTest PROPERTIES TIMEOUT 20)
 add_executable(go_channel_mpmc_slot_test tests/go_channel_mpmc_slot_test.c)
 
 # Link the context library to each test

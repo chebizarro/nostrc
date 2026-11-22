@@ -24,6 +24,7 @@ struct _NostrConnectionPrivate {
     int enable_compression;
     struct lws_context *context;
     nsync_mu mutex;
+    unsigned relay_leases; /* protected by the owning relay's mutex */
     pthread_t service_thread;
     int running;
     int test_mode; // when set, no real network; helpers short-circuit

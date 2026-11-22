@@ -80,7 +80,7 @@ static int fetch_matching(int fd, const char *filter_json, const char *id) {
     int is_eose = strncmp(m, "[\"EOSE\"", 7) == 0;
     if (strncmp(m, "[\"EVENT\"", 8) == 0 && strstr(m, id)) found = 1;
     if (strncmp(m, "[\"CLOSED\"", 9) == 0) {
-      fprintf(stderr, "  REQ refused: %s\n", m);
+      CHECK(0, "REQ unexpectedly refused: %s", m);
       free(m);
       return 0;
     }
@@ -143,6 +143,8 @@ static void check_addressable(int fd, const char *sk, const char *pk) {
   snprintf(filter, sizeof filter, "{\"authors\":[\"%s\"],\"kinds\":[30023],\"#d\":[\"slug\"]}",
            pk);
   CHECK(fetch_matching(fd, filter, v2), "replacement not served for #d");
+  CHECK(!fetch_matching(fd, filter, v1), "superseded version still served for #d");
+  CHECK(!fetch_by_id(fd, v1), "superseded version still served by id");
 
   /* The stale check now finds v2 stored: an older version is refused. */
   snprintf(prefix, sizeof prefix, "[\"OK\",\"%s\",false,\"invalid: newer", v0);
@@ -152,6 +154,17 @@ static void check_addressable(int fd, const char *sk, const char *pk) {
   expect_reply(fd, fa, prefix, "kind 31990 accepted");
   CHECK(fetch_matching(fd, "{\"kinds\":[31990],\"#k\":[\"30311\"]}", app),
         "kind 31990 not served for #k");
+
+  char *old_profile_id = NULL, *new_profile_id = NULL;
+  char *old_profile = signed_frame(sk, pk, 0, 1700000100, NULL, "{}", &old_profile_id);
+  char *new_profile = signed_frame(sk, pk, 0, 1700000101, NULL, "{\"name\":\"new\"}", &new_profile_id);
+  snprintf(prefix, sizeof prefix, "[\"OK\",\"%s\",true", old_profile_id);
+  expect_reply(fd, old_profile, prefix, "old profile accepted");
+  snprintf(prefix, sizeof prefix, "[\"OK\",\"%s\",true", new_profile_id);
+  expect_reply(fd, new_profile, prefix, "new profile replaces old");
+  CHECK(fetch_by_id(fd, new_profile_id), "new profile not served");
+  CHECK(!fetch_by_id(fd, old_profile_id), "superseded profile still served");
+  free(old_profile); free(new_profile); free(old_profile_id); free(new_profile_id);
 
   char *ids[] = {v1, v2, v0, app, f1, f2, f0, fa};
   for (size_t i = 0; i < sizeof ids / sizeof ids[0]; i++) free(ids[i]);
