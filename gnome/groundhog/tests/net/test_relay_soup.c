@@ -930,6 +930,7 @@ test_tor_fail_closed(void)
   /* Through at least one reconnect backoff (≤ 1.5 s): still nothing. */
   guint errors = seen.errors;
   wait_at_least(&seen.errors, errors + 1);
+  wait_tor_state(session, GH_NET_TOR_UNREACHABLE);
   g_assert_cmpint(gh_net_session_get_tor_state(session), ==, GH_NET_TOR_UNREACHABLE);
   g_assert_cmpuint(tripwire.accepted, ==, 0);
   g_assert_cmpuint(dns_names->len, ==, 0);
