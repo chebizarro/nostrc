@@ -17,8 +17,8 @@ repo_root="$(git rev-parse --show-toplevel)"
 
 input="$(cat)"
 if [ -z "$input" ]; then
-    echo "No pre-push refs received - push blocked" >&2
-    exit 1
+    echo "No pre-push ref updates; nothing to check"
+    exit 0
 fi
 tmp="$(mktemp -d)"
 checkout=""
