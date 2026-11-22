@@ -933,6 +933,85 @@
       "requirement": "blocking",
       "runtime_inputs": []
     },
+    "nostrdb.supersession": {
+      "build_targets": [
+        "test_nostrdb_supersession"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "nostrdb_supersession_crowded",
+          "nostrdb_supersession_increasing",
+          "nostrdb_supersession_missing-d"
+        ],
+        "core.linux.asan": [
+          "nostrdb_supersession_crowded",
+          "nostrdb_supersession_increasing",
+          "nostrdb_supersession_missing-d"
+        ],
+        "core.linux": [
+          "nostrdb_supersession_crowded",
+          "nostrdb_supersession_increasing",
+          "nostrdb_supersession_missing-d"
+        ],
+        "grotto.linux": [
+          "nostrdb_supersession_crowded",
+          "nostrdb_supersession_increasing",
+          "nostrdb_supersession_missing-d"
+        ],
+        "grotto.linux.asan_ubsan": [
+          "nostrdb_supersession_crowded",
+          "nostrdb_supersession_increasing",
+          "nostrdb_supersession_missing-d"
+        ],
+        "groundhog.linux": [
+          "nostrdb_supersession_crowded",
+          "nostrdb_supersession_increasing",
+          "nostrdb_supersession_missing-d"
+        ],
+        "groundhog.mdk08": [
+          "nostrdb_supersession_crowded",
+          "nostrdb_supersession_increasing",
+          "nostrdb_supersession_missing-d"
+        ],
+        "groundhog.mdk011": [
+          "nostrdb_supersession_crowded",
+          "nostrdb_supersession_increasing",
+          "nostrdb_supersession_missing-d"
+        ],
+        "groundhog.linux.sanitizers": [
+          "nostrdb_supersession_crowded",
+          "nostrdb_supersession_increasing",
+          "nostrdb_supersession_missing-d"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.core",
+        "execution.grotto",
+        "execution.groundhog",
+        "libjson",
+        "libnostr",
+        "nostrdb",
+        "vendor.nostrdb"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan",
+        "core.linux",
+        "grotto.linux",
+        "grotto.linux.asan_ubsan",
+        "groundhog.linux",
+        "groundhog.mdk08",
+        "groundhog.mdk011",
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "{source}/components/nostrdb/tests/run_supersession.cmake"
+      ]
+    },
     "root.asan.libnostr": {
       "build_targets": [],
       "cost": "ordinary",
