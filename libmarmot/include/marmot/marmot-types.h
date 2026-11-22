@@ -679,6 +679,10 @@ typedef struct {
 /** Free a MarmotMessageResult's owned data */
 MARMOT_API void marmot_message_result_free(MarmotMessageResult *result);
 
+/** Free each of `count` results and the array itself (NULL is a no-op).
+ *  Since 0.12.0. */
+MARMOT_API void marmot_message_results_free(MarmotMessageResult *results, size_t count);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Group creation result
  * ──────────────────────────────────────────────────────────────────────── */

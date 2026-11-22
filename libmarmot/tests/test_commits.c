@@ -1816,6 +1816,48 @@ test_failed_merge_stays_clearable(void)
 }
 
 
+/* nostrc-8gbp: a Commit deferred behind our pending one (it loses to ours)
+ * is applied when ours is cleared; the caller learns who committed it, as
+ * for a Commit processed live.  Bob's key wins equal-priority ties
+ * (trio_init), so Alice's rename waits behind Bob's. */
+static void
+test_cleared_pending_reports_deferred_committers(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *bobs = rename_pending(&t.bob, &t.gid, "Bob's");
+    char *alices = rename_pending(&t.alice, &t.gid, "Alice's");
+    MarmotError err;
+    deliver(&t.bob, alices, &err, NULL);
+    CHECK(err == MARMOT_ERR_OWN_COMMIT_PENDING, "Alice's Commit deferred at Bob: %d", err);
+
+    MarmotMessageResult *res = (MarmotMessageResult *)(uintptr_t)1;
+    size_t n = 99;
+    OK(marmot_clear_pending_commit_with_results(t.bob.m, &t.gid, &res, &n));
+    CHECK(n == 1 && res, "one deferred Commit applied: %zu", n);
+    char alice_hex[65];
+    for (int i = 0; i < 32; i++) snprintf(alice_hex + 2 * i, 3, "%02x", t.alice.pk[i]);
+    CHECK(res[0].type == MARMOT_RESULT_COMMIT, "a Commit result");
+    CHECK(res[0].commit.committer_pubkey_hex &&
+          strcmp(res[0].commit.committer_pubkey_hex, alice_hex) == 0,
+          "attributed to Alice: %s", res[0].commit.committer_pubkey_hex
+                                           ? res[0].commit.committer_pubkey_hex : "(null)");
+    CHECK(res[0].commit.committer_leaf != UINT32_MAX, "with her leaf");
+    CHECK(res[0].commit.updated_group && res[0].commit.updated_group->name &&
+          strcmp(res[0].commit.updated_group->name, "Alice's") == 0, "the group it made");
+    marmot_message_results_free(res, n);
+
+    /* Nothing pending any more: nothing to report. */
+    res = (MarmotMessageResult *)(uintptr_t)1;
+    OK(marmot_clear_pending_commit_with_results(t.bob.m, &t.gid, &res, &n));
+    CHECK(res == NULL && n == 0, "nothing applied the second time");
+    CHECK(marmot_clear_pending_commit_with_results(t.bob.m, &t.gid, NULL, &n) ==
+              MARMOT_ERR_INVALID_ARG, "out params required");
+    free(bobs);
+    free(alices);
+    trio_clear(&t);
+}
+
 /* W17b addendum C2: the outbox is append-only; an entry leaves only when
  * its own send is confirmed.  Two merged Adds before the first Welcome is
  * sent keep both; a mark covers only the ids it names. */
@@ -9005,6 +9047,7 @@ main(int argc, char **argv)
     RUN(test_inner_event_dedupe_is_per_group);
     RUN(test_rollback_never_reuses_a_sender_generation);
     RUN(test_send_guard_covers_handshake_chain);
+    RUN(test_cleared_pending_reports_deferred_committers);
     RUN(test_rename_reaches_every_member);
     RUN(test_group_data_relays_follow_commit);
     RUN(test_noop_group_context_commit_is_privileged);

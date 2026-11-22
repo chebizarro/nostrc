@@ -1215,6 +1215,11 @@ not read (its validity rules need the frozen unsafe-host set): such a tag is
   older databases on open) and nostrdb (group record version 2) backends;
   0 means unknown (adopted groups, records stored before). Application
   storage backends must persist it too (nostrc-x215).
+- **Deferred Commits are reported when our pending Commit is cleared
+  (nostrc-8gbp).** New `marmot_clear_pending_commit_with_results()` returns
+  the `MarmotMessageResult` of each Commit it applies (deferred behind ours
+  as `MARMOT_ERR_OWN_COMMIT_PENDING`), committer included, in the order
+  applied; free them with the new `marmot_message_results_free()`.
 - **A storage rollback never reuses a sender generation (nostrc-ow0c).**
   Every operation that steps our own sender ratchet (application messages,
   a Remove request of ourselves) records the generations handed out in the
