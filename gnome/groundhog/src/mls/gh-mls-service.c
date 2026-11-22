@@ -3642,6 +3642,52 @@ retry_succeeded(GhMlsService *self)
 
 /* ---- Commits: publish, then merge (gh-mls-commits.h) ---------------------------------- */
 
+/* Each operation owns its cancellation fan-in. Cancelling one caller must
+ * stop its lookups, never the service's other operations. */
+typedef struct {
+  GCancellable *combined;
+  GCancellable *caller;
+  GCancellable *activity;
+  gulong caller_handler;
+  gulong activity_handler;
+} LookupCancellation;
+
+static void
+cancel_lookup(GCancellable *source, gpointer data)
+{
+  (void)source;
+  g_cancellable_cancel(data);
+}
+
+static void
+lookup_cancellation_init(LookupCancellation *cancel, GCancellable *caller,
+                           GCancellable *activity)
+{
+  cancel->combined = g_cancellable_new();
+  if (caller) {
+    cancel->caller = g_object_ref(caller);
+    cancel->caller_handler = g_cancellable_connect(caller, G_CALLBACK(cancel_lookup),
+      g_object_ref(cancel->combined), g_object_unref);
+  }
+  if (activity) {
+    cancel->activity = g_object_ref(activity);
+    cancel->activity_handler = g_cancellable_connect(activity, G_CALLBACK(cancel_lookup),
+      g_object_ref(cancel->combined), g_object_unref);
+  }
+}
+
+static void
+lookup_cancellation_clear(LookupCancellation *cancel)
+{
+  if (cancel->caller_handler)
+    g_cancellable_disconnect(cancel->caller, cancel->caller_handler);
+  if (cancel->activity_handler)
+    g_cancellable_disconnect(cancel->activity, cancel->activity_handler);
+  g_clear_object(&cancel->caller);
+  g_clear_object(&cancel->activity);
+  g_clear_object(&cancel->combined);
+}
+
 typedef enum { OP_CREATE, OP_ADD, OP_REMOVE, OP_METADATA, OP_DEPARTURES } OpKind;
 
 typedef struct {
@@ -3662,12 +3708,16 @@ typedef struct {
   guint rate_retries;         /* stagings libmarmot refused with MARMOT_ERR_EVENT_RATE */
   guint lookups;              /* in flight */
   GError *error;              /* the first lookup failure */
+  LookupCancellation cancel;
+  guint64 generation;        /* account identity */
+  guint64 run;               /* network activity serial */
 } Op;
 
 static void
 op_free(gpointer data)
 {
   Op *op = data;
+  lookup_cancellation_clear(&op->cancel);
   g_clear_object(&op->group);
   g_free(op->name);
   g_free(op->description);
@@ -3683,6 +3733,26 @@ op_free(gpointer data)
   marmot_group_blossom_image_clear(&op->image);   /* wipes the image and upload keys */
   g_clear_error(&op->error);
   g_free(op);
+}
+
+static gboolean
+op_return_if_stopped(GTask *task)
+{
+  GhMlsService *self = g_task_get_source_object(task);
+  Op *op = g_task_get_task_data(task);
+  if (g_task_return_error_if_cancelled(task))
+    return TRUE;
+  if (self->disposed || self->generation != op->generation) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                            "The account changed before the operation completed");
+    return TRUE;
+  }
+  if (!self->online || self->run != op->run) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
+                            "The network connection changed before the operation completed");
+    return TRUE;
+  }
+  return FALSE;
 }
 
 struct _Round {
@@ -4074,6 +4144,10 @@ stage_change(GTask *task, GhMlsGroup *group, GhMlsCommitProducer producer, gpoin
 {
   GhMlsService *self = group->service;
   g_autoptr(GError) error = NULL;
+  if (op_return_if_stopped(task)) {
+    g_object_unref(task);
+    return;
+  }
   if (group->round || group->pending_commit) {
     /* Review M1: behind a Commit Groundhog made on its own (the SelfRemove
      * upgrade, a member's leave) the admin's change waits and is made once
@@ -4667,6 +4741,10 @@ static void
 invitees_ready(GTask *task)
 {
   Op *op = g_task_get_task_data(task);
+  if (op_return_if_stopped(task)) {
+    g_object_unref(task);
+    return;
+  }
   if (op->error) {
     g_task_return_error(task, g_steal_pointer(&op->error));
     g_object_unref(task);
@@ -4771,9 +4849,10 @@ lookup_done(GObject *source, GAsyncResult *result, gpointer data)
   Op *op = g_task_get_task_data(task);
   g_autoptr(GError) error = NULL;
   g_autoptr(GhMlsKeyPackage) kp = gh_mls_key_package_lookup_finish(result, &error);
-  if (kp) {
-    /* Both formats, whichever the group uses: evidence fetched anyway. */
-    GhMlsService *self = g_task_get_source_object(task);
+  GhMlsService *self = g_task_get_source_object(task);
+  if (kp && !g_cancellable_is_cancelled(op->cancel.combined) &&
+      op->run == self->run && op->generation == self->generation) {
+    /* Both formats, whichever the group uses: current evidence only. */
     if (kp->adopted) {
       g_ptr_array_index(op->adopted_packages, lookup->index) = g_strdup(kp->event_json);
       remember_key_package(self, kp->event_json);
@@ -4786,7 +4865,7 @@ lookup_done(GObject *source, GAsyncResult *result, gpointer data)
     if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))
       op->error = g_error_new(GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NO_KEY_PACKAGE,
                               "%s", error->message);
-    else
+    else if (error)
       op->error = g_steal_pointer(&error);
   }
   g_free(lookup);
@@ -4839,7 +4918,7 @@ look_up_invitees(GTask *task)
     lookup->task = task;
     lookup->index = i;
     gh_mls_key_package_lookup_async(self->accounts, (const gchar *const *)sources, group_relays,
-                                    op->people[i], self->lookup_deadline, self->cancellable,
+                                    op->people[i], self->lookup_deadline, op->cancel.combined,
                                     lookup_done, lookup);
   }
 }
@@ -4870,6 +4949,9 @@ op_task(GhMlsService *self, OpKind kind, GhMlsGroup *group, GCancellable *cancel
   op->expected = -1;
   op->group = group ? g_object_ref(group) : NULL;
   op->key_packages = g_ptr_array_new_with_free_func(g_free);
+  op->generation = self->generation;
+  op->run = self->run;
+  lookup_cancellation_init(&op->cancel, cancellable, self->cancellable);
   g_task_set_task_data(task, op, op_free);
   return task;
 }
@@ -4879,6 +4961,10 @@ create_group_now(GTask *task)
 {
   GhMlsService *self = g_task_get_source_object(task);
   Op *op = g_task_get_task_data(task);
+  if (op_return_if_stopped(task)) {
+    g_object_unref(task);
+    return;
+  }
   guint n_relays = g_strv_length(op->relays);
   uint8_t admins[1][32];
   memcpy(admins[0], self->account_key, 32);
@@ -6908,12 +6994,15 @@ typedef struct {
   GhMlsGroup *group;   /* a reference */
   gchar *account;
   guint64 run;
+  guint64 generation;
+  LookupCancellation cancel;
 } VerifyOp;
 
 static void
 verify_op_free(gpointer data)
 {
   VerifyOp *op = data;
+  lookup_cancellation_clear(&op->cancel);
   g_clear_object(&op->group);
   g_free(op->account);
   g_free(op);
@@ -6954,12 +7043,20 @@ verify_done(GObject *source, GAsyncResult *result, gpointer data)
   g_autoptr(GError) error = NULL;
   g_autoptr(GPtrArray) found = gh_mls_key_package_evidence_lookup_finish(result, &error);
   if (self->disposed || op->run != self->run) {
-    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
-                            "The account changed before the check finished");
+    gboolean changed = self->disposed || op->generation != self->generation;
+    g_task_return_new_error(task, G_IO_ERROR,
+      changed ? G_IO_ERROR_CANCELLED : G_IO_ERROR_NOT_CONNECTED,
+      "%s", changed ? "The account changed before the check finished"
+                    : "The network connection changed before the check finished");
     g_object_unref(task);
     return;
   }
   g_hash_table_remove(self->verifying, op->account);
+  if (g_task_return_error_if_cancelled(task)) {
+    verify_mark(self, op->account, GH_MLS_MEMBER_CHECKING, GH_MLS_MEMBER_UNVERIFIED);
+    g_object_unref(task);
+    return;
+  }
   for (guint i = 0; found && i < found->len; i++)
     remember_key_package(self, g_ptr_array_index(found, i));
   /* Every device of the account the answer confirms, in every group; the
@@ -7061,12 +7158,14 @@ gh_mls_service_verify_member_async(GhMlsService *self, GhMlsGroup *group, const 
   op->group = g_object_ref(group);
   op->account = g_strdup(account);
   op->run = self->run;
+  op->generation = self->generation;
+  lookup_cancellation_init(&op->cancel, cancellable, self->cancellable);
   g_task_set_task_data(task, op, verify_op_free);
   g_hash_table_add(self->verifying, g_strdup(account));
   verify_mark(self, account, GH_MLS_MEMBER_UNVERIFIED, GH_MLS_MEMBER_CHECKING);
   gh_mls_key_package_evidence_lookup_async(self->accounts, (const gchar *const *)relays,
                                            (const gchar *const *)group->read_relays, account,
-                                           self->lookup_deadline, self->cancellable,
+                                           self->lookup_deadline, op->cancel.combined,
                                            verify_done, task);
 }
 
@@ -9558,7 +9657,7 @@ resume_all(GhMlsService *self)
 /* ---- Generation ----------------------------------------------------------------------- */
 
 static void
-stop_generation(GhMlsService *self)
+stop_activity(GhMlsService *self, gboolean account_changed)
 {
   self->run++;
   if (self->kp_reconcile_timer) {
@@ -9612,9 +9711,10 @@ stop_generation(GhMlsService *self)
       verify_mark(self, account, GH_MLS_MEMBER_CHECKING, GH_MLS_MEMBER_UNVERIFIED);
     g_hash_table_remove_all(self->verifying);
   }
-  g_autoptr(GError) cancelled = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_CANCELLED,
-                                                    "The account changed; the change stays "
-                                                    "pending and is sent again later");
+  g_autoptr(GError) cancelled = g_error_new_literal(G_IO_ERROR,
+    account_changed ? G_IO_ERROR_CANCELLED : G_IO_ERROR_NOT_CONNECTED,
+    account_changed ? "The account changed; the change stays pending and is sent again later"
+                    : "The network is offline; the change stays pending and is sent again later");
   for (guint i = 0; i < self->groups->len; i++) {
     GhMlsGroup *group = g_ptr_array_index(self->groups, i);
     group_unsubscribe(group);
@@ -9646,8 +9746,10 @@ update_activity(GhMlsService *self)
   if (generation == self->generation && online == self->online)
     return;
   /* Nothing of the old generation (or connection) may complete in the new. */
-  stop_generation(self);
-  identity_new_generation(self, generation);
+  gboolean account_changed = generation != self->generation;
+  stop_activity(self, account_changed);
+  if (account_changed)
+    identity_new_generation(self, generation);
   self->generation = generation;
   self->online = online;
   self->kp_observed_write_relays = key_package_relays(self);
@@ -10290,7 +10392,7 @@ gh_mls_service_dispose(GObject *object)
       g_clear_signal_handler(&self->network_handler, self->network);
     if (self->relays_handler)
       g_clear_signal_handler(&self->relays_handler, self->account_relays);
-    stop_generation(self);
+    stop_activity(self, TRUE);
     identity_new_generation(self, 0);
     self->generation = 0;
     if (self->rooms)

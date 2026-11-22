@@ -633,6 +633,103 @@ test_round_launch_failure(gconstpointer data)
   world_down(&w);
 }
 
+typedef struct { const guint *value; guint minimum; } LookupRequestWait;
+static gboolean lookup_request_seen(gpointer data)
+{
+  LookupRequestWait *wait = data;
+  return *wait->value >= wait->minimum;
+}
+
+static void
+test_cancel_invitee_lookup(gconstpointer data)
+{
+  guint mode = GPOINTER_TO_UINT(data);
+  gboolean adding = mode == 1, offline = mode == 3;
+  World w;
+  world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
+  App *alice = &w.apps[ALICE];
+  wait_key_packages(&w, TRIO, G_N_ELEMENTS(TRIO));
+  accept_contact(alice, BOB);
+  accept_contact(alice, CAROL);
+  GhMlsGroup *group = adding ? create_group(alice, "Before cancelled add", (const guint[]){ BOB }, 1) : NULL;
+  guint groups = g_list_model_get_n_items(G_LIST_MODEL(alice->service));
+  guint64 epoch = group ? gh_mls_group_get_epoch(group) : 0;
+  w.e.no_eose = TRUE;
+  guint requests = w.e.reqs;
+  g_autoptr(GCancellable) caller = g_cancellable_new();
+  OpWait wait = { 0 };
+  const gchar *people[] = { hex[CAROL], NULL };
+  const gchar *relays[] = { w.g.url, NULL };
+  if (adding)
+    gh_mls_service_add_members_async(alice->service, group, people, caller, on_changed, &wait);
+  else
+    gh_mls_service_create_group_async(alice->service, "Cancelled create", NULL, relays,
+                                      people, caller, on_created, &wait);
+  LookupRequestWait requested = { &w.e.reqs, requests + 1 };
+  gh_test_spin_until(lookup_request_seen, &requested);
+  if (offline)
+    set_online(alice, FALSE);
+  else
+    g_cancellable_cancel(caller);
+  /* Less than the lookup's 15-second deadline: only cancellation can finish it. */
+  gh_test_spin_until(op_done, &wait);
+  if (offline)
+    g_assert_error(wait.error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED);
+  else
+    g_assert_error(wait.error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+  g_clear_error(&wait.error);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(alice->service)), ==, groups);
+  if (group)
+    g_assert_cmpuint(gh_mls_group_get_epoch(group), ==, epoch);
+  w.e.no_eose = FALSE;
+  if (offline)
+    set_online(alice, TRUE);
+  /* Cancelling this caller must not cancel the service's lookup generation. */
+  create_group(alice, "After caller cancellation", (const guint[]){ BOB }, 1);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(alice->service)), ==, groups + 1);
+  world_down(&w);
+}
+
+static void
+test_network_flap_is_not_account_change(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Before network flap", (const guint[]){ BOB }, 1);
+  GhMlsGroup *gb = join(bob, ALICE);
+  guint64 generation = gh_account_controller_get_generation(alice->accounts);
+  w.g.hold_oks = TRUE;
+  PendingWait tried = { ga, &w.g, w.g.events };
+  OpWait renamed = { 0 };
+  gh_mls_service_update_metadata_async(alice->service, ga, "After network flap", NULL,
+                                        NULL, on_changed, &renamed);
+  spin_until(pending_and_tried, &tried, "the Commit awaiting a relay answer");
+  g_autofree gchar *pending = pending_commit_id(alice, ga);
+  set_online(alice, FALSE);
+  gh_test_spin_until(op_done, &renamed);
+  g_assert_error(renamed.error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED);
+  g_assert_null(strstr(renamed.error->message, "account changed"));
+  g_clear_error(&renamed.error);
+  g_assert_cmpuint(gh_account_controller_get_generation(alice->accounts), ==, generation);
+  w.g.hold_oks = FALSE;
+  set_online(alice, TRUE);
+  wire_relay_release_oks(&w.g);
+  NameWait recovered = { gb, "After network flap" };
+  spin_until(name_is, &recovered, "the pending change resumed after reconnect");
+  g_autoptr(GPtrArray) events = published(&w.g, 445);
+  gboolean same = FALSE;
+  for (guint i = 0; i < events->len; i++) {
+    g_autofree gchar *id = nostr_event_get_id(g_ptr_array_index(events, i));
+    same |= g_strcmp0(id, pending) == 0;
+  }
+  g_assert_true(same);
+  world_down(&w);
+}
+
 static void
 track_max(GObject *group, GParamSpec *pspec, gpointer data)
 {
@@ -4925,6 +5022,10 @@ main(int argc, char **argv)
   g_test_init(&argc, &argv, NULL);
   mls_world_init();
   g_test_add_func("/groundhog/mls-service/key-packages", test_key_packages);
+  g_test_add_data_func("/groundhog/mls-service/cancel-create-lookup", GINT_TO_POINTER(0), test_cancel_invitee_lookup);
+  g_test_add_data_func("/groundhog/mls-service/cancel-add-lookup", GINT_TO_POINTER(1), test_cancel_invitee_lookup);
+  g_test_add_data_func("/groundhog/mls-service/offline-create-lookup", GINT_TO_POINTER(3), test_cancel_invitee_lookup);
+  g_test_add_func("/groundhog/mls-service/network-flap-not-account-change", test_network_flap_is_not_account_change);
   g_test_add_data_func("/groundhog/mls-service/round-create-failure", GUINT_TO_POINTER(1), test_round_launch_failure);
   g_test_add_data_func("/groundhog/mls-service/round-urls-failure", GUINT_TO_POINTER(2), test_round_launch_failure);
   g_test_add_data_func("/groundhog/mls-service/round-start-failure", GUINT_TO_POINTER(3), test_round_launch_failure);
