@@ -437,6 +437,9 @@ if (TARGET groundhog-account AND TARGET groundhog-relay)
   target_include_directories(groundhog-auth-policy PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
   target_link_libraries(groundhog-auth-policy PUBLIC groundhog-account groundhog-relay)
   target_compile_options(groundhog-auth-policy PRIVATE -Wall -Wextra -Werror)
+  if (BUILD_TESTING)
+    target_compile_definitions(groundhog-auth-policy PUBLIC GH_ACCOUNT_AUTH_TEST_HOOKS)
+  endif()
 endif()
 
 # Account-bound relay-list discovery: one URL-scoped live REQ per active
