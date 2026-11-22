@@ -1628,8 +1628,8 @@ static bool leaf_occupied(const MlsGroup *group, uint32_t leaf);
 /* The limit receivers apply to Adds per Commit (process_commit_impl). */
 #define MLS_MAX_ADDS_PER_COMMIT 64
 
-static int key_package_supports_group(const MlsKeyPackage *kp, const uint8_t *exts,
-                                      size_t exts_len);
+static int key_package_supports_group(const MlsKeyPackage *kp, const MlsRatchetTree *tree,
+                                      const uint8_t *exts, size_t exts_len);
 
 #ifdef MARMOT_TEST_HOOKS
 bool mls_test_allow_unsupported_adds = false;
@@ -1704,7 +1704,7 @@ add_members_staged(MlsGroup *group,
          * -- this Commit's GroupContextExtensions when it has them. */
         rc = ALLOW_UNSUPPORTED_ADDS
                  ? 0
-                 : key_package_supports_group(kps[i],
+                 : key_package_supports_group(kps[i], &group->tree,
                                               gce_extensions ? gce_extensions
                                                              : group->extensions_data,
                                               gce_extensions ? gce_len : group->extensions_len);
@@ -3247,15 +3247,34 @@ group_extension_supported(uint16_t type, const uint8_t *data, size_t len,
     return 0;
 }
 
-/* nostrc-zbmb (RFC 9420 §12.1.1, §7.2): a KeyPackage's leaf supports every
- * extension of `exts` (a GroupContext's list) and whatever its
- * required_capabilities demand. */
+/* The group-dependent RFC 9420 §7.3 checks of an Add (§12.1.1), beyond
+ * mls_key_package_validate()'s self-consistency:
+ *   step 3 (nostrc-zbmb, §7.2): the leaf supports every extension of `exts`
+ *     (the GroupContext the joiner enters) and whatever its
+ *     required_capabilities demand;
+ *   step 4 (nostrc-wafb): every member of `tree` supports the joiner's
+ *     credential type, and the joiner supports every member's;
+ *   step 6 (nostrc-wafb): the leaf's own extensions are in its capabilities.
+ * MARMOT_ERR_KEY_PACKAGE_CAPABILITIES when one fails. */
 static int
-key_package_supports_group(const MlsKeyPackage *kp, const uint8_t *exts, size_t exts_len)
+key_package_supports_group(const MlsKeyPackage *kp, const MlsRatchetTree *tree,
+                           const uint8_t *exts, size_t exts_len)
 {
-    return extensions_foreach(exts, exts_len, group_extension_supported, &kp->leaf_node) == 0
-               ? 0
-               : MARMOT_ERR_KEY_PACKAGE_CAPABILITIES;
+    const MlsLeafNode *leaf = &kp->leaf_node;
+    if (extensions_foreach(exts, exts_len, group_extension_supported, leaf) != 0 ||
+        extensions_foreach(leaf->extensions_data, leaf->extensions_len,
+                           leaf_extension_supported, leaf) != 0)
+        return MARMOT_ERR_KEY_PACKAGE_CAPABILITIES;
+    for (uint32_t i = 0; tree && i < tree->n_leaves; i++) {
+        const MlsNode *n = &tree->nodes[mls_tree_leaf_to_node(i)];
+        if (n->type != MLS_NODE_LEAF) continue;
+        if (!u16_list_contains(n->leaf.cap_credentials, n->leaf.cap_credential_count,
+                               leaf->credential_type) ||
+            !u16_list_contains(leaf->cap_credentials, leaf->cap_credential_count,
+                               n->leaf.credential_type))
+            return MARMOT_ERR_KEY_PACKAGE_CAPABILITIES;
+    }
+    return 0;
 }
 
 static int
@@ -4359,8 +4378,8 @@ process_commit_impl(MlsGroup *group,
             }
             /* nostrc-zbmb: so is every joiner's leaf (RFC 9420 §12.1.1). */
             if (commit.proposals[i].type == MLS_PROPOSAL_ADD &&
-                key_package_supports_group(&commit.proposals[i].add.key_package, next_ext,
-                                           next_ext_len) != 0) {
+                key_package_supports_group(&commit.proposals[i].add.key_package,
+                                           &group->tree, next_ext, next_ext_len) != 0) {
                 mls_commit_clear(&commit);
                 staged_rc = MARMOT_ERR_KEY_PACKAGE_CAPABILITIES;
                 goto staged_fail;
