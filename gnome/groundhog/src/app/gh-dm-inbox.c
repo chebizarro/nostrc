@@ -1429,6 +1429,13 @@ gh_dm_inbox_get_state(GhDmInbox *self)
   return self->state;
 }
 
+gboolean
+gh_dm_inbox_get_relays_failed(GhDmInbox *self)
+{
+  g_return_val_if_fail(GH_IS_DM_INBOX(self), FALSE);
+  return self->state == GH_DM_INBOX_ERROR && self->error == NULL;
+}
+
 const gchar *
 gh_dm_inbox_get_error(GhDmInbox *self)
 {

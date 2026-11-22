@@ -237,6 +237,8 @@ void gh_dm_inbox_set_backfill_limits(GhDmInbox *self, guint req_limit, guint max
 GhDmInboxState gh_dm_inbox_get_state(GhDmInbox *self);
 /* Why the state is ERROR; NULL otherwise. */
 const gchar *gh_dm_inbox_get_error(GhDmInbox *self);
+/* TRUE only when ERROR means every subscription relay failed, not a local failure. */
+gboolean gh_dm_inbox_get_relays_failed(GhDmInbox *self);
 /* The account generation the session belongs to; 0 when inactive. */
 guint64 gh_dm_inbox_get_generation(GhDmInbox *self);
 /* The sorted inbox relay URLs the current REQs target; NULL without them. */

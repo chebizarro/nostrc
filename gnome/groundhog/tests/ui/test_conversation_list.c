@@ -1267,7 +1267,7 @@ test_inbox_status_mapping(void)
   static const struct {
     GhDmInboxState inbox;
     GhAccountRelaysState relays;
-    gboolean has_relays;
+    gboolean relays_failed;
     GhStatusInbox want;
   } cases[] = {
     { GH_DM_INBOX_INACTIVE, GH_ACCOUNT_RELAYS_INACTIVE, FALSE, GH_STATUS_INBOX_INACTIVE },
@@ -1288,7 +1288,7 @@ test_inbox_status_mapping(void)
     { GH_DM_INBOX_ERROR, GH_ACCOUNT_RELAYS_COMPLETE, FALSE, GH_STATUS_INBOX_ERROR },
   };
   for (guint i = 0; i < G_N_ELEMENTS(cases); i++)
-    g_assert_cmpint(gh_inbox_status_map(cases[i].inbox, cases[i].relays, cases[i].has_relays),
+    g_assert_cmpint(gh_inbox_status_map(cases[i].inbox, cases[i].relays, cases[i].relays_failed),
                     ==, cases[i].want);
 }
 
