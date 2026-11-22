@@ -144,9 +144,46 @@ test "$*" = '--readonly --sandbox list --all -n 0 --json' || exit 10
         self.assertEqual(human.returncode, 0, human.stderr)
         self.assertIn("Tracker (read-only bd cwd)", human.stdout)
         self.assertIn("unverified explicit citations", human.stdout)
+        citation_rows = [line for line in human.stdout.splitlines() if line.startswith("[commit_citation]")]
+        self.assertEqual(len(citation_rows), 3)
+        self.assertFalse(any('"reachability": "master"' in line for line in citation_rows))
+        self.assertTrue(any('"reachability": "other_refs"' in line for line in citation_rows))
+        self.assertTrue(any('"reachability": "unreachable"' in line for line in citation_rows))
+        counts = json.loads(next(line.removeprefix("Counts: ") for line in human.stdout.splitlines()
+                                 if line.startswith("Counts: ")))
+        self.assertEqual(counts["commit_reachability"], report["commit_reachability_counts"])
+        full = self.cli("--all-citations")
+        self.assertEqual(full.returncode, 0, full.stderr)
+        full_rows = [line for line in full.stdout.splitlines() if line.startswith("[commit_citation]")]
+        self.assertEqual(len(full_rows), report["counts"]["commit_citation"])
+        self.assertTrue(any('"reachability": "master"' in line for line in full_rows))
+        self.assertEqual(json.loads(self.cli("--json", "--all-citations").stdout), report)
         after = (self.git("show-ref"), self.git("status", "--porcelain"),
                  (self.repo / ".git/index").read_bytes(), sorted(str(p) for p in self.root.rglob("*")))
         self.assertEqual(before, after)
+
+    def test_landed_work_hint_requires_all_citations_on_master(self):
+        master = self.git("rev-parse", "master")
+        other = self.git("rev-parse", "other")
+        issues = [
+            {"id": "landed", "status": "open", "notes": f"commit {master}",
+             "description": f"Same commit {master}; initial {self.git('rev-parse', 'master~1')}"},
+            {"id": "mixed", "status": "open", "notes": f"commit {master}", "description": f"commit {other}"},
+            {"id": "missing", "status": "open", "notes": f"commit {master}; commit b171bda1"},
+            {"id": "none", "status": "open"},
+            {"id": "closed", "status": "closed", "notes": f"commit {master}"},
+        ]
+        report = self.report(issues)
+        hints = [f for f in report["findings"] if f["check"] == "landed_work"]
+        self.assertEqual([f["id"] for f in hints], ["landed"])
+        self.assertEqual(hints[0]["commit_count"], 2)
+        self.assertEqual(report["counts"]["landed_work"], 1)
+        self.payload.write_text(json.dumps(issues))
+        human = self.cli()
+        self.assertEqual(human.returncode, 0, human.stderr)
+        hint_rows = [line for line in human.stdout.splitlines() if line.startswith("[landed_work]")]
+        self.assertEqual(len(hint_rows), 1)
+        self.assertIn("cited work has landed — check whether the bead can close", hint_rows[0])
 
     def test_bd_failure_and_bad_json_are_visible(self):
         self.bd.write_text("#!/bin/sh\necho unavailable >&2\nexit 7\n")

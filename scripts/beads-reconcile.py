@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Report beads/git reconciliation candidates; never change tracker, refs or files.
 
-Usage: python3 scripts/beads-reconcile.py --idle-days 30 [--json]
+Usage: python3 scripts/beads-reconcile.py --idle-days 30 [--json | --all-citations]
        python3 scripts/beads-reconcile.py --tracker-repo /path/to/main-checkout
 
 Git defaults to this script's checkout; bd defaults to that same checkout. The
@@ -11,6 +11,11 @@ Findings are review hints, NOT closure recommendations or proof of delivery.
 Only active (non-closed) beads are checked. Childless epics are identifiable;
 ordinary childless tasks cannot be inferred to be parents. Duplicate checking
 uses recorded duplicate/duplicates dependencies, not title similarity.
+
+Human output lists only other-ref/unreachable commit citations by default, plus
+one closure-review hint per active bead whose recognized citations all landed
+on master. --all-citations includes the full per-citation listing; --json always
+retains full detail. Reachability totals always include all recognized citations.
 
 Standalone 7-40 hex tokens are checked as Git commits. 0x literals, longer event
 IDs and identifier fragments are excluded. Missing objects are reported only
@@ -149,6 +154,7 @@ def reconcile(issues, git, *, idle_days=30, now=None):
             evidence = git.landed_branch(branch)
             if evidence:
                 add("landed_branch", issue, branch=branch, **evidence)
+        citations = []
         for field in ("notes", "description"):
             seen = set()
             for match in HEX.finditer(issue.get(field) or ""):
@@ -162,6 +168,10 @@ def reconcile(issues, git, *, idle_days=30, now=None):
                     continue
                 seen.add(token)
                 add("commit_citation", issue, field=field, citation=token, **citation)
+                citations.append(citation)
+        if citations and all(c["reachability"] == "master" for c in citations):
+            add("landed_work", issue, commit_count=len({c["commit"] for c in citations}),
+                hint="cited work has landed — check whether the bead can close")
 
     for source, target in sorted(duplicate_edges):
         if source not in by_id or target not in by_id:
@@ -172,7 +182,7 @@ def reconcile(issues, git, *, idle_days=30, now=None):
     return {
         "total_issues": len(issues), "active_issues": len(active), "idle_threshold_days": idle_days,
         "counts": {key: sum(f["check"] == key for f in findings) for key in
-                   ("stale_claim", "parent_complete", "landed_branch", "commit_citation", "duplicate_keeper_closed")},
+                   ("stale_claim", "parent_complete", "landed_branch", "commit_citation", "landed_work", "duplicate_keeper_closed")},
         "commit_reachability_counts": dict(sorted(Counter(
             f["reachability"] for f in findings if f["check"] == "commit_citation").items())),
         "duplicate_check": (f"checked {len(duplicate_edges)} recorded duplicate relations"
@@ -189,6 +199,7 @@ def main(argv=None):
     parser.add_argument("--tracker-repo", type=Path, help="read-only bd cwd (default: git checkout)")
     parser.add_argument("--idle-days", type=float, default=30, help="idle claim threshold, strictly greater than N days (default: 30)")
     parser.add_argument("--json", action="store_true", help="print the complete report as JSON")
+    parser.add_argument("--all-citations", action="store_true", help="include master-reachable per-citation rows in human output (JSON always includes them)")
     args = parser.parse_args(argv)
     if not math.isfinite(args.idle_days) or args.idle_days < 0:
         parser.error("--idle-days must be a finite nonnegative number")
@@ -210,13 +221,16 @@ def main(argv=None):
             print(report["caveat"])
             print(f"Duplicate check: {report['duplicate_check']}")
             print(f"Ignored unresolved hex tokens: {report['ignored_unresolved_hex_tokens']}")
-            print("Counts: " + json.dumps(report["counts"], sort_keys=True))
-            print("Commit reachability: " + json.dumps(report["commit_reachability_counts"], sort_keys=True))
+            print("Counts: " + json.dumps({**report["counts"],
+                                          "commit_reachability": report["commit_reachability_counts"]}, sort_keys=True))
             for warning in report["warnings"]:
                 print(f"WARNING: {warning}")
             for finding in report["findings"]:
+                if (finding["check"] == "commit_citation" and not args.all_citations
+                        and finding["reachability"] == "master"):
+                    continue
                 details = {k: v for k, v in finding.items() if k not in {"check", "id", "title"}}
-                print(f"[{finding['check']}] {finding['id']} {finding['title']}: " + json.dumps(details, sort_keys=True))
+                print(f"[{finding['check']}] {finding['id']} {finding['title']}: " + json.dumps(details, sort_keys=True, ensure_ascii=False))
         return 0
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"beads-reconcile: {exc}", file=sys.stderr)
