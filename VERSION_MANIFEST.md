@@ -254,6 +254,7 @@ other components and all version/release/tag values are unchanged.
 | nip17 | `nips/nip17/` | 0.1.0 | Unreleased | — | `nips/nip17/CMakeLists.txt` (`declare_component_version`; initial installed packaging contract) |
 | nip44 | `nips/nip44/` | 0.1.0 | Unreleased | — | `nips/nip44/CMakeLists.txt` (`declare_component_version`; initial installed packaging contract) |
 | nip51 | `nips/nip51/` | 0.1.0 | Unreleased | — | `nips/nip51/CMakeLists.txt` (`declare_component_version`; initial installed packaging contract) |
+| nip78 | `nips/nip78/` | 0.1.1 | Unreleased | — | `nips/nip78/CMakeLists.txt` (`project` VERSION mirrored into `declare_component_version`; shared NIP packaging helper) |
 | nip98 | `nips/nip98/` | 0.1.0 | Unreleased | — | `nips/nip98/CMakeLists.txt` (`declare_component_version`; initial installed packaging contract) |
 | nip59 (NIP-59 gift-wrap core) | `nips/nip59/` | 0.2.1 | Unreleased | — | `nips/nip59/CMakeLists.txt` (`project(nip59 VERSION ...)`, mirrored into `declare_component_version`; installed static archive and .pc, existing OBJECT target retained) |
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.1 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
@@ -844,7 +845,7 @@ export headers are still part of the owning package's build contract.
 | `nip49` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip49/CMakeLists.txt` |
 | `nip50` | Unversioned | No bump: inline-only public API; empty library translation unit has no exports; `nips/nip50/CMakeLists.txt` |
 | `nip51` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip51/CMakeLists.txt` |
-| `nip78` | 0.1.0 | Initial installed unsigned application-data codec; `nips/nip78/CMakeLists.txt` (`project`); `nips/nip78/nip78.pc.in` inherits project version |
+| `nip78` | 0.1.1 | PATCH 0.1.0 -> 0.1.1: shared NIP packaging helper, private Jansson dependency and installed version/export flags; `nips/nip78/CMakeLists.txt` (`project` + `declare_component_version`), `cmake/nip.pc.in` |
 | `nip52` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip52/CMakeLists.txt` |
 | `nip53` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip53/CMakeLists.txt` |
 | `nip54` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip54/CMakeLists.txt` |
@@ -1923,3 +1924,8 @@ nostrc-j4jlx (metadesk md-055m): nip78 starts at 0.1.0 Unreleased (new installed
 N1/N2 integration: the unsigned nip17 builder is included in nip17's initial
 unreleased 0.1.0 installed contract above; the N2 note describes its original
 unversioned master base. No additional nip17 version bump or release tag.
+
+NIP-78 packaging integration (nostrc-56nz5): PATCH 0.1.0 -> 0.1.1 for the
+common install/.pc convention, private Jansson dependency, static export flags
+and installed version header. API, wire behavior and SOVERSION 0 unchanged.
+Other component versions and release tags unchanged by this integration.

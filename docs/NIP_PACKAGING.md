@@ -9,7 +9,7 @@ and shared artifacts or different `NOSTR_WITH_GLIB` ABIs in one prefix.
 ## Supported subset
 
 The initial-cache file disables unrelated components, including FIPS and
-nostrdb, and enables NIP-04/11/17/44/46/51/98. NIP-06/19 remain enabled because
+nostrdb, and enables NIP-04/11/17/44/46/51/78/98. NIP-06/19 remain enabled because
 the repository always builds the NIP-55L core. System nsync is required by this
 packaging recipe. Install the usual development dependencies: C/C++ compilers,
 CMake >= 3.22, Ninja, pkg-config, nsync, libwebsockets, OpenSSL, secp256k1,
@@ -24,7 +24,7 @@ cmake --build _build-package -j4
 DESTDIR="$PWD/_stage-package" cmake --install _build-package
 ```
 
-For shared libnostr/NIP-11/NIP-98 and the optional NIP-46 GLib layer, use a
+For shared libnostr/NIP-11/NIP-78/NIP-98 and the optional NIP-46 GLib layer, use a
 separate build and prefix with `BUILD_SHARED_LIBS=ON`, `NOSTR_WITH_GLIB=ON`.
 NIP-04, NIP-44 core, NIP-46 core and the installed NIP-17/51 wrappers remain
 static, matching their existing in-tree ownership policy. NIP-17/51's original
@@ -69,6 +69,7 @@ All NIP .pc files have `Libs: -L${libdir} -l<library>` and
 | nip46 | nostr_nip46_core | nostr >= 2.5.1 | nip04 >= 0.1.0, nip44 >= 0.1.0, libnostr-json |
 | nip46-glib (when built) | nostr_nip46_glib | nip46, gio-2.0 | — |
 | nip51 | nostr_nip51_core | nostr >= 2.5.1 | nip44 >= 0.1.0, jansson |
+| nip78 | nostr_nip78_core | nostr >= 2.5.1 | jansson |
 | nip98 | nostr_nip98 | nostr >= 2.5.1 | openssl |
 
 These NIP packages need no extra `Libs.private`: their private closure is expressed
@@ -80,21 +81,21 @@ nsync search directory and the optional nostrdb/flatccrt/platform link flags.
 
 ```sh
 export PKG_CONFIG_PATH=/my/prefix/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
-cc consumer.c -o consumer $(pkg-config --cflags --libs --static nip11 nip17 nip46 nip51 nip98)
+cc consumer.c -o consumer $(pkg-config --cflags --libs --static nip11 nip17 nip46 nip51 nip78 nip98)
 ```
 
 Always request `--static` when using any of the static-only NIPs (Meson:
-`dependency('nip17', static: true)`, etc.). For a shared NIP-11/98 consumer use
-normal `pkg-config --cflags --libs nip11 nip98`. For a private non-system prefix,
+`dependency('nip17', static: true)`, etc.). For a shared NIP-11/78/98 consumer use
+normal `pkg-config --cflags --libs nip11 nip78 nip98`. For a private non-system prefix,
 configure the application's loader RPATH from `pkg-config --variable=libdir
 libnostr-json`; do not point it at a developer build tree.
 
 CMake follows the repo's pkg-config-backed aggregate dispatcher:
 
 ```cmake
-find_package(nostrc REQUIRED COMPONENTS nip11 nip17 nip46 nip51 nip98)
+find_package(nostrc REQUIRED COMPONENTS nip11 nip17 nip46 nip51 nip78 nip98)
 target_link_libraries(app PRIVATE nostrc::nip11 nostrc::nip17 nostrc::nip46
-                                  nostrc::nip51 nostrc::nip98)
+                                  nostrc::nip51 nostrc::nip78 nostrc::nip98)
 ```
 
 Set `CMAKE_PREFIX_PATH` and, for nonstandard .pc locations, `PKG_CONFIG_PATH`.
@@ -104,7 +105,8 @@ Components own their versions, not the aggregate `nostrcConfig.cmake`.
 ## Version and ABI policy
 
 NIP-04/11/17/44/51/98 start their installed contract at 0.1.0; NIP-46 core/GLib
-share 0.2.1. libnostr is 2.5.1, libnostr-json is 2.0.1 and libgo is 0.3.1 for dependency metadata
+share 0.2.1. NIP-78 is 0.1.1 for packaging corrections to its initial 0.1.0
+packaging contract, with unchanged API and SOVERSION 0. libnostr is 2.5.1, libnostr-json is 2.0.1 and libgo is 0.3.1 for dependency metadata
 corrections. `declare_component_version` and `apply_versioning` use the same
 policy as libnostr: full SemVer `VERSION`, major `SOVERSION` for shared libraries
 (e.g. `libnip11.so.0`, `libnostr_nip98.so.0`; Mach-O `.0.dylib` install names).
@@ -125,7 +127,7 @@ at `-j4`, then run:
 
 ```sh
 ctest --test-dir _build-package --output-on-failure -j2 \
-  -R '^(test_nip(11|17|46.*|51.*|98|44.*|04.*)|test_(interop|roundtrip))$'
+  -R '^(test_nip(11|17|46.*|51.*|78.*|98|44.*|04.*)|test_(interop|roundtrip))$'
 python3 tests/packaging/check-nip-install.py --build _build-package
 # For a shared build; add --sanitize for GO_ENABLE_ASAN/UBSAN builds:
 python3 tests/packaging/check-nip-install.py --build _build-shared --shared --sanitize
@@ -135,7 +137,9 @@ The checker installs the build, compiles/runs a tiny consumer outside the source
 include layout using only installed pkg-config flags, checks nonempty versions,
 and checks installed CMake component discovery. When built, NIP-46 GLib is
 also exercised through its installed header and .pc. `--shared` additionally links
-NIP-11/98 without `--static`. It removes temporary consumer files afterwards.
+NIP-11/78/98 without `--static`. A standalone NIP-78 mode checks its dependency
+closure without other NIPs masking missing link metadata. It removes temporary
+consumer files afterwards.
 CI's core ASan/UBSan job runs this check after building. Match its strict NIP-04
 option and sanitizer environment; do not claim hosted Linux/Windows acceptance
 from a local macOS run.

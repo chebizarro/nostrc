@@ -7,7 +7,7 @@ foreach(_option IN LISTS _nip_options)
   set(${_option} OFF CACHE BOOL "Not part of the installed NIP subset")
 endforeach()
 # nip06/nip19 are required by the always-built nip55l core.
-foreach(_nip NIP04 NIP06 NIP11 NIP17 NIP19 NIP44 NIP46 NIP51 NIP98)
+foreach(_nip NIP04 NIP06 NIP11 NIP17 NIP19 NIP44 NIP46 NIP51 NIP78 NIP98)
   set(ENABLE_${_nip} ON CACHE BOOL "Installed NIP subset dependency" FORCE)
 endforeach()
 foreach(_off BUILD_FIPS WITH_NOSTRDB LIBNOSTR_WITH_NOSTRDB BUILD_APPS BUILD_RELAYD

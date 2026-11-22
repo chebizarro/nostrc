@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import tempfile
 
-PACKAGES = ['nip11', 'nip17', 'nip46', 'nip51', 'nip98']
+PACKAGES = ['nip11', 'nip17', 'nip46', 'nip51', 'nip78', 'nip98']
 
 
 def run(args, **kwargs):
@@ -20,7 +20,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--build', required=True, type=Path)
     parser.add_argument('--shared', action='store_true',
-                        help='also test shared NIP-11/98 without --static')
+                        help='also test shared NIP-11/78/98 without --static')
     parser.add_argument('--sanitize', action='store_true',
                         help='link the consumer with CI ASan/UBSan runtimes')
     args = parser.parse_args()
@@ -55,9 +55,11 @@ def main():
         tmp = Path(tmp)
         source = tmp / 'consumer.c'
         shutil.copyfile(Path(__file__).with_name('nip-consumer.c'), source)
-        modes = [('static', ['--static'], PACKAGES, [])]
+        modes = [('static', ['--static'], PACKAGES, []),
+                 ('nip78-static', ['--static'], ['nip78'], ['-DNIP78_ONLY'])]
         if args.shared:
-            modes.append(('shared', [], ['nip11', 'nip98'], ['-DSHARED_NIPS_ONLY']))
+            modes.append(('shared', [], ['nip11', 'nip78', 'nip98'], ['-DSHARED_NIPS_ONLY']))
+            modes.append(('nip78-shared', [], ['nip78'], ['-DNIP78_ONLY']))
         if (libdir / 'pkgconfig' / 'nip46-glib.pc').is_file():
             assert Path(pc('--variable=prefix', 'nip46-glib')) == prefix
             modes.append(('glib', ['--static'], ['nip46-glib', *PACKAGES], ['-DNIP46_GLIB']))
@@ -83,9 +85,9 @@ def main():
         # Match the repo's pkg-config-backed CMake component convention too.
         (tmp / 'CMakeLists.txt').write_text('''cmake_minimum_required(VERSION 3.22)
 project(installed_nips C)
-find_package(nostrc REQUIRED COMPONENTS nip11 nip17 nip46 nip51 nip98)
+find_package(nostrc REQUIRED COMPONENTS nip11 nip17 nip46 nip51 nip78 nip98)
 add_executable(consumer consumer.c)
-target_link_libraries(consumer PRIVATE nostrc::nip11 nostrc::nip17 nostrc::nip46 nostrc::nip51 nostrc::nip98)
+target_link_libraries(consumer PRIVATE nostrc::nip11 nostrc::nip17 nostrc::nip46 nostrc::nip51 nostrc::nip78 nostrc::nip98)
 ''')
         cmake_flags = ['-DCMAKE_PREFIX_PATH=' + str(prefix)]
         if args.sanitize:
