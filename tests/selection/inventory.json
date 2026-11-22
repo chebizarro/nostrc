@@ -39,7 +39,8 @@
       "working_directory": "{source}",
       "environment": {},
       "runtime_inputs": [
-        "{source}/scripts/test-shell-extension.sh"
+        "{source}/scripts/test-shell-extension.sh",
+        "{source}/gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml"
       ],
       "build_targets": []
     },
@@ -29839,6 +29840,7 @@
       "nodes": [
         "grotto.panels",
         "grotto.gui",
+        "gnome.nostr_shell_extension",
         "selection.contract"
       ],
       "effect": "impact",

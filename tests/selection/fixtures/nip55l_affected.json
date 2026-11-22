@@ -434,6 +434,7 @@
     "desktop.signer.publish",
     "desktop.signer.settings",
     "desktop.signer.share",
+    "gnome.shell_extension",
     "gnostr.signer_adapter",
     "grotto.build_contract",
     "grotto.default_build",
