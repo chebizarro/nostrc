@@ -458,3 +458,11 @@ test('mgmt_ingress_wire', find_program('python3'),
     depends: [signetd_exe, backend_admission_fixture],
     timeout: 45,
   )
+
+# Same deallocation-boundary regression as CMake; compile real management code.
+test_secret_json = executable('test_secret_json',
+  'test_secret_json.c', '../src/secret_json.c',
+  link_with: signet_core, include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args + ['-DSIGNET_ENABLE_TEST_HOOKS=1'], install: false)
+test('secret_json', test_secret_json)

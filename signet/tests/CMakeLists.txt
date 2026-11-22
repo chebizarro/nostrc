@@ -136,6 +136,11 @@ signet_add_test_executable(test_store_lifecycle)          # audit chain, revoke 
 signet_add_test_executable(test_db_migration)             # plaintext -> SQLCipher
 signet_add_test_executable(test_adopt_existing)
 signet_add_test_executable(test_reissue_connect)
+# Test-local observer implementation; production helper has no observer unless
+# the explicit test-hook build is selected. This compiles real management code.
+signet_add_test_executable(test_secret_json test_secret_json.c ../src/secret_json.c)
+target_compile_definitions(test_secret_json PRIVATE SIGNET_ENABLE_TEST_HOOKS=1)
+add_test(NAME secret_json COMMAND test_secret_json)
 signet_add_test_executable(test_mgmt_replay)
 signet_add_test_executable(test_backend_admission)
 signet_add_test_executable(backend_admission_fixture backend_admission_fixture.c)

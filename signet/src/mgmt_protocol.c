@@ -33,6 +33,7 @@
 #include <nostr/nip44/nip44.h>
 #include <nostr/nip19/nip19.h>
 #include <secure_buf.h>
+#include "secret_json.h"
 #include <sodium.h>
 
 #include <limits.h>
@@ -169,7 +170,7 @@ int signet_mgmt_request_parse(SignetMgmtOp op,
     return -1;
   }
 
-  g_autoptr(JsonParser) p = json_parser_new();
+  g_autoptr(SignetSecretJsonParser) p = json_parser_new();
   if (!json_parser_load_from_data(p, content_json, -1, NULL)) {
     if (out_error) *out_error = g_strdup("invalid JSON");
     return -1;
@@ -201,7 +202,7 @@ int signet_mgmt_request_parse(SignetMgmtOp op,
       json_generator_set_pretty(gen, FALSE);
       json_generator_set_root(gen, pn);
       out_req->policy_json = json_generator_to_data(gen, NULL);
-      g_object_unref(gen);
+      signet_secret_json_generator_unref(gen);
     }
   }
 
@@ -424,12 +425,12 @@ char *signet_mgmt_build_ack(const char *request_id,
   }
 
   if (result_json) {
-    g_autoptr(JsonParser) rp = json_parser_new();
+    g_autoptr(SignetSecretJsonParser) rp = json_parser_new();
     if (json_parser_load_from_data(rp, result_json, -1, NULL)) {
       JsonNode *r = json_parser_get_root(rp);
       if (r) {
         json_builder_set_member_name(b, "result");
-        json_builder_add_value(b, json_node_copy(r));
+        json_builder_add_value(b, signet_secret_json_copy(r));
       }
     }
   }
@@ -437,16 +438,16 @@ char *signet_mgmt_build_ack(const char *request_id,
   json_builder_end_object(b);
 
   JsonGenerator *g = json_generator_new();
-  if (!g) { g_object_unref(b); return NULL; }
+  if (!g) { signet_secret_json_builder_unref(b); return NULL; }
 
   JsonNode *root = json_builder_get_root(b);
   json_generator_set_root(g, root);
   json_generator_set_pretty(g, FALSE);
   char *out = json_generator_to_data(g, NULL);
 
-  json_node_free(root);
-  g_object_unref(g);
-  g_object_unref(b);
+  signet_secret_json_node_unref(root);
+  signet_secret_json_generator_unref(g);
+  signet_secret_json_builder_unref(b);
   return out;
 }
 
@@ -886,7 +887,7 @@ static void signet_mgmt_gift_refusal_diag(SignetMgmtHandler *h,NostrEvent *gift)
 static char *signet_mgmt_ack_to_jsonrpc(const char *ack_content,
                                         const JsonNode *rpc_id) {
   if (!ack_content) return NULL;
-  g_autoptr(JsonParser) p = json_parser_new();
+  g_autoptr(SignetSecretJsonParser) p = json_parser_new();
   if (!json_parser_load_from_data(p, ack_content, -1, NULL)) return g_strdup(ack_content);
   JsonNode *root = json_parser_get_root(p);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) return g_strdup(ack_content);
@@ -895,13 +896,13 @@ static char *signet_mgmt_ack_to_jsonrpc(const char *ack_content,
 
   const char *rid = json_object_has_member(o, "request_id") ? json_object_get_string_member(o, "request_id") : NULL;
   bool ok = json_object_has_member(o, "ok") ? json_object_get_boolean_member(o, "ok") : false;
-  g_autoptr(JsonBuilder) b = json_builder_new();
+  g_autoptr(SignetSecretJsonBuilder) b = json_builder_new();
   json_builder_begin_object(b);
   json_builder_set_member_name(b, "jsonrpc"); json_builder_add_string_value(b, "2.0");
   if (ok) {
     json_builder_set_member_name(b, "result");
-    if (json_object_has_member(o, "result")) json_builder_add_value(b, json_node_copy(json_object_get_member(o, "result")));
-    else json_builder_add_value(b, json_node_copy(root));
+    if (json_object_has_member(o, "result")) json_builder_add_value(b, signet_secret_json_copy(json_object_get_member(o, "result")));
+    else json_builder_add_value(b, signet_secret_json_copy(root));
   } else {
     json_builder_set_member_name(b, "error");
     json_builder_begin_object(b);
@@ -914,15 +915,15 @@ static char *signet_mgmt_ack_to_jsonrpc(const char *ack_content,
     json_builder_end_object(b);
   }
   json_builder_set_member_name(b, "id");
-  if (rpc_id) json_builder_add_value(b, json_node_copy((JsonNode *)rpc_id));
+  if (rpc_id) json_builder_add_value(b, signet_secret_json_copy((JsonNode *)rpc_id));
   else if (rid) json_builder_add_string_value(b, rid);
   else json_builder_add_null_value(b);
   json_builder_end_object(b);
   JsonNode *out = json_builder_get_root(b);
-  g_autoptr(JsonGenerator) gen = json_generator_new();
+  g_autoptr(SignetSecretJsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, out); json_generator_set_pretty(gen, FALSE);
   char *s = json_generator_to_data(gen, NULL);
-  json_node_free(out);
+  signet_secret_json_node_unref(out);
   return s;
 }
 
@@ -1103,7 +1104,7 @@ static char *signet_mgmt_contextvm_params_json(const char *content_json,
   if (out_rpc_id) *out_rpc_id = NULL;
   if (!content_json || !content_json[0]) return NULL;
 
-  g_autoptr(JsonParser) p = json_parser_new();
+  g_autoptr(SignetSecretJsonParser) p = json_parser_new();
   if (!json_parser_load_from_data(p, content_json, -1, NULL)) return NULL;
   JsonNode *root = json_parser_get_root(p);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) return NULL;
@@ -1114,7 +1115,7 @@ static char *signet_mgmt_contextvm_params_json(const char *content_json,
     const char *ids = t == G_TYPE_STRING ? json_node_get_string(idn) : NULL;
     if (t == G_TYPE_INT64 ||
         (ids && strlen(ids) <= SIGNET_MGMT_MAX_RPC_ID_LEN))
-      *out_rpc_id = json_node_copy(idn);
+      *out_rpc_id = signet_secret_json_copy(idn);
   }
   const char *method = json_object_has_member(o, "method") ? json_object_get_string_member(o, "method") : NULL;
   SignetMgmtOp op = signet_mgmt_op_from_contextvm_method(method);
@@ -1124,7 +1125,7 @@ static char *signet_mgmt_contextvm_params_json(const char *content_json,
   JsonNode *params = json_object_has_member(o, "params") ? json_object_get_member(o, "params") : NULL;
   JsonObject *po = (params && JSON_NODE_HOLDS_OBJECT(params)) ? json_node_get_object(params) : NULL;
 
-  g_autoptr(JsonBuilder) b = json_builder_new();
+  g_autoptr(SignetSecretJsonBuilder) b = json_builder_new();
   json_builder_begin_object(b);
   if (json_object_has_member(o, "id")) {
     json_builder_set_member_name(b, "request_id");
@@ -1134,7 +1135,7 @@ static char *signet_mgmt_contextvm_params_json(const char *content_json,
     else if (JSON_NODE_HOLDS_VALUE(idn) && json_node_get_value_type(idn) == G_TYPE_INT64)
       json_builder_add_int_value(b, json_node_get_int(idn));
     else
-      json_builder_add_value(b, json_node_copy(idn));
+      json_builder_add_value(b, signet_secret_json_copy(idn));
   }
   if (po && json_object_has_member(po, "agent_id")) {
     json_builder_set_member_name(b, "agent_id");
@@ -1146,7 +1147,7 @@ static char *signet_mgmt_contextvm_params_json(const char *content_json,
   }
   if (po && json_object_has_member(po, "policy")) {
     json_builder_set_member_name(b, "policy");
-    json_builder_add_value(b, json_node_copy(json_object_get_member(po, "policy")));
+    json_builder_add_value(b, signet_secret_json_copy(json_object_get_member(po, "policy")));
   }
   if (po && json_object_has_member(po, "deliver")) {
     json_builder_set_member_name(b, "deliver");
@@ -1212,16 +1213,16 @@ static char *signet_mgmt_contextvm_params_json(const char *content_json,
     /* Verbatim: signet_mgmt_request_parse() rejects a non-integer. */
     json_builder_set_member_name(b, "expected_version");
     json_builder_add_value(
-        b, json_node_copy(json_object_get_member(po, "expected_version")));
+        b, signet_secret_json_copy(json_object_get_member(po, "expected_version")));
   }
   json_builder_end_object(b);
 
   JsonNode *out = json_builder_get_root(b);
-  g_autoptr(JsonGenerator) gen = json_generator_new();
+  g_autoptr(SignetSecretJsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, out);
   json_generator_set_pretty(gen, FALSE);
   char *s = json_generator_to_data(gen, NULL);
-  json_node_free(out);
+  signet_secret_json_node_unref(out);
   return s;
 }
 
@@ -1231,7 +1232,7 @@ static char *signet_mgmt_contextvm_params_json(const char *content_json,
 static char *signet_mgmt_contextvm_error_json(int code, const char *message,
                                               const char *data,
                                               const JsonNode *rpc_id) {
-  g_autoptr(JsonBuilder) b = json_builder_new();
+  g_autoptr(SignetSecretJsonBuilder) b = json_builder_new();
   json_builder_begin_object(b);
   json_builder_set_member_name(b, "jsonrpc");
   json_builder_add_string_value(b, "2.0");
@@ -1245,15 +1246,15 @@ static char *signet_mgmt_contextvm_error_json(int code, const char *message,
   json_builder_add_string_value(b, data);
   json_builder_end_object(b);
   json_builder_set_member_name(b, "id");
-  if (rpc_id) json_builder_add_value(b, json_node_copy((JsonNode *)rpc_id));
+  if (rpc_id) json_builder_add_value(b, signet_secret_json_copy((JsonNode *)rpc_id));
   else json_builder_add_null_value(b);
   json_builder_end_object(b);
   JsonNode *out = json_builder_get_root(b);
-  g_autoptr(JsonGenerator) gen = json_generator_new();
+  g_autoptr(SignetSecretJsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, out);
   json_generator_set_pretty(gen, FALSE);
   char *s = json_generator_to_data(gen, NULL);
-  json_node_free(out);
+  signet_secret_json_node_unref(out);
   return s;
 }
 
@@ -1368,7 +1369,7 @@ out:
     secure_wipe(params_json, strlen(params_json));
     g_free(params_json);
   }
-  if (rpc_id) json_node_unref(rpc_id);
+  if (rpc_id) signet_secret_json_node_unref(rpc_id);
   return rc;
 }
 
@@ -1530,9 +1531,9 @@ static void signet_mgmt_chain_audit_ex(SignetMgmtHandler *h,
         json_generator_set_pretty(gen, FALSE);
         detail = json_generator_to_data(gen, NULL);
       }
-      if (gen) g_object_unref(gen);
-      if (root) json_node_free(root);
-      g_object_unref(b);
+      if (gen) signet_secret_json_generator_unref(gen);
+      if (root) signet_secret_json_node_unref(root);
+      signet_secret_json_builder_unref(b);
     }
   }
   (void)signet_audit_log_append(base_store, now,
@@ -1601,9 +1602,9 @@ static void signet_mgmt_publish_cas_audit(SignetMgmtHandler *h,
         json_generator_set_pretty(agen, FALSE);
         content = json_generator_to_data(agen, NULL);
       }
-      if (agen) g_object_unref(agen);
-      if (aroot) json_node_free(aroot);
-      g_object_unref(ab);
+      if (agen) signet_secret_json_generator_unref(agen);
+      if (aroot) signet_secret_json_node_unref(aroot);
+      signet_secret_json_builder_unref(ab);
     }
   }
   nostr_event_set_content(evt, content ? content : "{}");
@@ -1679,9 +1680,9 @@ static char *signet_mgmt_secret_metadata_json(
     json_generator_set_pretty(gen, FALSE);
     json = json_generator_to_data(gen, NULL);
   }
-  if (gen) g_object_unref(gen);
-  if (root) json_node_free(root);
-  g_object_unref(b);
+  if (gen) signet_secret_json_generator_unref(gen);
+  if (root) signet_secret_json_node_unref(root);
+  signet_secret_json_builder_unref(b);
   return json;
 }
 
@@ -1706,9 +1707,9 @@ static char *signet_mgmt_secret_metadata_list_json(
     json_generator_set_pretty(gen, FALSE);
     json = json_generator_to_data(gen, NULL);
   }
-  if (gen) g_object_unref(gen);
-  if (root) json_node_free(root);
-  g_object_unref(b);
+  if (gen) signet_secret_json_generator_unref(gen);
+  if (root) signet_secret_json_node_unref(root);
+  signet_secret_json_builder_unref(b);
   return json;
 }
 
@@ -2101,7 +2102,7 @@ static int signet_mgmt_handler_handle_request_ex(
           char *escaped_uri = g_strescape(bunker_uri, NULL);
           result = g_strdup_printf("{\"agent_id\":\"%s\",\"pubkey\":\"%s\",\"bunker_uri\":\"%s\"}",
                                    req.agent_id, pubkey_hex, escaped_uri ? escaped_uri : bunker_uri);
-          g_free(escaped_uri);
+          signet_secret_gfree(escaped_uri);
         } else {
           result = g_strdup_printf("{\"agent_id\":\"%s\",\"pubkey\":\"%s\"}", req.agent_id, pubkey_hex);
         }
@@ -2118,11 +2119,11 @@ static int signet_mgmt_handler_handle_request_ex(
             char *old = result;
             result = g_strdup_printf("{\"agent_id\":\"%s\",\"pubkey\":\"%s\",\"bunker_uri\":\"%s\",\"delivered\":true,\"delivery_expires_at\":%" G_GINT64_FORMAT "}",
                                      req.agent_id, pubkey_hex, bunker_uri, (gint64)dm.expires_at);
-            g_free(old);
+            signet_secret_gfree(old);
           }
         }
         signet_mgmt_publish_cas_audit(h, "provision", req.agent_id, "ok", now);
-        g_free(bunker_uri);
+        signet_secret_gfree(bunker_uri);
       } else {
         code = "provision_failed";
         message = g_strdup("failed to provision agent");
@@ -2215,7 +2216,7 @@ static int signet_mgmt_handler_handle_request_ex(
           result = g_strdup_printf(
               "{\"agent_id\":\"%s\",\"pubkey\":\"%s\",\"adopted\":true,\"bunker_uri\":\"%s\"}",
               req.agent_id, pubkey_hex, escaped_uri ? escaped_uri : bunker_uri);
-          g_free(escaped_uri);
+          signet_secret_gfree(escaped_uri);
         } else {
           result = g_strdup_printf(
               restoring
@@ -2237,7 +2238,7 @@ static int signet_mgmt_handler_handle_request_ex(
             result = g_strdup_printf(
                 "{\"agent_id\":\"%s\",\"pubkey\":\"%s\",\"adopted\":true,\"bunker_uri\":\"%s\",\"delivered\":true,\"delivery_expires_at\":%" G_GINT64_FORMAT "}",
                 req.agent_id, pubkey_hex, bunker_uri, (gint64)dm.expires_at);
-            g_free(old);
+            signet_secret_gfree(old);
           }
         }
         signet_mgmt_publish_cas_audit(
@@ -2257,7 +2258,7 @@ static int signet_mgmt_handler_handle_request_ex(
             h, restoring ? "restore_existing" : "adopt_existing",
             req.agent_id, code, now);
       }
-      g_free(bunker_uri);
+      signet_secret_gfree(bunker_uri);
       break;
     }
 
@@ -2445,9 +2446,9 @@ static int signet_mgmt_handler_handle_request_ex(
             json_generator_set_pretty(rgen, FALSE);
             result = json_generator_to_data(rgen, NULL);
           }
-          if (rgen) g_object_unref(rgen);
-          if (rroot) json_node_free(rroot);
-          g_object_unref(rb);
+          if (rgen) signet_secret_json_generator_unref(rgen);
+          if (rroot) signet_secret_json_node_unref(rroot);
+          signet_secret_json_builder_unref(rb);
         }
         signet_mgmt_publish_cas_audit(h, "reissue_connect", req.agent_id,
                                       (strcmp(auth_path, "self") == 0)
@@ -2468,7 +2469,7 @@ static int signet_mgmt_handler_handle_request_ex(
         signet_mgmt_publish_cas_audit(h, "reissue_connect", req.agent_id, "error", now);
       }
       if (fresh_secret) { secure_wipe(fresh_secret, strlen(fresh_secret)); g_free(fresh_secret); }
-      if (bunker_uri) { secure_wipe(bunker_uri, strlen(bunker_uri)); g_free(bunker_uri); }
+      if (bunker_uri) { secure_wipe(bunker_uri, strlen(bunker_uri)); signet_secret_gfree(bunker_uri); }
       break;
     }
 
@@ -2520,9 +2521,9 @@ static int signet_mgmt_handler_handle_request_ex(
           json_generator_set_pretty(lgen, FALSE);
           result = json_generator_to_data(lgen, NULL);
         }
-        if (lgen) g_object_unref(lgen);
-        if (lroot) json_node_free(lroot);
-        g_object_unref(lb);
+        if (lgen) signet_secret_json_generator_unref(lgen);
+        if (lroot) signet_secret_json_node_unref(lroot);
+        signet_secret_json_builder_unref(lb);
       }
       signet_client_binding_list_free(list, count);
       if (result) {
@@ -2751,10 +2752,10 @@ static int signet_mgmt_handler_handle_request_ex(
           json_generator_set_root(gen, root);
           result = json_generator_to_data(gen, NULL);
         }
-        if (gen) g_object_unref(gen);
-        if (root) json_node_free(root);
+        if (gen) signet_secret_json_generator_unref(gen);
+        if (root) signet_secret_json_node_unref(root);
       }
-      if (db) g_object_unref(db);
+      if (db) signet_secret_json_builder_unref(db);
       if (payload_b64) {
         secure_wipe(payload_b64, strlen(payload_b64));
         g_free(payload_b64);
@@ -2887,9 +2888,9 @@ static int signet_mgmt_handler_handle_request_ex(
             json_generator_set_root(gen, root);
             result = json_generator_to_data(gen, NULL);
           }
-          if (gen) g_object_unref(gen);
-          if (root) json_node_free(root);
-          g_object_unref(db);
+          if (gen) signet_secret_json_generator_unref(gen);
+          if (root) signet_secret_json_node_unref(root);
+          signet_secret_json_builder_unref(db);
         }
         if (result) {
           ok = true;

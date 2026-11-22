@@ -236,6 +236,7 @@ typedef struct {
   char client_sk_hex[65];
   char client_pk_hex[65];
   bool cache_only;
+  int64_t request_created_at; /* 0 = use now */
 } N46Fixture;
 
 static void n46_new_server(N46Fixture *f) {
@@ -349,7 +350,7 @@ static bool n46_send_bytes(N46Fixture *f, const char *client_sk, const char *cli
 
   gint ok_before = g_atomic_int_get(&g_signet_metrics.auth_ok);
   (void)signet_nip46_server_handle_event(f->srv, f->bunker_pk_hex, f->bunker_sk_hex,
-                                         client_pk, cipher, now, event_id, now);
+                                         client_pk, cipher, f->request_created_at ? f->request_created_at : now, event_id, now);
   free(cipher);
   return g_atomic_int_get(&g_signet_metrics.auth_ok) > ok_before;
 }
@@ -1332,7 +1333,169 @@ static void test_nip46_replay_capacity(bool cache_only) {
   puts("test_nip46_replay_capacity: PASS");
 }
 
+
+
+
+static void test_replay_refused_pairing(bool cache_only) {
+  N46Fixture f; n46_setup_mode(&f, cache_only);
+  signet_nip46_server_free(f.srv);
+  SignetReplayCacheConfig cfg = {.max_entries = 1, .ttl_seconds = 600,
+    .skew_seconds = 120, .max_entries_per_scope = 1, .refuse_when_full = true};
+  f.replay = signet_replay_cache_new(&cfg); CHECK(f.replay); n46_new_server(&f);
+  int64_t now = time(NULL);
+  const char *codes[] = {"replay_too_old", "replay_in_future", "replay_invalid",
+                         "replay_full", "replay_duplicate"};
+  for (int i = 0; i < 5; i++) {
+    f.request_created_at = i == 0 ? now - 121 : i == 1 ? now + 121 : now;
+    if (i == 3) {
+      /* Fill with a valid but unbound request; no pairing authority is spent. */
+      CHECK(!n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "occupied", now));
+    }
+    CHECK(!n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret",
+                       i == 2 ? NULL : i == 4 ? "occupied" : "refused", now));
+    n46_expect_last_audit(&f, "connect", "error", codes[i]);
+    n46_expect_binding(&f, f.client_pk_hex, NULL, now);
+  }
+  /* Removing just the replay fixture permits exactly the original secret. */
+  signet_nip46_server_free(f.srv);
+  signet_replay_cache_free(f.replay); f.replay = NULL; n46_new_server(&f);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "allowed", now));
+  n46_teardown(&f);
+  printf("test_replay_refused_pairing (%s): PASS\n", n46_mode_name(cache_only));
+}
+
+static bool admit_pairing(const char *agent_id, const char *pubkey, void *data) {
+  CHECK(agent_id && pubkey && strlen(pubkey) == 64);
+  return *(bool *)data;
+}
+
+typedef struct {
+  N46Fixture *f;
+  const char *client;
+  GMutex *mu;
+  GCond *ready;
+  int *waiting;
+  bool *go;
+  int rc;
+} PairRace;
+
+static gpointer pair_racer(gpointer data) {
+  PairRace *w = data;
+  g_mutex_lock(w->mu);
+  ++*w->waiting; g_cond_broadcast(w->ready);
+  while (!*w->go) g_cond_wait(w->ready, w->mu);
+  g_mutex_unlock(w->mu);
+  bool allow = true;
+  char *agent = NULL;
+  w->rc = signet_key_store_admit_connect_client(w->f->ks, "one-time-secret",
+      w->client, time(NULL), admit_pairing, &allow, &agent);
+  CHECK(w->rc != 0 || g_strcmp0(agent, "stew") == 0);
+  g_free(agent);
+  return NULL;
+}
+
+static void test_atomic_pairing_admission(bool cache_only) {
+  N46Fixture f; n46_setup_mode(&f, cache_only);
+  int64_t now = time(NULL);
+  bool allow = false;
+  char *agent = NULL;
+  CHECK(signet_key_store_admit_connect_client(f.ks, "one-time-secret",
+      f.client_pk_hex, now, admit_pairing, &allow, &agent) == 2);
+  CHECK(agent == NULL);
+  n46_expect_binding(&f, f.client_pk_hex, NULL, now);
+  if (!cache_only) {
+    /* A failure after admission must roll back consumption and the binding. */
+    sqlite3 *db = signet_store_get_db(signet_key_store_get_store(f.ks));
+    CHECK(sqlite3_exec(db, "CREATE TEMP TRIGGER refuse_pair BEFORE INSERT ON agent_clients "
+        "BEGIN SELECT RAISE(ABORT, 'injected binding failure'); END;", NULL, NULL, NULL) == SQLITE_OK);
+    allow = true;
+    CHECK(signet_key_store_admit_connect_client(f.ks, "one-time-secret",
+        f.client_pk_hex, now, admit_pairing, &allow, &agent) == -1);
+    CHECK(agent == NULL);
+    n46_expect_binding(&f, f.client_pk_hex, NULL, now);
+    CHECK(sqlite3_exec(db, "DROP TRIGGER refuse_pair;", NULL, NULL, NULL) == SQLITE_OK);
+  }
+  /* Concurrent clients cannot both claim a pending secret. No sleeps/order
+   * assumptions: start both at a condition barrier and inspect final state. */
+  char sk[65], pk[65]; gen_keypair_hex(sk, pk);
+  GMutex mu; GCond ready; g_mutex_init(&mu); g_cond_init(&ready);
+  int waiting = 0; bool go = false;
+  PairRace a = {&f, f.client_pk_hex, &mu, &ready, &waiting, &go, -2};
+  PairRace b = {&f, pk, &mu, &ready, &waiting, &go, -2};
+  GThread *ta = g_thread_new("pair-a", pair_racer, &a);
+  GThread *tb = g_thread_new("pair-b", pair_racer, &b);
+  g_mutex_lock(&mu);
+  while (waiting != 2) g_cond_wait(&ready, &mu);
+  go = true; g_cond_broadcast(&ready); g_mutex_unlock(&mu);
+  g_thread_join(ta); g_thread_join(tb);
+  CHECK((a.rc == 0 && b.rc == 1) || (a.rc == 1 && b.rc == 0));
+  n46_expect_binding(&f, f.client_pk_hex, a.rc == 0 ? "stew" : NULL, now);
+  n46_expect_binding(&f, pk, b.rc == 0 ? "stew" : NULL, now);
+  g_cond_clear(&ready); g_mutex_clear(&mu); sodium_memzero(sk, sizeof(sk));
+  n46_teardown(&f);
+  printf("test_atomic_pairing_admission (%s): PASS\n", n46_mode_name(cache_only));
+}
+
+/* A refusal must not spend pairing authority, including an attempted rebind. */
+static void test_refused_pairing_preserves_secret(bool cache_only, bool policy_deny) {
+  N46Fixture f; n46_setup_mode(&f, cache_only);
+  int64_t now = time(NULL);
+  SignetStore *st = signet_key_store_get_store(f.ks);
+  char *deny_path = NULL;
+  if (!st) {
+    deny_path = make_temp_path("/tmp/signet-test-n46deny-XXXXXX.db");
+    SignetStoreConfig cfg = {.db_path = deny_path, .master_key = MASTER_KEY};
+    st = signet_store_open(&cfg); CHECK(st);
+  }
+  SignetDenyList *deny = signet_deny_list_new(st); CHECK(deny);
+  signet_nip46_server_set_deny_list(f.srv, deny);
+  if (policy_deny) {
+    /* No identity rule: the engine's configured default is DENY. */
+    char sk[65], pk[65]; gen_keypair_hex(sk, pk);
+    n46_adopt(&f, "unlisted", sk, pk, "refused-secret");
+    sodium_memzero(sk, sizeof(sk));
+  } else {
+    CHECK(signet_deny_list_add(deny, f.stew_pk_hex, "stew", "suspended", now) == 0);
+  }
+  const char *secret = policy_deny ? "refused-secret" : "one-time-secret";
+  CHECK(!n46_connect(&f, f.client_sk_hex, f.client_pk_hex, secret, "denied-pair", now));
+  n46_expect_last_audit(&f, "connect", "error", policy_deny ? "policy_denied" : "deny_listed");
+  n46_expect_binding(&f, f.client_pk_hex, NULL, now);
+  if (!cache_only) {
+    SignetAgentRecord rec = {0};
+    CHECK(signet_store_get_agent(st, policy_deny ? "unlisted" : "stew", &rec) == 0);
+    CHECK(rec.connect_secret && strcmp(rec.connect_secret, secret) == 0);
+    signet_agent_record_clear(&rec);
+  }
+  if (!policy_deny) {
+    CHECK(signet_deny_list_remove(deny, f.stew_pk_hex) == 0);
+    /* Lifting suspension must not activate a binding left by the refusal. */
+    CHECK(!n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "no-binding", now));
+    CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, secret, "allowed-pair", now));
+  } else {
+    /* The cache-only secret is also still pending: explicit lower-layer pairing
+     * demonstrates preservation without changing the policy under test. */
+    char *agent = NULL;
+    int rc = cache_only
+      ? signet_key_store_ephemeral_pair_client(f.ks, secret, f.client_pk_hex, &agent)
+      : signet_store_consume_connect_secret_and_bind(st, secret, f.client_pk_hex, now, &agent);
+    CHECK(rc == 0 && g_strcmp0(agent, "unlisted") == 0); g_free(agent);
+  }
+  signet_nip46_server_set_deny_list(f.srv, NULL);
+  signet_deny_list_free(deny);
+  if (deny_path) { signet_store_close(st); unlink(deny_path); g_free(deny_path); }
+  n46_teardown(&f);
+  printf("test_refused_pairing_preserves_secret (%s, %s): PASS\n",
+         n46_mode_name(cache_only), policy_deny ? "policy" : "deny-list");
+}
+
 int main(void) {
+  for (int mode = 0; mode <= 1; mode++) {
+    test_refused_pairing_preserves_secret(mode != 0, false);
+    test_refused_pairing_preserves_secret(mode != 0, true);
+    test_atomic_pairing_admission(mode != 0);
+    test_replay_refused_pairing(mode != 0);
+  }
   test_nip46_replay_capacity(false);
   test_nip46_replay_capacity(true);
   if (sodium_init() < 0) {

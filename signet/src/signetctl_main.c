@@ -7,6 +7,7 @@
  */
 
 #include "secret_input.h"
+#include "secret_json.h"
 #include "signet/signet_config.h"
 #include "signet/mgmt_protocol.h"
 #include "signet/relay_pool.h"
@@ -169,31 +170,6 @@ static const char *signetctl_contextvm_method(SignetMgmtOp op) {
   }
 }
 
-static void signetctl_wipe_json(JsonNode *node) {
-  if (!node) return;
-  if (JSON_NODE_HOLDS_VALUE(node) && json_node_get_value_type(node) == G_TYPE_STRING) {
-    const char *s = json_node_get_string(node);
-    if (s) secure_wipe((void *)s, strlen(s));
-  } else if (JSON_NODE_HOLDS_OBJECT(node)) {
-    JsonObject *object = json_node_get_object(node);
-    GList *members = json_object_get_members(object);
-    for (GList *it = members; it; it = it->next)
-      signetctl_wipe_json(json_object_get_member(object, it->data));
-    g_list_free(members);
-  } else if (JSON_NODE_HOLDS_ARRAY(node)) {
-    JsonArray *array = json_node_get_array(node);
-    for (guint i = 0; i < json_array_get_length(array); i++)
-      signetctl_wipe_json(json_array_get_element(array, i));
-  }
-}
-
-typedef JsonParser SignetSecretJsonParser;
-static void signetctl_secret_parser_free(SignetSecretJsonParser *parser) {
-  signetctl_wipe_json(json_parser_get_root(parser));
-  g_object_unref(parser);
-}
-G_DEFINE_AUTOPTR_CLEANUP_FUNC(SignetSecretJsonParser, signetctl_secret_parser_free)
-
 /* Build a Cascadia ContextVM JSON-RPC 2.0 intent:
  *   {"jsonrpc":"2.0","id":"<request_id>","method":"agent/...","params":{...}}
  * This is the kind-25910 CAS_INTENT payload the daemon parses. */
@@ -282,7 +258,7 @@ static char *signetctl_build_intent(SignetMgmtOp op, const char *agent_id, const
       JsonNode *proot = json_parser_get_root(policy_parser);
       if (proot && JSON_NODE_HOLDS_OBJECT(proot)) {
         json_builder_set_member_name(b, "policy");
-        json_builder_add_value(b, json_node_copy(proot));
+        json_builder_add_value(b, signet_secret_json_copy(proot));
       }
     }
   }
@@ -290,15 +266,15 @@ static char *signetctl_build_intent(SignetMgmtOp op, const char *agent_id, const
   json_builder_end_object(b); /* root */
 
   JsonGenerator *gen = json_generator_new();
-  if (!gen) { g_object_unref(b); return NULL; }
+  if (!gen) { signet_secret_json_builder_unref(b); return NULL; }
   JsonNode *root = json_builder_get_root(b);
   json_generator_set_root(gen, root);
   json_generator_set_pretty(gen, FALSE);
   char *out = json_generator_to_data(gen, NULL);
-  signetctl_wipe_json(root);
+  signet_secret_json_wipe(root);
   json_node_free(root);
-  g_object_unref(gen);
-  g_object_unref(b);
+  signet_secret_json_generator_unref(gen);
+  signet_secret_json_builder_unref(b);
   return out;
 }
 

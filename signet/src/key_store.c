@@ -1172,9 +1172,11 @@ int signet_key_store_get_bound_pubkey(SignetKeyStore *ks, const char *agent_id,
       bound_secret_hash, generation, signet_bound_pubkey_callback, &work);
 }
 
-int signet_key_store_ephemeral_pair_client(SignetKeyStore *ks,
+static int signet_key_store_pair_client(SignetKeyStore *ks,
                                            const char *connect_secret,
                                            const char *client_pubkey_hex,
+                                           int64_t now,
+                                           SignetConnectAdmissionFn admit, void *data,
                                            char **out_agent_id) {
   if (out_agent_id) *out_agent_id = NULL;
   if (!ks || !connect_secret || !connect_secret[0] || !out_agent_id) return -1;
@@ -1186,9 +1188,11 @@ int signet_key_store_ephemeral_pair_client(SignetKeyStore *ks,
 
   g_mutex_lock(&ks->mu);
   if (ks->store) {
+    int rc = admit ? signet_store_admit_connect_client(ks->store, connect_secret,
+                          client, now, admit, data, out_agent_id) : -1;
     g_mutex_unlock(&ks->mu);
     sodium_memzero(hash, sizeof(hash));
-    return -1;
+    return rc;
   }
 
   /* Find the one agent holding this pending secret. Adopt/provision keep the
@@ -1212,6 +1216,13 @@ int signet_key_store_ephemeral_pair_client(SignetKeyStore *ks,
     return 1;
   }
 
+  /* No digest is erased and no binding is installed until admission. */
+  if (admit && !admit(match_id, match->pubkey_hex, data)) {
+    g_mutex_unlock(&ks->mu);
+    sodium_memzero(hash, sizeof(hash));
+    return 2;
+  }
+
   SignetEphemeralBinding *b = g_new0(SignetEphemeralBinding, 1);
   b->agent_id = g_strdup(match_id);
   b->generation = match->generation;
@@ -1228,6 +1239,20 @@ int signet_key_store_ephemeral_pair_client(SignetKeyStore *ks,
 
   *out_agent_id = agent_copy;
   return 0;
+}
+
+int signet_key_store_admit_connect_client(SignetKeyStore *ks, const char *secret,
+                                          const char *client, int64_t now,
+                                          SignetConnectAdmissionFn admit, void *data,
+                                          char **out_agent_id) {
+  if (out_agent_id) *out_agent_id = NULL;
+  if (!admit) return -1;
+  return signet_key_store_pair_client(ks, secret, client, now, admit, data, out_agent_id);
+}
+
+int signet_key_store_ephemeral_pair_client(SignetKeyStore *ks, const char *secret,
+                                           const char *client, char **out_agent_id) {
+  return signet_key_store_pair_client(ks, secret, client, 0, NULL, NULL, out_agent_id);
 }
 
 unsigned int signet_key_store_ephemeral_binding_count(SignetKeyStore *ks) {
