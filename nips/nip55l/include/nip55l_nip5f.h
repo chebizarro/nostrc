@@ -31,6 +31,11 @@ NOSTR_NIP55L_SERVICE_API void     nip55l_nip5f_stop(void);
  * returns TRUE. */
 NOSTR_NIP55L_SERVICE_API gboolean nip55l_nip5f_serve_unidentified(int fd);
 
+/* As above, calling @closed(@data) once on the connection thread during teardown.
+ * Ownership of @data transfers only on TRUE. No callback is made on FALSE. */
+NOSTR_NIP55L_SERVICE_API gboolean nip55l_nip5f_serve_unidentified_full(
+    int fd, GDestroyNotify closed, gpointer data);
+
 G_END_DECLS
 
 #endif /* NIP55L_NIP5F_H */

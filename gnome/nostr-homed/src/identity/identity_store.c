@@ -971,6 +971,47 @@ static nh_identity_rc insert_operation(nh_identity_store *store,
   return nh_identity_sqlite_result(store, rc, "insert operation");
 }
 
+/* Bypass NSS: querying getpwuid() here can recurse into libnss_nostr.
+ * This check is mandatory for every authority caller, including seeders whose
+ * ownership probe only checks private-home ownership. */
+static nh_identity_ownership_result local_uid_ownership(uint32_t uid) {
+  FILE *file = fopen("/etc/passwd", "r");
+  if (!file) return NH_IDENTITY_OWNERSHIP_ERROR;
+  char *line = NULL;
+  size_t capacity = 0;
+  nh_identity_ownership_result result = NH_IDENTITY_OWNERSHIP_FREE;
+  /* Parse the UID field directly: fgetpwent() returns shared static storage. */
+  while (getline(&line, &capacity, file) >= 0) {
+    if (line[0] == '#' || line[0] == '\n') continue;
+    char *name_end = strchr(line, ':');
+    char *password_end = name_end ? strchr(name_end + 1, ':') : NULL;
+    char *uid_end = password_end ? strchr(password_end + 1, ':') : NULL;
+    if (!uid_end || ((password_end[1] < '0' || password_end[1] > '9') &&
+                     password_end[1] != '-')) {
+      result = NH_IDENTITY_OWNERSHIP_ERROR;
+      break;
+    }
+    char *end;
+    errno = 0;
+    /* macOS files may spell nobody's uid as -2. Preserve uid_t's
+     * 32-bit representation without treating it as an available ID. */
+    long long value = strtoll(password_end + 1, &end, 10);
+    if (errno || end != uid_end || value < INT32_MIN || value > UINT32_MAX) {
+      result = NH_IDENTITY_OWNERSHIP_ERROR;
+      break;
+    }
+    if ((uint32_t)value == uid) {
+      result = NH_IDENTITY_OWNERSHIP_IN_USE;
+      break;
+    }
+  }
+  if (ferror(file) || (result == NH_IDENTITY_OWNERSHIP_FREE && !feof(file)))
+    result = NH_IDENTITY_OWNERSHIP_ERROR;
+  free(line);
+  fclose(file);
+  return result;
+}
+
 static nh_identity_rc find_available_id(nh_identity_store *store,
                                         const char *username,
                                         uint32_t *out) {
@@ -991,6 +1032,11 @@ static nh_identity_rc find_available_id(nh_identity_store *store,
     if (rc == SQLITE_OK) rc = sqlite3_step(statement);
     if (rc == SQLITE_ROW) continue;
     if (rc != SQLITE_DONE) { sqlite3_finalize(statement); return nh_identity_sqlite_result(store, rc, "scan allocation"); }
+    ownership = local_uid_ownership((uint32_t)candidate);
+    if (ownership == NH_IDENTITY_OWNERSHIP_ERROR) {
+      sqlite3_finalize(statement); return NH_IDENTITY_OWNERSHIP_CHECK_FAILED;
+    }
+    if (ownership != NH_IDENTITY_OWNERSHIP_FREE) continue;
     ownership = store->ownership_probe(store->ownership_probe_context, username,
                                        (uint32_t)candidate, (uint32_t)candidate);
     if (ownership == NH_IDENTITY_OWNERSHIP_ERROR) {

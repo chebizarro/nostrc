@@ -80,6 +80,7 @@ extern int gnostr_uds_sockd_start(const char *socket_path, GError **error);
 extern void gnostr_uds_sockd_stop(void);
 
 struct GnostrIpcServer {
+  gint refs; /* owner plus each successfully handed-off TCP connection */
   enum { IPC_NONE=0, IPC_UNIX, IPC_TCP, IPC_NPIPE } kind;
   gchar *endpoint;
   GMutex stats_mutex;
@@ -226,10 +227,27 @@ static void ipc_stats_cleanup(GnostrIpcServer *srv) {
   g_mutex_clear(&srv->stats_mutex);
 }
 
+static void ipc_server_unref(GnostrIpcServer *srv) {
+  if (!g_atomic_int_dec_and_test(&srv->refs)) return;
+  ipc_stats_cleanup(srv);
+  g_free(srv->endpoint);
+  g_free(srv);
+}
+
+#ifdef GNOSTR_ENABLE_TCP_IPC
+static void tcp_connection_closed(gpointer data) {
+  GnostrIpcServer *srv = data;
+  g_atomic_int_dec_and_test(&srv->active_connections);
+  ipc_stats_connection_closed(srv);
+  ipc_server_unref(srv);
+}
+#endif
+
 GnostrIpcServer* gnostr_ipc_server_start(const char *endpoint, GError **error) {
   const char *ep = endpoint;
   g_autofree gchar *ep_alloc = NULL;
   GnostrIpcServer *srv = g_new0(GnostrIpcServer, 1);
+  srv->refs = 1;
   ipc_stats_init(srv);
   if (!ep || !*ep) {
 #ifdef G_OS_UNIX
@@ -543,17 +561,20 @@ void gnostr_ipc_server_stop(GnostrIpcServer *srv) {
   
   // Log final statistics
   if (srv->stats) {
-    gint64 uptime = (g_get_monotonic_time() - srv->stats->start_time) / 1000000;
+    g_mutex_lock(&srv->stats_mutex);
+    IpcStats stats = *srv->stats;
+    g_mutex_unlock(&srv->stats_mutex);
+    gint64 uptime = (g_get_monotonic_time() - stats.start_time) / 1000000;
     g_message("ipc server stats: uptime=%" G_GINT64_FORMAT "s, "
               "total_connections=%" G_GUINT64_FORMAT ", "
               "active_connections=%" G_GUINT64_FORMAT ", "
               "total_requests=%" G_GUINT64_FORMAT ", "
               "total_errors=%" G_GUINT64_FORMAT,
               uptime,
-              srv->stats->connections_total,
-              srv->stats->connections_active,
-              srv->stats->requests_total,
-              srv->stats->errors_total);
+              stats.connections_total,
+              stats.connections_active,
+              stats.requests_total,
+              stats.errors_total);
   }
   
   if (srv->kind == IPC_UNIX) {
@@ -614,9 +635,7 @@ void gnostr_ipc_server_stop(GnostrIpcServer *srv) {
   }
 #endif
 
-  ipc_stats_cleanup(srv);
-  g_clear_pointer(&srv->endpoint, g_free);
-  g_free(srv);
+  ipc_server_unref(srv);
   g_message("ipc server stopped");
 }
 
@@ -735,9 +754,11 @@ static gpointer tcp_ipc_accept_thread(gpointer data) {
     /* Same gate as the Unix socket and D-Bus; a TCP peer has no kernel
      * credentials, so it is unidentified: prompted every time, never
      * remembered (nostrc-q23h). */
-    if (nip55l_nip5f_serve_unidentified(cfd)) {
+    g_atomic_int_inc(&s->refs);
+    if (nip55l_nip5f_serve_unidentified_full(cfd, tcp_connection_closed, s)) {
       g_message("tcp: serving connection (unidentified caller)");
     } else {
+      ipc_server_unref(s); /* no callback on failed handoff */
       g_warning("tcp: failed to create handler thread");
       close(cfd);
       g_atomic_int_dec_and_test(&s->active_connections);
