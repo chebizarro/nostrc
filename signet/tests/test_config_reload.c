@@ -738,6 +738,27 @@ static void test_adoption_write_failure_retries(void) {
 
 /* --------------------------------- main ---------------------------------- */
 
+static void test_production_relays_require_tls(void) {
+  char *path = tmp_path("relay-tls.ini");
+  write_config(path, "ws://127.0.0.1:1,wss://relay.example", PK_A);
+  SignetConfig cfg; char error[256];
+  CHECK(signet_config_load(path, &cfg) == 0);
+  g_setenv("SIGNET_REQUIRE_ENCRYPTED_DB", "true", TRUE);
+  CHECK(signet_config_validate(&cfg, error, sizeof(error)) != 0);
+  CHECK(strstr(error, "requires wss://"));
+  g_setenv("SIGNET_REQUIRE_ENCRYPTED_DB", "false", TRUE);
+  CHECK(signet_config_validate(&cfg, error, sizeof(error)) == 0);
+  signet_config_clear(&cfg);
+  write_config(path, "wss://relay.example", PK_A);
+  g_setenv("SIGNET_REQUIRE_ENCRYPTED_DB", "true", TRUE);
+  CHECK(signet_config_load(path, &cfg) == 0);
+  CHECK(signet_config_validate(&cfg, error, sizeof(error)) == 0);
+  signet_config_clear(&cfg);
+  g_unsetenv("SIGNET_REQUIRE_ENCRYPTED_DB");
+  unlink(path); g_free(path);
+  puts("test_production_relays_require_tls: PASS");
+}
+
 static void test_protected_passkey_psk(void) {
   char *key = tmp_path("psk"), *link = tmp_path("psk-link"), *path = tmp_path("psk.ini");
   write_file(key, MASTER_KEY "\n");
@@ -789,6 +810,7 @@ int main(void) {
   g_setenv("SIGNET_BUNKER_NSEC_FILE", nsec_path, TRUE);
 
   printf("test_config_reload:\n");
+  test_production_relays_require_tls();
   test_protected_passkey_psk();
   test_adoption_write_failure_retries();
   test_signed_d2_writeback();

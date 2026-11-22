@@ -448,3 +448,8 @@ plaintext copy and any separately retained legacy copies. Unlinking is not a
 secure erase guarantee on SSD, copy-on-write or snapshot storage; handle those
 copies under the storage owner's secure-deletion policy. Do not restart the
 production service until plaintext copies are dealt with.
+
+Production configuration (`SIGNET_REQUIRE_ENCRYPTED_DB=true`) requires `wss://`
+relay URLs, as does deployment preflight. Local development can explicitly set
+`SIGNET_REQUIRE_ENCRYPTED_DB=false` to use a loopback `ws://` fixture; this is
+not a production deployment profile.

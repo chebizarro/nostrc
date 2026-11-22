@@ -45,6 +45,11 @@ with tempfile.TemporaryDirectory(prefix='signet-startup-') as tmp:
     assert audit_target.read_text() == 'untouched'
     assert not db.exists(), 'unsafe audit refusal happened after store creation'
     config()
+    cfg.write_text(cfg.read_text().replace('wss://127.0.0.1:1', 'ws://127.0.0.1:1'))
+    output = refused('plaintext production relay')
+    assert b'requires wss://' in output, output
+    assert not db.exists(), 'plaintext relay refusal happened after store creation'
+    config()
     refused('empty master key', overrides={'SIGNET_DB_KEY_FILE':'', 'SIGNET_DB_KEY':''})
     refused('unavailable master key file', overrides={'SIGNET_DB_KEY_FILE':str(root/'absent')})
     refused('ambiguous master key', overrides={'SIGNET_DB_KEY':'value-must-not-be-logged'})

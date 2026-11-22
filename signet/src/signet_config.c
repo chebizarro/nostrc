@@ -865,6 +865,16 @@ int signet_config_validate(const SignetConfig *cfg, char *err_buf, size_t err_bu
     return -1;
   }
 
+  if (signet_config_encrypted_required()) {
+    for (size_t i = 0; i < cfg->n_relays; ++i) {
+      if (!cfg->relays[i] || !g_str_has_prefix(cfg->relays[i], "wss://") || !cfg->relays[i][6]) {
+        if (err_buf && err_buf_len > 0)
+          snprintf(err_buf, err_buf_len, "encrypted production mode requires wss:// relays");
+        return -1;
+      }
+    }
+  }
+
   /* DB path must be non-empty. */
   if (!cfg->db_path[0]) {
     if (err_buf && err_buf_len > 0)

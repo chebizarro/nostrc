@@ -87,6 +87,21 @@ class DeploymentContracts(unittest.TestCase):
         for relative in ('signet/Dockerfile', '.github/workflows/signet-ci.yml'):
             self.assertIn('libyaml-dev', (ROOT / relative).read_text(), relative)
 
+    def test_preflight_refuses_plaintext_relays(self):
+        with tempfile.TemporaryDirectory() as t:
+            home = Path(t)
+            (home / 'config').mkdir()
+            (home / 'secrets').mkdir()
+            for name in ('db.key', 'bunker.nsec', 'backup.key'):
+                (home / 'secrets' / name).write_text('fixture')
+            (home / 'config/signet.conf').write_text('[nostr]\nrelays=wss://relay.example,ws://127.0.0.1:1\n')
+            with patch.object(ops, 'HOME', home), patch.object(ops, 'bundle', return_value=(home, {}, {})), \
+                 patch.object(ops, 'storage'), patch.object(ops, 'owned'), patch.object(ops, 'run'), \
+                 patch.object(ops, 'compose') as compose:
+                with self.assertRaisesRegex(RuntimeError, 'production requires wss:// relays'):
+                    ops.preflight(starting=False, images=False)
+                compose.assert_not_called()
+
     def test_secret_environment_refused(self):
         with tempfile.TemporaryDirectory() as t:
             p = Path(t) / 'deploy.env'

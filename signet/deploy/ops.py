@@ -226,6 +226,9 @@ def preflight(path=None, starting=True, images=True):
     for section in cfg.sections():
         for name in ('sync_key', 'bunker_nsec', 'master_key', 'db_key', 'backup_key', 'provisioner_nsec'):
             require(not cfg.get(section, name, fallback='').strip(), 'secret value in non-secret config; use mounted files')
+    relays = [url.strip() for url in cfg.get('nostr', 'relays', fallback='').split(',') if url.strip()]
+    require(relays and all(url.startswith('wss://') and len(url) > 6 for url in relays),
+            'production requires wss:// relays')
     require(0 < cfg.getint('replay', 'skew_seconds', fallback=120) <= 120,
             'production replay skew must be bounded to 1..120 seconds')
     require(cfg.getint('replay', 'max_entries', fallback=50000) > 0,
