@@ -1675,6 +1675,26 @@ MARMOT_API MarmotError marmot_process_message(Marmot *m,
                                     const char *group_event_json,
                                     MarmotMessageResult *result);
 
+/** Scheduling metadata, not sender authentication or message admission. */
+typedef struct {
+    uint64_t epoch;
+    uint8_t state_tag[32];
+    uint32_t sender_leaf;
+    uint32_t generation;
+} MarmotMessageOrder;
+
+/**
+ * Inspect application sender data using current/retained group secrets, without
+ * consuming keys, marking processed events, writing storage or changing state.
+ * Useful for ordering equal-second backfill before marmot_process_message().
+ * This does NOT authenticate the sender or envelope; every event must still go
+ * through normal processing. An unavailable epoch or non-application message
+ * returns an error and must remain eligible for normal processing/retry.
+ */
+MARMOT_API MarmotError marmot_inspect_message_order(Marmot *m, const MarmotGroupId *gid,
+                                                   const char *event_json,
+                                                   MarmotMessageOrder *out);
+
 /**
  * marmot_process_rumor_message:
  * @m: Marmot instance

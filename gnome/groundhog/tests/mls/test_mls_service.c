@@ -2197,6 +2197,111 @@ stored_by_id(WireRelay *relay, const gchar *id)
   g_assert_not_reached();
 }
 
+static void
+assert_order_inspection_read_only(App *app, GhMlsGroup *group, Backlog *backlog)
+{
+  Marmot *m = gh_mls_service_get_marmot(app->service);
+  const gchar *hex = gh_mls_group_get_group_id(group);
+  g_autofree guint8 *bytes = g_malloc(strlen(hex) / 2);
+  g_assert_true(nostr_hex2bin(bytes, hex, strlen(hex) / 2));
+  MarmotGroupId gid = { .data = bytes, .len = strlen(hex) / 2 };
+  const gchar *labels[] = { "mls_group", "mls_group_parent" };
+  uint8_t *before[2] = { NULL, NULL };
+  size_t len[2] = { 0, 0 };
+  MarmotError errors[2];
+  for (guint i = 0; i < 2; i++)
+    errors[i] = m->storage->mls_load(m->storage->ctx, labels[i], gid.data, gid.len,
+                                    &before[i], &len[i]);
+  guint seen = 0;
+  MarmotMessageOrder previous = { 0 };
+  for (guint i = 0; i < backlog->ids->len; i++) {
+    const gchar *json = stored_by_id(&app->world->g, g_ptr_array_index(backlog->ids, i))->json;
+    MarmotMessageOrder order;
+    if (marmot_inspect_message_order(m, &gid, json, &order) != MARMOT_OK)
+      continue; /* the Commit is not an application */
+    MarmotMessageOrder again;
+    g_assert_cmpint(marmot_inspect_message_order(m, &gid, json, &again), ==, MARMOT_OK);
+    g_assert_cmpmem(&again, sizeof(again), &order, sizeof(order));
+    if (seen++) {
+      g_assert_cmpuint(order.sender_leaf, ==, previous.sender_leaf);
+      g_assert_cmpuint(order.epoch, ==, previous.epoch);
+      g_assert_cmpuint(order.generation, ==, previous.generation + 1);
+    }
+    previous = order;
+  }
+  g_assert_cmpuint(seen, ==, 80);
+  for (guint i = 0; i < 2; i++) {
+    uint8_t *after = NULL;
+    size_t after_len = 0;
+    g_assert_cmpint(m->storage->mls_load(m->storage->ctx, labels[i], gid.data, gid.len,
+                                         &after, &after_len), ==, errors[i]);
+    g_assert_cmpmem(before[i], len[i], after, after_len);
+    if (before[i]) sodium_memzero(before[i], len[i]);
+    if (after) sodium_memzero(after, after_len);
+    free(before[i]);
+    free(after);
+  }
+}
+
+/* A relay may interleave equal-second events arbitrarily. Reversing its
+ * arrival order is not sender-generation ordering: 80 exceeds the retained
+ * skipped-key window of 32. Run both in the joined epoch and beyond a Commit. */
+static void
+test_same_second_generations(gconstpointer data)
+{
+  guint scenario = GPOINTER_TO_UINT(data);
+  guint commits = scenario ? 1 : 0;
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Same second", (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  g_autofree gchar *h = g_strdup(h_of(last_stored_445(&w.g)));
+  join(bob, ALICE);
+  gh_clock_unref(bob->clock);
+  bob->clock = gh_clock_new_fake(g_get_real_time() + (gint64)24 * 3600 * G_USEC_PER_SEC);
+  app_restart(bob);
+  GhMlsGroup *gb = gh_mls_service_lookup(bob->service, room);
+  wait_live(gb);
+  set_online(bob, FALSE);
+  w.g.withhold_new = TRUE;
+  Backlog backlog;
+  make_backlog(&w, alice, ga, h, commits ? 0 : 80, commits, 80, &backlog);
+  assert_order_inspection_read_only(alice, ga, &backlog);
+  StoredCount tail = { &w.g, h, w.g.stored->len, 1 };
+  send_text(alice, ga, "same-second tail");
+  /* Publish completion, not a guessed delay. */
+  wait_stored_text(alice, room, "same-second tail");
+  spin_until(stored_reached, &tail, "tail at relay");
+  g_autofree gchar *tail_json = g_strdup(last_stored_445(&w.g)->json);
+  w.g.withhold_new = FALSE;
+  w.g.same_second_insertion_order = TRUE;
+  gint64 second = real_now() + 5;
+  for (guint i = 0; i < backlog.ids->len; i++) {
+    if (scenario == 2 && i == 0)
+      continue; /* place the Commit in the middle of its equal-second apps */
+    if (scenario == 2 && i == 41) {
+      g_autofree gchar *commit = resigned(stored_by_id(&w.g, backlog.first_commit)->json, second);
+      wire_relay_inject(&w.g, commit);
+    }
+    g_autofree gchar *copy = resigned(stored_by_id(&w.g, g_ptr_array_index(backlog.ids, i))->json,
+                                      second);
+    wire_relay_inject(&w.g, copy);
+  }
+  g_autofree gchar *copy = resigned(tail_json, second + 1);
+  wire_relay_inject(&w.g, copy);
+  set_online(bob, TRUE);
+  wait_stored_text(bob, room, "same-second tail");
+  wait_live(gb);
+  TextsWait all = { bob, room, backlog.texts, 0 };
+  g_assert_true(texts_listed(&all));
+  backlog_clear(&backlog);
+  world_down(&w);
+}
+
 /* REQs for kind 445 that page backwards (carry until). */
 static guint
 paged_reqs(WireRelay *relay)
@@ -5094,6 +5199,9 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/busy-group-stalled-relay",
                   test_busy_group_stalled_relay);
   g_test_add_func("/groundhog/mls-service/stale-welcome", test_stale_welcome);
+  g_test_add_data_func("/groundhog/mls-service/same-second-generations", GUINT_TO_POINTER(0), test_same_second_generations);
+  g_test_add_data_func("/groundhog/mls-service/same-second-after-commit", GUINT_TO_POINTER(1), test_same_second_generations);
+  g_test_add_data_func("/groundhog/mls-service/same-second-mixed-held-backfill", GUINT_TO_POINTER(2), test_same_second_generations);
   g_test_add_func("/groundhog/mls-service/catch-up-over-200", test_catch_up_over_200);
   g_test_add_func("/groundhog/mls-service/join-commit-pins-no-cursor",
                   test_join_commit_pins_no_cursor);

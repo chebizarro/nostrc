@@ -149,6 +149,8 @@ struct _GhMlsGroup {
   gint64 floor;              /* when the account joined (or made) the group; 0: unknown */
   gboolean retrying;         /* retry_held() runs: a nested Commit only asks again */
   gboolean retry_again;
+  guint64 order_revision; /* canonical state/secrets changed, including same-epoch reorg */
+  guint backfill_draining; /* held and buffered apps share one generation-ordered pass */
   gint64 retained_retry_us;  /* the last retry for a retained Commit (monotonic) */
   guint retained_source;     /* a retry for retained Commits, coalesced (W25 review M1) */
   /* Changes: the Commit being published, and who waits for it. */
@@ -487,11 +489,48 @@ gh_mls_read_state_get_type(void)
 
 /* ---- Held events (a later epoch) -------------------------------------------------------- */
 
+/* Metadata is a scheduling hint only. Admission/authentication still belongs to
+ * process_event(). Failed peeks are retried only after new secrets arrive. */
+typedef struct {
+  MarmotMessageOrder key;
+  guint64 revision;
+  gboolean inspected, known;
+} EventOrder;
+
+static void
+inspect_event_order(GhMlsGroup *group, const gchar *json, EventOrder *order)
+{
+  if (order->known || (order->inspected && order->revision == group->order_revision))
+    return;
+  order->inspected = TRUE;
+  order->revision = group->order_revision;
+  order->known = marmot_inspect_message_order(group->service->marmot, &group->gid,
+                                             json, &order->key) == MARMOT_OK;
+}
+
+static gint
+compare_event_order(const EventOrder *x, const EventOrder *y)
+{
+  if (x->known != y->known)
+    return x->known ? -1 : 1; /* this epoch's applications before its closing Commit */
+  if (!x->known)
+    return 0;
+  if (x->key.epoch != y->key.epoch)
+    return x->key.epoch < y->key.epoch ? -1 : 1;
+  gint tag = memcmp(x->key.state_tag, y->key.state_tag, 32);
+  if (tag) return tag;
+  if (x->key.sender_leaf != y->key.sender_leaf)
+    return x->key.sender_leaf < y->key.sender_leaf ? -1 : 1;
+  return x->key.generation < y->key.generation ? -1 :
+         x->key.generation > y->key.generation;
+}
+
 /* A kind 445 that could not be decrypted yet. */
 typedef struct {
   gchar *id;
   gchar *json;
   gint64 created_at;   /* bounded to now + skew */
+  EventOrder order;
   guint64 epoch;       /* the group's epoch when it was held: it ages by tip advances */
   gboolean shown;      /* makes decrypt-pending (not the join second's stored answer) */
   gint64 held_us;      /* when it was first held (monotonic) */
@@ -516,8 +555,11 @@ held_free(gpointer data)
  * relay's EOSE (nostrc-cpwf). */
 typedef struct {
   gchar *json;
+  gchar *id;
   gchar *url;
   gint64 created_at;
+  EventOrder order;
+  Held *retry;         /* a held event temporarily joined to the same ordered pass */
   guint seq;           /* arrival order */
   gboolean stored;     /* of a stored answer or a page, not live (GhRelayUpdate.backfill) */
 } Stored;
@@ -527,7 +569,9 @@ stored_free(gpointer data)
 {
   Stored *stored = data;
   g_free(stored->json);
+  g_free(stored->id);
   g_free(stored->url);
+  if (stored->retry) held_free(stored->retry);
   g_free(stored);
 }
 
@@ -2340,7 +2384,9 @@ static gint
 held_older_first(gconstpointer a, gconstpointer b)
 {
   const Held *x = a, *y = b;
-  return x->created_at < y->created_at ? -1 : x->created_at > y->created_at;
+  if (x->created_at != y->created_at)
+    return x->created_at < y->created_at ? -1 : 1;
+  return compare_event_order(&x->order, &y->order);
 }
 
 /* Held events, again after a Commit moved the group on (review N1, N2).
@@ -2351,9 +2397,9 @@ held_older_first(gconstpointer a, gconstpointer b)
  * events oldest first, so an epoch's messages are tried before the Commit
  * that closes it; a whole newest-first backlog resolves in one call. Once a
  * Commit applied, a pass ends with that Commit's own second (the rest waits
- * for the next pass, oldest first again). Inside one second the order is
- * the relay's, not the sender's: a message of the new epoch may have come
- * before the Commit, and reading the epoch's later seconds first would move
+ * for the next pass, oldest first again). Inside one second sender-data
+ * metadata orders each sender's generations, refreshed after new secrets
+ * arrive. Reading the epoch's later seconds first would move
  * the sender's ratchet past libmarmot's window of skipped keys (32) before
  * it is tried again (nostrc-kzun); the rest of that second is still tried,
  * as it may hold the closing epoch's messages.
@@ -2371,7 +2417,7 @@ held_older_first(gconstpointer a, gconstpointer b)
 static void
 retry_held(GhMlsGroup *group)
 {
-  if (group->retrying) {
+  if (group->retrying || group->backfill_draining) {
     group->retry_again = TRUE;
     return;
   }
@@ -2385,10 +2431,15 @@ retry_held(GhMlsGroup *group)
     GList *pass = group->held.head;
     g_queue_init(&group->held);
     g_hash_table_remove_all(group->held_ids);
-    pass = g_list_sort(pass, held_older_first);   /* stable: arrival order within a second */
-    gint64 pass_ends = G_MAXINT64;                /* the second of a Commit applied */
     for (GList *l = pass; l; l = l->next) {
       Held *held = l->data;
+      inspect_event_order(group, held->json, &held->order);
+    }
+    pass = g_list_sort(pass, held_older_first);
+    gint64 pass_ends = G_MAXINT64;                /* the second of a Commit applied */
+    while (pass) {
+      Held *held = pass->data;
+      pass = g_list_delete_link(pass, pass);
       gint64 at = held->created_at;
       if (!group->active) {
         /* Ended mid-pass (a removal applied): nothing of it is held (N5). */
@@ -2396,10 +2447,18 @@ retry_held(GhMlsGroup *group)
         continue;
       }
       if (at <= pass_ends) {
+        guint64 revision = group->order_revision;
         gboolean before = group->retry_again;
         if (process_event(group, held->json, NULL, FALSE, held) != EVENT_HELD) {
           if (!before && group->retry_again)
             pass_ends = at;
+          if (revision != group->order_revision) {
+            for (GList *l = pass; l; l = l->next) {
+              Held *next = l->data;
+              inspect_event_order(group, next->json, &next->order);
+            }
+            pass = g_list_sort(pass, held_older_first);
+          }
           held_free(held);
           continue;
         }
@@ -2408,7 +2467,6 @@ retry_held(GhMlsGroup *group)
       g_queue_push_tail(&group->held, held);
       g_hash_table_add(group->held_ids, held->id);
     }
-    g_list_free(pass);
   } while (group->retry_again);
   gint64 now_us = g_get_monotonic_time();
   for (GList *l = group->held.head; l;) {
@@ -3130,8 +3188,45 @@ stored_older_first(gconstpointer a, gconstpointer b)
   const Stored *x = a, *y = b;
   if (x->created_at != y->created_at)
     return x->created_at < y->created_at ? -1 : 1;
-  /* Within a second the relay sent newest first: undo its order. */
+  gint order = compare_event_order(&x->order, &y->order);
+  if (order) return order;
+  /* No decryptable sender data yet: preserve the legacy fallback. */
   return x->seq > y->seq ? -1 : x->seq < y->seq;
+}
+
+/* A Commit can open an epoch split between held events already attempted and
+ * backfill not attempted yet. Neither queue may run ahead of the other: move
+ * held records (keeping their retry/proposal metadata) into the same sorted set. */
+static GList *
+join_held_backfill(GhMlsGroup *group, GList *mine)
+{
+  g_autoptr(GHashTable) ids = g_hash_table_new(g_str_hash, g_str_equal);
+  for (GList *l = mine; l; l = l->next) {
+    Stored *stored = l->data;
+    if (stored->id) g_hash_table_insert(ids, stored->id, stored);
+  }
+  Held *held;
+  while ((held = g_queue_pop_head(&group->held))) {
+    g_hash_table_remove(group->held_ids, held->id);
+    Stored *duplicate = g_hash_table_lookup(ids, held->id);
+    if (duplicate) {
+      /* A reconnect fetched an event already held. Keep its retry metadata,
+       * not two records that could both re-enter the held queue. */
+      if (duplicate->retry) held_free(held);
+      else duplicate->retry = held;
+      continue;
+    }
+    Stored *stored = g_new0(Stored, 1);
+    stored->json = g_strdup(held->json);
+    stored->id = g_strdup(held->id);
+    stored->created_at = held->created_at;
+    stored->order = held->order;
+    stored->seq = group->backfill_seq++;
+    stored->retry = held;
+    mine = g_list_prepend(mine, stored);
+    g_hash_table_insert(ids, stored->id, stored);
+  }
+  return mine;
 }
 
 /* Relays answer newest first, and libmarmot keeps only a few skipped
@@ -3156,14 +3251,42 @@ flush_backfill(GhMlsGroup *group)
   g_queue_init(&group->backfill);
   g_hash_table_remove_all(group->backfill_ids);
   group->backfill_bytes = 0;
-  mine = g_list_sort(mine, stored_older_first);
-  g_object_ref(group);   /* a Commit may change the subscription meanwhile */
+  group->backfill_draining++;
+  mine = join_held_backfill(group, mine);
   for (GList *l = mine; l; l = l->next) {
     Stored *stored = l->data;
-    if (listening(group))
-      process_event(group, stored->json, stored->url, stored->stored, NULL);
+    inspect_event_order(group, stored->json, &stored->order);
   }
-  g_list_free_full(mine, stored_free);
+  mine = g_list_sort(mine, stored_older_first);
+  g_object_ref(group);   /* a Commit may change the subscription meanwhile */
+  while (mine) {
+    Stored *stored = mine->data;
+    mine = g_list_delete_link(mine, mine);
+    guint64 revision = group->order_revision;
+    if (listening(group)) {
+      EventOutcome outcome = process_event(group, stored->json, stored->url,
+                                             stored->stored, stored->retry);
+      if (stored->retry && outcome == EVENT_HELD) {
+        Held *held = g_steal_pointer(&stored->retry);
+        g_queue_push_tail(&group->held, held);
+        g_hash_table_add(group->held_ids, held->id);
+      }
+    }
+    stored_free(stored);
+    if (revision != group->order_revision) {
+      mine = join_held_backfill(group, mine);
+      for (GList *l = mine; l; l = l->next) {
+        Stored *next = l->data;
+        inspect_event_order(group, next->json, &next->order);
+      }
+      mine = g_list_sort(mine, stored_older_first);
+    }
+  }
+  group->backfill_draining--;
+  if (!group->backfill_draining && group->retry_again)
+    retry_held(group);
+  g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_UNREADABLE]);
+  sync_decrypt_pending(group);
   g_object_unref(group);
 }
 
@@ -3284,6 +3407,7 @@ keep_backfill(GhMlsGroup *group, const GhRelayUpdate *update)
     g_hash_table_add(group->backfill_ids, g_strdup(update->event_id));
   Stored *stored = g_new0(Stored, 1);
   stored->json = g_strdup(update->event_json);
+  stored->id = g_strdup(update->event_id);
   stored->url = g_strdup(update->url);
   stored->created_at = G_MAXINT64;
   stored->seq = group->backfill_seq++;
@@ -3804,6 +3928,7 @@ static void leave_continue(GhMlsGroup *group);
 static void
 after_commit(GhMlsGroup *group)
 {
+  group->order_revision++;
   /* The group moved on: a refused Commit lost its epoch (nostrc-prrl). */
   if (group->refused_json)
     set_refused(group, NULL, GH_MLS_REFUSAL_NONE);
