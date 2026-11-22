@@ -1110,10 +1110,12 @@ static bool filter_matches_event_json(const char *filter_json, const char *event
 
     /* Check tag filters (#e, #p, etc.) */
     json_t *event_tags = json_object_get(event, "tags");
-    const char *key;
-    json_t *value;
-    json_object_foreach(filter, key, value) {
-        if (key[0] == '#' && strlen(key) == 2 && json_is_array(value)) {
+    /* Tag filters have one ASCII byte after '#'. Look them up directly:
+     * jansson's json_object_iter_next collides with json-glib's public ABI. */
+    for (unsigned int c = 1; c < 128; c++) {
+        char key[] = { '#', (char)c, '\0' };
+        json_t *value = json_object_get(filter, key);
+        if (json_is_array(value)) {
             char tag_key[2] = { key[1], '\0' };
 
             /* Check if event has any matching tag */
