@@ -6565,6 +6565,11 @@ welcome_sink(gpointer data, const GhNip17Message *welcome, const gchar *relay_ur
 {
   GhMlsService *self = data;
   (void)relay_url;
+  if (!running(self) || g_strcmp0(welcome->account_pubkey, self->account) != 0) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                        "The invitation belongs to an inactive or different account");
+    return FALSE;
+  }
   guint8 wrapper[32];
   if (!lower_hex64(welcome->wrap_id) || !nostr_hex2bin(wrapper, welcome->wrap_id, 32)) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Bad wrap id");
@@ -6629,6 +6634,15 @@ welcome_sink(gpointer data, const GhNip17Message *welcome, const gchar *relay_ur
   }
   return TRUE;
 }
+
+#ifdef GH_MLS_TEST_HOOKS
+gboolean
+gh_mls_service_test_receive_welcome(GhMlsService *self, const GhNip17Message *welcome,
+                                     GError **error)
+{
+  return welcome_sink(self, welcome, NULL, error);
+}
+#endif
 
 static GhMlsInvite *
 invite_of(const MarmotWelcome *welcome)
