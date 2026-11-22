@@ -6,12 +6,23 @@
 #include "nostr-event.h"
 #include "nostr-utils.h"
 #include "keys.h"
+#include "secure_buf.h"
 
 static void expect(int cond, const char *msg) {
   if (!cond) { fprintf(stderr, "FAIL: %s\n", msg); exit(1); }
 }
 
 int main(void) {
+  NostrEvent *invalid = nostr_event_new();
+  expect(invalid != NULL, "allocate invalid-key fixture");
+  expect(nostr_event_sign(invalid, "zz") == -1, "reject partial hex key");
+  expect(nostr_event_sign(invalid,
+      "0000000000000000000000000000000000000000000000000000000000000000") == -1,
+      "reject zero scalar");
+  unsigned char zero[32] = {0};
+  nostr_secure_buf secure = { .ptr = zero, .len = sizeof zero, .locked = false };
+  expect(nostr_event_sign_secure(invalid, &secure) == -1, "reject secure zero scalar");
+  nostr_event_free(invalid);
   // Construct event
   NostrEvent *ev = nostr_event_new();
   expect(ev != NULL, "alloc event");
@@ -22,6 +33,7 @@ int main(void) {
   char *pk_hex = nostr_key_get_public(sk_hex);
   expect(pk_hex && strlen(pk_hex)==64, "derive pubkey");
   nostr_event_set_pubkey(ev, pk_hex);
+  free(pk_hex);
   nostr_event_set_kind(ev, 1);
   nostr_event_set_created_at(ev, (int64_t)1700000000);
   nostr_event_set_content(ev, "hello world");
