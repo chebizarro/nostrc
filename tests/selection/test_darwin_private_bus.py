@@ -46,17 +46,20 @@ with darwin_private_bus(evidence, root) as state:
         consumer = subprocess.run([sys.argv[5]], capture_output=True, text=True, timeout=30)
         out['asan'] = [consumer.returncode, consumer.stdout, consumer.stderr[-2000:]]
     if mode in ('escape', 'hold'):
+        read_fd, write_fd = os.pipe()
         if os.fork() == 0:
+            os.close(read_fd)
             os.setsid()
             if os.fork() == 0:
                 signal.signal(signal.SIGTERM, signal.SIG_IGN)  # survives exec
+                os.write(write_fd, str(os.getpid()).encode())
+                os.close(write_fd)
                 os.execvp('gdbus', ['gdbus', 'monitor', '--session', '--dest', 'org.freedesktop.DBus'])
             os._exit(0)
+        os.close(write_fd)
         os.wait()
-        time.sleep(0.5)
-        monitors = subprocess.run(['pgrep', '-f', 'gdbus monitor --session --dest org.freedesktop.DBus'],
-                                  capture_output=True, text=True).stdout.split()
-        out['escaped'] = [int(p) for p in monitors]
+        out['escaped'] = [int(os.read(read_fd, 32))]
+        os.close(read_fd)
     report.write_text(json.dumps(out))
     if mode == 'hold':
         time.sleep(120)
