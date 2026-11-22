@@ -7,10 +7,29 @@
  * gnostr used to write and read base64 only. It now writes hex and reads hex
  * or its own legacy base64, with 12- or 16-byte nonces. */
 #include "util/dm_files.h"
+#include "util/blossom.h"
+#include "util/blossom_settings.h"
 
 #include <glib.h>
 #include <json-glib/json-glib.h>
 #include <string.h>
+
+/* This encoding fixture must never use an upload backend. Keep its otherwise
+ * unreferenced upload boundary typed, linked, and fatal if coverage drifts. */
+void gnostr_blossom_blob_free(GnostrBlossomBlob *blob) {
+  (void)blob; g_error("encoding fixture attempted Blossom cleanup");
+}
+gsize gnostr_blossom_settings_get_server_count(void) {
+  g_error("encoding fixture attempted Blossom settings access");
+}
+const char *gnostr_blossom_detect_mime_type(const char *path) {
+  (void)path; g_error("encoding fixture attempted MIME detection");
+}
+void gnostr_blossom_upload_with_fallback_async(const char *path, const char *mime,
+    GnostrBlossomUploadCallback callback, gpointer data, GCancellable *cancel) {
+  (void)path; (void)mime; (void)callback; (void)data; (void)cancel;
+  g_error("encoding fixture attempted a Blossom upload");
+}
 
 static const uint8_t k_key[32] = {
   0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,

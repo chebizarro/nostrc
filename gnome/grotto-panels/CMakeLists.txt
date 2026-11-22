@@ -101,7 +101,7 @@ if(BUILD_TESTING)
     add_test(NAME grotto-panels/smoke-host COMMAND test-grotto-panels-smoke)
   endif()
   set_tests_properties(grotto-panels/smoke-host PROPERTIES TIMEOUT 30
-    ENVIRONMENT "XDG_DATA_DIRS=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures:/usr/local/share:/usr/share;G_DEBUG=fatal-warnings;GTK_A11Y=test;LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan.supp:print_suppressions=1")
+    ENVIRONMENT "PATH=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/bin:$ENV{PATH};XDG_DATA_DIRS=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures:/usr/local/share:/usr/share;G_DEBUG=fatal-warnings;GTK_A11Y=test;LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan.supp:print_suppressions=1")
   foreach(focused profile-panel management-panels)
     if(focused STREQUAL "profile-panel")
       set(_panel_path /grotto-panels/profile)
@@ -115,7 +115,7 @@ if(BUILD_TESTING)
       add_test(NAME grotto-panels/${focused} COMMAND test-grotto-panels-smoke -p ${_panel_path})
     endif()
     set_tests_properties(grotto-panels/${focused} PROPERTIES TIMEOUT 30
-      ENVIRONMENT "XDG_DATA_DIRS=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures:/usr/local/share:/usr/share;G_DEBUG=fatal-warnings;GTK_A11Y=test;LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan.supp:print_suppressions=1")
+      ENVIRONMENT "PATH=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/bin:$ENV{PATH};XDG_DATA_DIRS=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures:/usr/local/share:/usr/share;G_DEBUG=fatal-warnings;GTK_A11Y=test;LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan.supp:print_suppressions=1")
   endforeach()
   add_test(NAME grotto-panels/no-secrets COMMAND ${Python3_EXECUTABLE}
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test-boundaries.py" "${CMAKE_CURRENT_SOURCE_DIR}" $<TARGET_FILE:grotto-panels>
