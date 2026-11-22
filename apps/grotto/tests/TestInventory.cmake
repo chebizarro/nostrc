@@ -54,7 +54,7 @@ _grotto_test(signer/panel-inbox-model test-panel-inbox-model grotto.gui REQUIRES
 foreach(suite ui-layout ui-accessibility dialog-sizing)
   _grotto_test("signer/${suite}" test-ui-layout grotto.gui
     TARGETS grotto_test_locales grotto_resources REQUIRES display private_bus
-    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/../data/org.nostr.Grotto.Control1.xml"
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/../../../gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml"
       "${CMAKE_CURRENT_SOURCE_DIR}/../po/es.po")
 endforeach()
 _grotto_test(signer/background test-background grotto.gui REQUIRES private_bus

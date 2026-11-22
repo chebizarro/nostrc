@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "grotto-panels-control1-service.h"
-#include "i18n.h"
+#include <glib/gi18n-lib.h>
 #include <string.h>
 
 #define CONTROL "org.nostr.Grotto.Control1"

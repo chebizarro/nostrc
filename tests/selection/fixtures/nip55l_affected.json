@@ -30,8 +30,8 @@
     },
     {
       "status": "M",
-      "old_path": "apps/grotto/data/org.nostr.Grotto.Control1.xml",
-      "new_path": "apps/grotto/data/org.nostr.Grotto.Control1.xml"
+      "old_path": "gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml",
+      "new_path": "gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml"
     },
     {
       "status": "M",

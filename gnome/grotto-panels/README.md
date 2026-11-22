@@ -1,6 +1,6 @@
 # Grotto Panels
 
-MIT, GTK **4.14** / libadwaita **1.5**. Version **0.1.0**; public include
+MIT, GTK **4.14** / libadwaita **1.5**. Version **0.1.2**; public include
 `<grotto-panels.h>`, pkg-config `grotto-panels-0`, SONAME
 `libgrotto-panels-0.so.0`, CMake target `GrottoPanels::Panels`.
 
@@ -121,8 +121,11 @@ The callback table stays private: use `grotto_panel_host_can()` and the guarded
 `grotto_panel_host_invoke()`. Absent callbacks hide the corresponding action. No service means unavailable,
 not a local permission fallback.
 
-Grotto owns the Control1 adapter in
-`apps/grotto/src/grotto-panels-control1-service.*`. It subscribes before listing,
+The separate **Control1 client library** in this module supplies
+`<grotto-panels-control1-service.h>`, pkg-config `grotto-control-client-0`
+(version 0.1.0), SONAME `libgrotto-control-client-0.so.0`, and CMake target
+`GrottoPanels::ControlClient` from the existing `GrottoPanels` config. The
+widget DSO remains IPC-free; only the client DSO links the adapter. It subscribes before listing,
 pins each call to the daemon's unique owner, rejects stale owner/signal
 snapshots, deduplicates IDs, preserves request deadlines and owner-scoped
 resolved-request tombstones. Activity sequence is only a cursor, never a
@@ -266,3 +269,41 @@ Native host recipes set `GROTTO_USE_SYSTEM_PANELS=ON`: the runtime/SDK are suppl
 by the separate Debian/RPM provider, rather than stranded in Grotto's private
 install subtree. See [packaging](packaging/README.md) for the explicit installed
 consumer smoke and its native-Debian versus RPM-diagnostic boundary.
+
+## Installed Control1 client
+
+Both CMake and Meson build/install the client with the panels SDK. The existing
+runtime package owns both DSOs and the canonical interface XML at
+`share/dbus-1/interfaces/org.nostr.Grotto.Control1.xml`; its development package
+owns both headers and pkg-config files. There is no Grotto executable dependency.
+The public client API is versioned independently at 0.1.0 with ABI/SONAME 0.
+Grotto and Nostr Settings link the same DSO; neither compiles a private adapter.
+
+A companion such as metadesk-manager should use:
+
+```c
+#include <grotto-panels-control1-service.h>
+/* On the GUI main context, with a proxy for the bus/path/interface above: */
+GrottoPanelsService *service = grotto_panels_control1_service_new_manager(proxy);
+GtkWidget *identity = grotto_identity_panel_new(service, NULL);
+```
+
+Compile with `pkg-config --cflags --libs grotto-control-client-0`, or link
+`GrottoPanels::ControlClient` after `find_package(GrottoPanels CONFIG REQUIRED)`.
+Keep the service alive across panel remounts and unref it on the same context.
+The constructor returns an owned service and retains the supplied proxy.
+`new_manager()` fails closed on missing/non-manager role metadata and never
+requests the approver-only inbox. It does **not** authorize the host: the daemon
+still authenticates each caller. An unattested companion must handle unavailable
+reads; merely linking this SDK does not confer Nostr Settings' installed-manager
+role. Do not use `host_command_async()` to bypass the host's lock/version checks.
+No secret export or approval-controller API is exposed by this library.
+Cosmetic backup reminders are optional: without Grotto's IdentityReminder schema
+those helpers return NULL/false; the client does not install daemon policy/schema.
+
+`ctest -R '^grotto-panels/installed-control1$'` stages `cmake --install` into a
+throwaway DESTDIR, compiles `tests/installed-control1.c` using **only installed
+pkg-config metadata**, and hosts Identity against a test Control1 implementation
+on a private bus/display. It proves snapshots and propagation of a daemon denial,
+not production caller authorization or live-session qualification. The existing
+Control1 and real-daemon Grotto/Settings suites retain those regression checks.

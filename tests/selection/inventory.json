@@ -98,7 +98,7 @@
         "test-grotto-panels-control1"
       ],
       "runtime_inputs": [
-        "{source}/apps/grotto/data/org.nostr.Grotto.Control1.xml"
+        "{source}/gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml"
       ],
       "requires": [
         "display",
@@ -124,23 +124,28 @@
           "grotto-panels/profile-panel",
           "grotto-panels/management-panels",
           "grotto-panels/no-secrets",
-          "grotto-panels/control1-service"
+          "grotto-panels/control1-service",
+          "grotto-panels/installed-control1"
         ],
         "grotto.linux": [
           "grotto-panels/smoke-host",
           "grotto-panels/profile-panel",
           "grotto-panels/management-panels",
           "grotto-panels/no-secrets",
-          "grotto-panels/control1-service"
+          "grotto-panels/control1-service",
+          "grotto-panels/installed-control1"
         ]
       },
       "build_targets": [
         "test-grotto-panels-smoke",
         "test-grotto-panels-control1",
-        "test-grotto-panels-admission"
+        "test-grotto-panels-admission",
+        "grotto-control-client"
       ],
       "runtime_inputs": [
-        "{source}/apps/grotto/data/org.nostr.Grotto.Control1.xml"
+        "{source}/gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml",
+        "{source}/gnome/grotto-panels/tests/test-installed-control1.sh",
+        "{source}/gnome/grotto-panels/tests/installed-control1.c"
       ],
       "requires": []
     },
@@ -8828,7 +8833,7 @@
         "{source}/apps/gnostr/src/nostr-config.h.in",
         "{source}/apps/gnostr/src/gnostr-build-info.h.in",
         "{source}/apps/grotto/daemon/grotto_control_xml.h.in",
-        "{source}/apps/grotto/data/org.nostr.Grotto.Control1.xml",
+        "{source}/gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml",
         "{source}/libnostr/include/nostr-config.h.in",
         "{source}/nostr-gtk/include/nostr-gtk-1.0/nostr-gtk-version.h.in",
         "{source}/libmarmot/include/marmot/marmot-version.h.in",
@@ -22750,9 +22755,7 @@
       "id": "grotto.panels",
       "depends_on": [],
       "owner_paths": [
-        "gnome/grotto-panels",
-        "apps/grotto/src/grotto-panels-control1-service.c",
-        "apps/grotto/src/grotto-panels-control1-service.h"
+        "gnome/grotto-panels"
       ]
     },
     "gnostr.blossom": {
@@ -25239,24 +25242,6 @@
         "grotto.panels"
       ],
       "reason": "New isolated panel component: boundary, private-bus adapter and level-1 smoke host."
-    },
-    {
-      "exact": "apps/grotto/src/grotto-panels-control1-service.c",
-      "effect": "impact",
-      "nodes": [
-        "grotto.panels",
-        "grotto.gui"
-      ],
-      "reason": "Host-owned injected adapter; test the production source on a private bus."
-    },
-    {
-      "exact": "apps/grotto/src/grotto-panels-control1-service.h",
-      "effect": "impact",
-      "nodes": [
-        "grotto.panels",
-        "grotto.gui"
-      ],
-      "reason": "Host-owned injected adapter contract."
     },
     {
       "exact": "apps/gnostr/src/util/blossom.c",
@@ -29749,7 +29734,7 @@
       "reason": "Exact configure template/XML read by production producer regressions; preserve component ownership and select the actual contract consumer."
     },
     {
-      "exact": "apps/grotto/data/org.nostr.Grotto.Control1.xml",
+      "exact": "gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml",
       "nodes": [
         "grotto.panels",
         "grotto.gui",
@@ -31738,6 +31723,21 @@
     }
   },
   "release_components": {
+    "grotto-control-client": {
+      "manifest_name": "grotto-control-client",
+      "package_jobs": [],
+      "publisher": "none",
+      "version_sources": [
+        {
+          "path": "gnome/grotto-panels/CMakeLists.txt",
+          "pattern": "set\\(GROTTO_CONTROL_CLIENT_VERSION ([0-9.]+)\\)"
+        },
+        {
+          "path": "gnome/grotto-panels/meson.build",
+          "pattern": "(?m)^control_client_version = '([0-9.]+)'"
+        }
+      ]
+    },
     "grotto-panels": {
       "manifest_name": "grotto-panels",
       "package_jobs": [],
