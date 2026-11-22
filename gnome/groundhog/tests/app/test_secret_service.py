@@ -133,7 +133,7 @@ def on_call(c, sender, path, iface, method, params, inv):
                     if i in items: out[p] = secret_tuple(i, a[1])
                 inv.return_value(GLib.Variant('(a{o(oayays)})', (out,))); return
             if method == 'ReadAlias':
-                inv.return_value(GLib.Variant('(o)', (COLL if a[0] in ('default', 'login', 'session') else '/',))); return
+                inv.return_value(GLib.Variant('(o)', (COLL if a[0] in ('default', 'login') else '/',))); return
             if method == 'SetAlias':
                 inv.return_value(None); return
         if iface == 'org.freedesktop.Secret.Collection':
