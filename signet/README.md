@@ -78,6 +78,40 @@ Management intents are encrypted between provisioner and bunker when transported
 - **Optional NIP-17 URI handoff** — Provisioning can send a `signet/bunker-handoff` DM. Enqueue or relay acceptance is not recipient delivery; advertise only after a real receiver completes the round trip.
 - **Deferred HTTP workflow** — `/bootstrap`, `/challenge` and `/auth` exist, with token/challenge/lease helpers, but token insertion and receive/ACK helpers have no production callers. These do not constitute automated fleet enrollment; the HTTP profile stays disabled.
 
+#### Disabled HTTP bootstrap contract
+
+The HTTP profile remains disabled; this contract does not add token enrollment or
+an automated recipient/ACK workflow. If a provisioner inserts a bootstrap token,
+it must bind the token hash to an already-provisioned `agent_id` and the client's
+`bootstrap_pubkey` (which can differ from the agent's signer key).
+
+1. Fetch `GET /challenge?agent_id=<id>` over the configured TLS proxy. IDs must be
+   provisioned, nonempty, and at most 128 bytes. Challenges expire after 30 seconds.
+   The store refuses (HTTP 429) above four outstanding entries per agent or 1,024
+   globally, without evicting live proofs. Issuance and a five-second main-loop
+   cleanup source prune expired entries, even during idle periods.
+2. Sign a `SIGNET_AUTH_KIND` event with the bootstrap private key, empty content,
+   and tags `[["challenge", "<hex>"], ["agent", "<id>"],
+   ["purpose", "signet-bootstrap"], ["token", "<SHA256(raw token) hex>"]]`.
+   Submit `POST /bootstrap` with `token`, `agent_id`, `bootstrap_pubkey`, and that
+   event **object** in `auth_event`. The proof is single-use and cannot serve as
+   `/auth`'s `signet-auth` proof; missing, expired, mismatched or replayed proofs
+   receive no handoff URI.
+3. On success the existing identity receives a fresh random one-time pairing
+   secret in the returned bunker URI, replacing any pending pairing secret. The
+   token is consumed before rotation so a replay cannot invalidate the winner.
+   Failures after consumption burn the token; obtain a new token rather than
+   retrying the old one. A lost response is not evidence that nothing changed.
+
+The bootstrap token alone is **not** authority to retrieve the URI: possession of
+its bound private key is also required. The returned URI, however, **is a bearer
+capability** until first NIP-46 pairing: anyone holding it can use its one-time
+secret. Deliver it confidentially, never log it, and do not confuse the response's
+agent `pubkey` with the bootstrap client's key. First pairing atomically consumes
+the secret and binds the client's public key; established bindings are preserved
+by secret rotation. Only one pending secret exists per agent, so a later valid
+handoff supersedes an earlier unpaired URI.
+
 ### Credential Management
 
 - **Extended Secret Store** — Stores multiple credential types (Nostr nsec, SSH keys, API tokens, certificates) with envelope encryption at rest

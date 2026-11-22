@@ -200,6 +200,57 @@ static void test_verify_negatives(void) {
 
 /* ----------------------------- Challenge store --------------------------- */
 
+static void test_challenge_limits(void) {
+  SignetChallengeStore *cs = signet_challenge_store_new();
+  const int64_t now = 1700000000;
+  for (int i = 0; i < 4; i++) {
+    char *ch = signet_challenge_issue(cs, "limited", now); CHECK(ch); g_free(ch);
+  }
+  CHECK(!signet_challenge_issue(cs, "limited", now));
+  for (int i = 4; i < 1024; i++) {
+    char *id = g_strdup_printf("agent-%d", i);
+    char *ch = signet_challenge_issue(cs, id, now); CHECK(ch);
+    g_free(ch); g_free(id);
+  }
+  CHECK(!signet_challenge_issue(cs, "over-global-limit", now));
+  CHECK(!signet_challenge_issue(cs, "", now));
+  char too_long[130]; memset(too_long, 'x', sizeof(too_long) - 1);
+  too_long[sizeof(too_long) - 1] = 0;
+  CHECK(!signet_challenge_issue(cs, too_long, now));
+
+  /* At the TTL boundary issuance recovers space, without evicting live proofs. */
+  char *ch = signet_challenge_issue(cs, "limited", now + SIGNET_CHALLENGE_TTL_S);
+  CHECK(ch); g_free(ch);
+  signet_challenge_store_free(cs);
+  printf("test_challenge_limits: PASS\n");
+}
+
+static gboolean cleanup_watchdog(gpointer data) {
+  *(bool *)data = true;
+  return G_SOURCE_REMOVE;
+}
+
+static void test_challenge_periodic_cleanup(void) {
+  SignetChallengeStore *cs = signet_challenge_store_new();
+  char *sk = nostr_key_generate_private(); CHECK(sk);
+  int64_t now = time(NULL);
+  char *ch = signet_challenge_issue(cs, "idle", now - SIGNET_CHALLENGE_TTL_S);
+  CHECK(ch);
+  char *ev = build_auth_event(sk, SIGNET_AUTH_KIND, ch, "idle", "signet-auth", now);
+  CHECK(ev);
+  /* Dispatch the store's periodic source, not another issuance or explicit cleanup. */
+  bool timed_out = false;
+  guint watchdog = g_timeout_add_seconds(8, cleanup_watchdog, &timed_out);
+  CHECK(g_main_context_iteration(NULL, TRUE));
+  CHECK(!timed_out);
+  g_source_remove(watchdog);
+  CHECK(signet_auth_verify(cs, NULL, ev, time(NULL), NULL, NULL) ==
+        SIGNET_AUTH_ERR_CHALLENGE_MISMATCH);
+  g_free(ev); g_free(ch); free(sk);
+  signet_challenge_store_free(cs);
+  printf("test_challenge_periodic_cleanup: PASS\n");
+}
+
 static void test_challenge_issue(void) {
   SignetChallengeStore *cs = signet_challenge_store_new();
   CHECK(cs != NULL);
@@ -322,6 +373,8 @@ static void test_null_safety(void) {
 
 int main(void) {
   test_null_safety();
+  test_challenge_limits();
+  test_challenge_periodic_cleanup();
   test_challenge_issue();
   test_challenge_different_agents();
   test_challenge_cleanup();

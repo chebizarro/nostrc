@@ -52,6 +52,11 @@ extern "C" {
  */
 #define SIGNET_CHALLENGE_TTL_S 30
 
+/* Refuse issuance at capacity; never evict an unexpired proof. */
+#define SIGNET_CHALLENGE_MAX_TOTAL 1024
+#define SIGNET_CHALLENGE_MAX_PER_AGENT 4
+#define SIGNET_AUTH_AGENT_ID_MAX 128
+
 /* Session TTL in seconds (24 hours). */
 /**
  * SIGNET_SESSION_TTL_S:
@@ -182,7 +187,7 @@ void signet_challenge_store_free(SignetChallengeStore *cs);
 
 /* Issue a new challenge for an agent_id.
  * Returns heap-allocated 64-char hex challenge string (caller frees with g_free).
- * Returns NULL on error. */
+ * Returns NULL on error, invalid agent_id, or capacity exhaustion. */
 /**
  * signet_challenge_issue:
  * @cs: (not nullable): a #SignetChallengeStore
