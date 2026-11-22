@@ -79,7 +79,7 @@ static void clear_error(Error **err) {
 static void test_offline_registration(void) {
     CHECK(setenv("NOSTR_TEST_MODE", "1", 1) == 0);
     Error *err = NULL;
-    NostrRelay *relay = nostr_relay_new(go_context_background(), "wss://prqu4.invalid", &err);
+    NostrRelay *relay = nostr_relay_new(NULL, "wss://prqu4.invalid", &err);
     CHECK(relay && err == NULL);
     CHECK(nostr_relay_connect(relay, &err));
     clear_error(&err);
@@ -342,7 +342,7 @@ static void test_loopback_fixture_relay(void) {
     char url[64];
     snprintf(url, sizeof(url), "ws://127.0.0.1:%d", g_fx.port);
     Error *err = NULL;
-    NostrRelay *relay = nostr_relay_new(go_context_background(), url, &err);
+    NostrRelay *relay = nostr_relay_new(NULL, url, &err);
     CHECK(relay && err == NULL);
     CHECK(nostr_relay_connect(relay, &err));
     clear_error(&err);
