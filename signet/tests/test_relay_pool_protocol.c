@@ -283,9 +283,12 @@ static void test_subscribe_scoped_without_start(void) {
    * Either is acceptable — key thing is no crash. */
   (void)rc;
 
-  /* subscribe_kinds should also not crash. */
-  rc = signet_relay_pool_subscribe_kinds(rp, kinds, 2);
-  (void)rc;
+  /* Reconfigure repeatedly: LSan must see neither moved shells nor fields. */
+  for (int i = 0; i < 128; ++i) {
+    CHECK(signet_relay_pool_subscribe_scoped(rp, kinds, 2,
+      "abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234", i + 1) == 0);
+    CHECK(signet_relay_pool_subscribe_kinds(rp, kinds, 2) == 0);
+  }
 
   signet_relay_pool_free(rp);
   PASS();

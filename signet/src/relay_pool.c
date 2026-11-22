@@ -1057,7 +1057,13 @@ static NostrFilters *signet_relay_pool_build_filters_locked(SignetRelayPool *rp)
     return NULL;
   }
 
-  nostr_filters_add(filters, filter);
+  bool added = nostr_filters_add(filters, filter);
+  /* add moves the fields, not the shell; on failure we still own both. */
+  nostr_filter_free(filter);
+  if (!added) {
+    nostr_filters_free(filters);
+    return NULL;
+  }
   return filters;
 }
 
