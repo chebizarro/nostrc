@@ -524,14 +524,19 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   if (!remote_signer_pubkey_hex || !remote_signer_secret_key_hex ||
       !client_pubkey_hex || !ciphertext) return false;
 
-  SignetReplayResult rr = SIGNET_REPLAY_OK;
+  /* The signed outer author owns the quota even for junk ciphertext. Check
+   * before crypto so a repeated bad envelope cannot amplify work or replies. */
+  SignetReplayResult rr = s->replay
+    ? signet_replay_check_and_mark_scoped(s->replay, client_pubkey_hex,
+                                          event_id_hex, created_at, now)
+    : SIGNET_REPLAY_OK;
 
   /* 2) Decrypt request content (NIP-44 v2) */
   char *plain = NULL;
   size_t plain_len = 0;
   char *dec_err = NULL;
   bool dec_ok = false;
-  {
+  if (rr == SIGNET_REPLAY_OK) {
     uint8_t sk[32], pk[32];
     if (signet_hex_to_bytes32(remote_signer_secret_key_hex, sk) &&
         signet_hex_to_bytes32(client_pubkey_hex, pk)) {
@@ -563,13 +568,6 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   if (dec_ok) {
     parse_ok = (nostr_nip46_request_parse(plain, &req) == 0);
   }
-
-  /* Reject undecryptable/malformed requests without spending replay room.
-   * Charge valid requests to their signed envelope author; production uses
-   * per-client quotas and refuses full caches instead of evicting live ids. */
-  if (s->replay && dec_ok && parse_ok)
-    rr = signet_replay_check_and_mark_scoped(s->replay, client_pubkey_hex,
-                                             event_id_hex, created_at, now);
 
   const char *method = parse_ok ? req.method : NULL;
   const char *req_id = parse_ok ? req.id : NULL;
@@ -976,7 +974,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   char *enc_err = NULL;
   bool enc_ok = false;
 
-  if (resp_json) {
+  if (resp_json && rr == SIGNET_REPLAY_OK) {
     uint8_t sk[32], pk[32];
     if (signet_hex_to_bytes32(remote_signer_secret_key_hex, sk) &&
         signet_hex_to_bytes32(client_pubkey_hex, pk)) {
