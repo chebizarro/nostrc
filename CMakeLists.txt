@@ -366,6 +366,9 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
   endif()
 endif()
 
+# Resolve this option before libjson tests inspect it on the first configure.
+option(NOSTR_WITH_GLIB "Enable GLib integration layer in libnostr (fails if requested but unavailable)" ON)
+
 # Layer 0 foundations precede Layer 1 libnostr.
 add_subdirectory(libgo)
 add_subdirectory(libjson)
