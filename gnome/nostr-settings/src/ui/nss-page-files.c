@@ -222,8 +222,9 @@ nss_page_files_new(NssContext *ctx)
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(meta),
                                 "Upload media whose metadata can't be removed");
   adw_action_row_set_subtitle(ADW_ACTION_ROW(meta),
-    "Videos, audio and HEIC photos may include your location. JPEG, PNG, WebP and "
-    "GIF are always cleaned.");
+    "Files that cannot be cleaned, including TIFF, WebM, MP3 and Ogg, may include location data. "
+    "JPEG, PNG, WebP, GIF and supported HEIC, HEIF, AVIF, MP4, MOV, 3GP and M4A files "
+    "are cleaned before upload.");
   adw_switch_row_set_active(meta, p->share.keep_metadata);
   g_signal_connect(meta, "notify::active", G_CALLBACK(on_meta), p);
   adw_preferences_group_add(share, GTK_WIDGET(meta));
