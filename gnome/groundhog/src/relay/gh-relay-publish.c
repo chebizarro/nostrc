@@ -14,6 +14,7 @@
 typedef struct {
   GhRelayPublish *publish; /* owner; endpoints never outlive it */
   gchar *url;
+  gboolean address_trusted; /* explicitly account-owned destination */
   gpointer handle;
   gboolean opened;
   GhRelayPublishOutcome outcome;
@@ -395,6 +396,31 @@ gh_relay_publish_set_account_signer(GhRelayPublish *publish,
   gh_relay_auth_signer_unref(publish->signer);
   publish->signer = signer;
   return TRUE;
+}
+
+gboolean
+gh_relay_publish_set_url_address_trusted(GhRelayPublish *self, const gchar *url,
+                                         gboolean trusted, GError **error)
+{
+  GhPublishEndpoint *endpoint = self && url ? g_hash_table_lookup(self->by_url, url) : NULL;
+  if (!endpoint) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "Unknown relay URL");
+    return FALSE;
+  }
+  if (self->started && endpoint->address_trusted != trusted) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_BUSY,
+                        "Choose relay address provenance before connecting");
+    return FALSE;
+  }
+  endpoint->address_trusted = trusted;
+  return TRUE;
+}
+
+gboolean
+gh_relay_publish_url_address_trusted(const GhRelayPublish *self, const gchar *url)
+{
+  GhPublishEndpoint *endpoint = self && url ? g_hash_table_lookup(self->by_url, url) : NULL;
+  return endpoint && endpoint->address_trusted;
 }
 
 gboolean

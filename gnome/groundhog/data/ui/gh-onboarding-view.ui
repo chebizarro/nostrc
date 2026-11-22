@@ -409,6 +409,13 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <child type="top">
                   <object class="AdwHeaderBar"></object>
                 </child>
+                <child type="top">
+                  <object class="AdwBanner" id="inbox_tor_banner">
+                    <property name="revealed">false</property>
+                    <property name="title" translatable="yes">Can’t reach Tor — Groundhog won’t connect without it</property>
+                    <property name="button-label" translatable="yes">Network Settings</property>
+                  </object>
+                </child>
                 <property name="content">
                   <object class="GtkScrolledWindow">
                     <property name="hscrollbar-policy">2</property>
@@ -747,6 +754,13 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               <object class="AdwToolbarView">
                 <child type="top">
                   <object class="AdwHeaderBar"></object>
+                </child>
+                <child type="top">
+                  <object class="AdwBanner" id="publish_tor_banner">
+                    <property name="revealed">false</property>
+                    <property name="title" translatable="yes">Can’t reach Tor — Groundhog won’t connect without it</property>
+                    <property name="button-label" translatable="yes">Network Settings</property>
+                  </object>
                 </child>
                 <property name="content">
                   <object class="GtkScrolledWindow">

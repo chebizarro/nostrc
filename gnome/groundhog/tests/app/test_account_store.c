@@ -12,6 +12,7 @@
  * GTK (which keeps its session connection); it exits 77 without a display. */
 #include "account-store-outbox.h"
 #include "gh-account-store.h"
+#include "gh-notifier.h"
 #include "gh-social-lists.h"
 #include <nostr-kinds.h>
 #include "gh-app-outbox.h"
@@ -1211,6 +1212,26 @@ test_pseudonymous_names(void)
   g_assert_null(gh_nip17_seen_file_name("npub1nope"));
 }
 
+typedef struct {
+  GThread *main_thread;
+  gint imports;
+} ImportThreadProbe;
+
+/* Observe the existing production import-completion log, emitted on the
+ * thread that executed the real encrypted-store transaction. */
+static void
+assert_import_worker(const gchar *domain, GLogLevelFlags level, const gchar *message,
+                     gpointer data)
+{
+  ImportThreadProbe *probe = data;
+  if (g_str_has_prefix(message, "Groundhog imported ")) {
+    g_assert_true(g_thread_self() != probe->main_thread);
+    g_atomic_int_inc(&probe->imports);
+  } else {
+    g_log_default_handler(domain, level, message, NULL);
+  }
+}
+
 /* ST-12 via the app (W13 review B1). The memory-only inbox's plaintext files
  * (Groundhog 0.6.0's <pubkey>.seen and .checkpoint; a store-less build's
  * <acct>.seen) held keys of messages it kept in memory only. Only their
@@ -1243,8 +1264,12 @@ test_legacy_import(void)
   write_private(mark_path, mark);
   write_private(pseudonymous_path, pseudonymous);
 
+  ImportThreadProbe probe = { .main_thread = g_thread_self() };
+  guint log_handler = g_log_set_handler(NULL, G_LOG_LEVEL_DEBUG, assert_import_worker, &probe);
   stack_up(&f);
   g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  g_log_remove_handler(NULL, log_handler);
+  g_assert_cmpint(g_atomic_int_get(&probe.imports), ==, 2);
   g_assert_cmpuint(gh_test_count_files(f.state_dir), ==, 0);
   g_assert_true(store_seen(&f, GH_STORE_SEEN_REJECTED_WRAP, rejected));
   g_assert_true(store_seen(&f, GH_STORE_SEEN_REJECTED_WRAP, rejected2));
@@ -1572,6 +1597,53 @@ test_kc4_unavailable(void)
   g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
   g_assert_false(gh_account_store_continue_without_saving(f.store, &error));
   g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
+  fixture_down(&f);
+}
+
+typedef struct {
+  Fixture *fixture;
+  guint reads;
+  gint64 received;
+} LastSeenProbe;
+
+static gint64
+observe_last_seen(gpointer data, const gchar *account)
+{
+  LastSeenProbe *probe = data;
+  /* Same callback as the executable, invoked by the real notifier on bind. */
+  probe->received = gh_account_store_notifier_last_seen(probe->fixture->store, account);
+  probe->reads++;
+  g_assert_false(gh_dm_inbox_has_storage(probe->fixture->inbox));
+  return probe->received;
+}
+
+static void
+test_notifier_checkpoint_bind_order(void)
+{
+  Fixture f = { 0 };
+  fixture_up(&f, 2);
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  const gint64 checkpoint = 1700000123;
+  g_assert_true(gh_store_set_cursor(gh_account_store_get_store(f.store),
+    GH_ACCOUNT_STORE_INBOX_CURSOR, "", checkpoint, NULL));
+  /* A different cursor must not accidentally become the notification marker. */
+  g_assert_true(gh_store_set_cursor(gh_account_store_get_store(f.store),
+    "other-cursor", "", checkpoint + 1000, NULL));
+  stack_down(&f);
+  stack_up(&f);
+  LastSeenProbe probe = { .fixture = &f };
+  g_autoptr(GApplication) app = g_application_new("org.nostr.Groundhog.CheckpointTest",
+                                                  G_APPLICATION_NON_UNIQUE);
+  GhNotifierConfig config = { .settings = f.settings, .conversations = f.model,
+    .last_seen = observe_last_seen, .last_seen_data = &probe };
+  g_autoptr(GhNotifier) notifier = gh_notifier_new(app, &config);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  g_assert_cmpuint(probe.reads, ==, 1);
+  g_assert_cmpint(probe.received, ==, checkpoint);
+  g_assert_true(gh_dm_inbox_has_storage(f.inbox));
+  g_assert_cmpint(gh_account_store_notifier_last_seen(f.store, hex[1]), ==, 0);
+  g_object_run_dispose(G_OBJECT(notifier));
   fixture_down(&f);
 }
 
@@ -2724,6 +2796,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/account-store/kc2-locked", test_kc2_locked);
   g_test_add_func("/groundhog/account-store/kc3-key-missing", test_kc3_key_missing);
   g_test_add_func("/groundhog/account-store/kc4-unavailable", test_kc4_unavailable);
+  g_test_add_func("/groundhog/account-store/notifier-checkpoint-bind-order", test_notifier_checkpoint_bind_order);
   g_test_add_func("/groundhog/account-store/reaction-delete-enqueue", test_reaction_delete_enqueue);
   g_test_add_func("/groundhog/account-store/pt6-switch-order", test_pt6_switch_order);
   g_test_add_func("/groundhog/account-store/pt6-switch-mid-open", test_pt6_switch_mid_open);

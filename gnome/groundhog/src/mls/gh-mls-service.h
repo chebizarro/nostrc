@@ -686,6 +686,8 @@ G_DECLARE_FINAL_TYPE(GhMlsService, gh_mls_service, GH, MLS_SERVICE, GObject)
  * dismissed here, or an accept attempt used it up). */
 GhMlsService *gh_mls_service_new(const GhMlsServiceConfig *config, GError **error);
 #ifdef GH_MLS_TEST_HOOKS
+/* One launch attempt: 1 invalid event, 2 invalid URLs, 3 lost start precondition. */
+void gh_mls_service_test_fail_round_once(guint boundary);
 /* Deliver an already-unwrapped Welcome through the inbox callback. */
 gboolean gh_mls_service_test_receive_welcome(GhMlsService *self,
   const GhNip17Message *welcome, GError **error);

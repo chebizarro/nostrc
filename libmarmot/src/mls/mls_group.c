@@ -3712,11 +3712,11 @@ mls_group_handshake_sender(const MlsGroup *group, const uint8_t *msg, size_t msg
 }
 
 int
-mls_private_message_sender_leaf(const uint8_t sender_data_secret[32], const uint8_t *group_id,
+mls_private_message_sender_generation(const uint8_t sender_data_secret[32], const uint8_t *group_id,
                                 size_t group_id_len, uint64_t epoch, const uint8_t *msg,
-                                size_t msg_len, uint32_t *out_leaf)
+                                size_t msg_len, uint32_t *out_leaf, uint32_t *out_generation)
 {
-    if (!sender_data_secret || !group_id || !msg || !out_leaf) return MARMOT_ERR_INVALID_ARG;
+    if (!sender_data_secret || !group_id || !msg || !out_leaf || !out_generation) return MARMOT_ERR_INVALID_ARG;
     MlsMLSMessage wire;
     MlsTlsReader reader;
     mls_tls_reader_init(&reader, msg, msg_len);
@@ -3737,12 +3737,23 @@ mls_private_message_sender_leaf(const uint8_t sender_data_secret[32], const uint
                                     pm->encrypted_sender_data, pm->encrypted_sender_data_len,
                                     &sd) == 0) {
             *out_leaf = sd.leaf_index;
+            *out_generation = sd.generation;
             rc = 0;
         }
         sodium_memzero(&sd, sizeof(sd));
     }
     mls_message_clear(&wire);
     return rc;
+}
+
+int
+mls_private_message_sender_leaf(const uint8_t sender_data_secret[32], const uint8_t *group_id,
+                                size_t group_id_len, uint64_t epoch, const uint8_t *msg,
+                                size_t msg_len, uint32_t *out_leaf)
+{
+    uint32_t generation;
+    return mls_private_message_sender_generation(sender_data_secret, group_id, group_id_len,
+                                                  epoch, msg, msg_len, out_leaf, &generation);
 }
 
 /* The authenticated part of processing a Commit (RFC 9420 sections 6.1-6.3):

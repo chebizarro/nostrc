@@ -4,6 +4,12 @@
 #include "gh-signer.h"
 #include "gh-nip46-pair-dialog.h"
 
+#ifndef GROUNDHOG_HAVE_NET_SESSION
+#define GROUNDHOG_HAVE_NET_SESSION 0
+#endif
+#if GROUNDHOG_HAVE_NET_SESSION
+#include "gh-net-session.h"
+#endif
 #include <glib/gi18n.h>
 #include <nostr-event.h>
 #include <stdlib.h>
@@ -385,6 +391,11 @@ struct _GhOnboardingView {
   GtkWidget *start_conversation_button;
   GtkWidget *done_button;
   GtkLabel *check_note;
+  AdwBanner *inbox_tor_banner;
+  AdwBanner *publish_tor_banner;
+#if GROUNDHOG_HAVE_NET_SESSION
+  GhNetSession *network;
+#endif
 
   GhInboxSetupConfig config; /* accounts, account_relays, settings are owned refs */
   GListStore *identities;    /* GhOnboardingItem, key npub */
@@ -1665,6 +1676,24 @@ sync_check_note(GhOnboardingView *self)
                            "not your account."));
 }
 
+#if GROUNDHOG_HAVE_NET_SESSION
+static void
+sync_tor_state(GhOnboardingView *self)
+{
+  gboolean unreachable = self->network && self->config.tor_available &&
+    gh_net_session_get_tor_state(self->network) == GH_NET_TOR_UNREACHABLE;
+  adw_banner_set_revealed(self->inbox_tor_banner, unreachable);
+  adw_banner_set_revealed(self->publish_tor_banner, unreachable);
+}
+#endif
+
+static void
+open_network_settings(AdwBanner *banner, GhOnboardingView *self)
+{
+  (void)banner;
+  gtk_widget_activate_action(GTK_WIDGET(self), "app.network-settings", NULL);
+}
+
 GhOnboardingView *
 gh_onboarding_view_new(const GhInboxSetupConfig *config)
 {
@@ -1682,6 +1711,15 @@ gh_onboarding_view_new(const GhInboxSetupConfig *config)
   g_signal_connect_object(self->config.settings, "changed::network-mode",
                           G_CALLBACK(sync_check_note), self, G_CONNECT_SWAPPED);
   sync_check_note(self);
+  g_signal_connect(self->inbox_tor_banner, "button-clicked", G_CALLBACK(open_network_settings), self);
+  g_signal_connect(self->publish_tor_banner, "button-clicked", G_CALLBACK(open_network_settings), self);
+#if GROUNDHOG_HAVE_NET_SESSION
+  self->network = gh_net_session_dup_default();
+  if (self->network)
+    g_signal_connect_object(self->network, "notify::tor-state", G_CALLBACK(sync_tor_state), self,
+                            G_CONNECT_SWAPPED);
+  sync_tor_state(self);
+#endif
 
   g_autoptr(GError) error = NULL;
   self->suggestions = gh_inbox_setup_load_suggestions(&error);
@@ -1724,6 +1762,11 @@ static void
 gh_onboarding_view_dispose(GObject *object)
 {
   GhOnboardingView *self = GH_ONBOARDING_VIEW(object);
+#if GROUNDHOG_HAVE_NET_SESSION
+  if (self->network)
+    g_signal_handlers_disconnect_by_data(self->network, self);
+  g_clear_object(&self->network);
+#endif
   signer_test_cancel(self);
   if (self->probe) {
     gh_inbox_probe_cancel(self->probe);
@@ -1823,6 +1866,8 @@ gh_onboarding_view_class_init(GhOnboardingViewClass *klass)
   BIND(start_conversation_button);
   BIND(done_button);
   BIND(check_note);
+  BIND(inbox_tor_banner);
+  BIND(publish_tor_banner);
 #undef BIND
   /* Reachable by name (gtk_widget_get_template_child) for tests. */
   gtk_widget_class_bind_template_child_full(widget_class, "account_continue", FALSE, 0);

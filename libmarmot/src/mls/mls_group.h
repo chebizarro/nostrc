@@ -583,6 +583,13 @@ MARMOT_TEST_API int mls_private_message_sender_leaf(const uint8_t sender_data_se
                                     uint64_t epoch, const uint8_t *msg, size_t msg_len,
                                     uint32_t *out_leaf);
 
+/* Read-only application sender data, including the generation. Same routing-only
+ * contract as mls_private_message_sender_leaf(); never consumes a ratchet key. */
+MARMOT_TEST_API int mls_private_message_sender_generation(const uint8_t sender_data_secret[32],
+                                    const uint8_t *group_id, size_t group_id_len,
+                                    uint64_t epoch, const uint8_t *msg, size_t msg_len,
+                                    uint32_t *out_leaf, uint32_t *out_generation);
+
 /**
  * Process an incoming Commit message.
  *

@@ -251,5 +251,12 @@ void gh_relay_publish_blocked(GhRelayPublish *publish, const gchar *url);
 void gh_relay_publish_auth_challenge(GhRelayPublish *publish, const gchar *url,
                                      const gchar *challenge);
 
+/* Address provenance is independent of AUTH identity. Unknown destinations
+ * are public-only in direct mode; explicitly account-owned URLs may be local.
+ * Set before connecting. Paging/reconnects retain the choice. */
+gboolean gh_relay_publish_set_url_address_trusted(GhRelayPublish *self, const gchar *url,
+                                                  gboolean trusted, GError **error);
+gboolean gh_relay_publish_url_address_trusted(const GhRelayPublish *self, const gchar *url);
+
 G_END_DECLS
 #endif

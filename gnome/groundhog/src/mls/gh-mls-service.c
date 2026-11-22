@@ -149,6 +149,8 @@ struct _GhMlsGroup {
   gint64 floor;              /* when the account joined (or made) the group; 0: unknown */
   gboolean retrying;         /* retry_held() runs: a nested Commit only asks again */
   gboolean retry_again;
+  guint64 order_revision; /* canonical state/secrets changed, including same-epoch reorg */
+  guint backfill_draining; /* held and buffered apps share one generation-ordered pass */
   gint64 retained_retry_us;  /* the last retry for a retained Commit (monotonic) */
   guint retained_source;     /* a retry for retained Commits, coalesced (W25 review M1) */
   /* Changes: the Commit being published, and who waits for it. */
@@ -487,11 +489,48 @@ gh_mls_read_state_get_type(void)
 
 /* ---- Held events (a later epoch) -------------------------------------------------------- */
 
+/* Metadata is a scheduling hint only. Admission/authentication still belongs to
+ * process_event(). Failed peeks are retried only after new secrets arrive. */
+typedef struct {
+  MarmotMessageOrder key;
+  guint64 revision;
+  gboolean inspected, known;
+} EventOrder;
+
+static void
+inspect_event_order(GhMlsGroup *group, const gchar *json, EventOrder *order)
+{
+  if (order->known || (order->inspected && order->revision == group->order_revision))
+    return;
+  order->inspected = TRUE;
+  order->revision = group->order_revision;
+  order->known = marmot_inspect_message_order(group->service->marmot, &group->gid,
+                                             json, &order->key) == MARMOT_OK;
+}
+
+static gint
+compare_event_order(const EventOrder *x, const EventOrder *y)
+{
+  if (x->known != y->known)
+    return x->known ? -1 : 1; /* this epoch's applications before its closing Commit */
+  if (!x->known)
+    return 0;
+  if (x->key.epoch != y->key.epoch)
+    return x->key.epoch < y->key.epoch ? -1 : 1;
+  gint tag = memcmp(x->key.state_tag, y->key.state_tag, 32);
+  if (tag) return tag;
+  if (x->key.sender_leaf != y->key.sender_leaf)
+    return x->key.sender_leaf < y->key.sender_leaf ? -1 : 1;
+  return x->key.generation < y->key.generation ? -1 :
+         x->key.generation > y->key.generation;
+}
+
 /* A kind 445 that could not be decrypted yet. */
 typedef struct {
   gchar *id;
   gchar *json;
   gint64 created_at;   /* bounded to now + skew */
+  EventOrder order;
   guint64 epoch;       /* the group's epoch when it was held: it ages by tip advances */
   gboolean shown;      /* makes decrypt-pending (not the join second's stored answer) */
   gint64 held_us;      /* when it was first held (monotonic) */
@@ -516,8 +555,11 @@ held_free(gpointer data)
  * relay's EOSE (nostrc-cpwf). */
 typedef struct {
   gchar *json;
+  gchar *id;
   gchar *url;
   gint64 created_at;
+  EventOrder order;
+  Held *retry;         /* a held event temporarily joined to the same ordered pass */
   guint seq;           /* arrival order */
   gboolean stored;     /* of a stored answer or a page, not live (GhRelayUpdate.backfill) */
 } Stored;
@@ -527,7 +569,9 @@ stored_free(gpointer data)
 {
   Stored *stored = data;
   g_free(stored->json);
+  g_free(stored->id);
   g_free(stored->url);
+  if (stored->retry) held_free(stored->retry);
   g_free(stored);
 }
 
@@ -2340,7 +2384,9 @@ static gint
 held_older_first(gconstpointer a, gconstpointer b)
 {
   const Held *x = a, *y = b;
-  return x->created_at < y->created_at ? -1 : x->created_at > y->created_at;
+  if (x->created_at != y->created_at)
+    return x->created_at < y->created_at ? -1 : 1;
+  return compare_event_order(&x->order, &y->order);
 }
 
 /* Held events, again after a Commit moved the group on (review N1, N2).
@@ -2351,9 +2397,9 @@ held_older_first(gconstpointer a, gconstpointer b)
  * events oldest first, so an epoch's messages are tried before the Commit
  * that closes it; a whole newest-first backlog resolves in one call. Once a
  * Commit applied, a pass ends with that Commit's own second (the rest waits
- * for the next pass, oldest first again). Inside one second the order is
- * the relay's, not the sender's: a message of the new epoch may have come
- * before the Commit, and reading the epoch's later seconds first would move
+ * for the next pass, oldest first again). Inside one second sender-data
+ * metadata orders each sender's generations, refreshed after new secrets
+ * arrive. Reading the epoch's later seconds first would move
  * the sender's ratchet past libmarmot's window of skipped keys (32) before
  * it is tried again (nostrc-kzun); the rest of that second is still tried,
  * as it may hold the closing epoch's messages.
@@ -2371,7 +2417,7 @@ held_older_first(gconstpointer a, gconstpointer b)
 static void
 retry_held(GhMlsGroup *group)
 {
-  if (group->retrying) {
+  if (group->retrying || group->backfill_draining) {
     group->retry_again = TRUE;
     return;
   }
@@ -2385,10 +2431,15 @@ retry_held(GhMlsGroup *group)
     GList *pass = group->held.head;
     g_queue_init(&group->held);
     g_hash_table_remove_all(group->held_ids);
-    pass = g_list_sort(pass, held_older_first);   /* stable: arrival order within a second */
-    gint64 pass_ends = G_MAXINT64;                /* the second of a Commit applied */
     for (GList *l = pass; l; l = l->next) {
       Held *held = l->data;
+      inspect_event_order(group, held->json, &held->order);
+    }
+    pass = g_list_sort(pass, held_older_first);
+    gint64 pass_ends = G_MAXINT64;                /* the second of a Commit applied */
+    while (pass) {
+      Held *held = pass->data;
+      pass = g_list_delete_link(pass, pass);
       gint64 at = held->created_at;
       if (!group->active) {
         /* Ended mid-pass (a removal applied): nothing of it is held (N5). */
@@ -2396,10 +2447,18 @@ retry_held(GhMlsGroup *group)
         continue;
       }
       if (at <= pass_ends) {
+        guint64 revision = group->order_revision;
         gboolean before = group->retry_again;
         if (process_event(group, held->json, NULL, FALSE, held) != EVENT_HELD) {
           if (!before && group->retry_again)
             pass_ends = at;
+          if (revision != group->order_revision) {
+            for (GList *l = pass; l; l = l->next) {
+              Held *next = l->data;
+              inspect_event_order(group, next->json, &next->order);
+            }
+            pass = g_list_sort(pass, held_older_first);
+          }
           held_free(held);
           continue;
         }
@@ -2408,7 +2467,6 @@ retry_held(GhMlsGroup *group)
       g_queue_push_tail(&group->held, held);
       g_hash_table_add(group->held_ids, held->id);
     }
-    g_list_free(pass);
   } while (group->retry_again);
   gint64 now_us = g_get_monotonic_time();
   for (GList *l = group->held.head; l;) {
@@ -3130,8 +3188,45 @@ stored_older_first(gconstpointer a, gconstpointer b)
   const Stored *x = a, *y = b;
   if (x->created_at != y->created_at)
     return x->created_at < y->created_at ? -1 : 1;
-  /* Within a second the relay sent newest first: undo its order. */
+  gint order = compare_event_order(&x->order, &y->order);
+  if (order) return order;
+  /* No decryptable sender data yet: preserve the legacy fallback. */
   return x->seq > y->seq ? -1 : x->seq < y->seq;
+}
+
+/* A Commit can open an epoch split between held events already attempted and
+ * backfill not attempted yet. Neither queue may run ahead of the other: move
+ * held records (keeping their retry/proposal metadata) into the same sorted set. */
+static GList *
+join_held_backfill(GhMlsGroup *group, GList *mine)
+{
+  g_autoptr(GHashTable) ids = g_hash_table_new(g_str_hash, g_str_equal);
+  for (GList *l = mine; l; l = l->next) {
+    Stored *stored = l->data;
+    if (stored->id) g_hash_table_insert(ids, stored->id, stored);
+  }
+  Held *held;
+  while ((held = g_queue_pop_head(&group->held))) {
+    g_hash_table_remove(group->held_ids, held->id);
+    Stored *duplicate = g_hash_table_lookup(ids, held->id);
+    if (duplicate) {
+      /* A reconnect fetched an event already held. Keep its retry metadata,
+       * not two records that could both re-enter the held queue. */
+      if (duplicate->retry) held_free(held);
+      else duplicate->retry = held;
+      continue;
+    }
+    Stored *stored = g_new0(Stored, 1);
+    stored->json = g_strdup(held->json);
+    stored->id = g_strdup(held->id);
+    stored->created_at = held->created_at;
+    stored->order = held->order;
+    stored->seq = group->backfill_seq++;
+    stored->retry = held;
+    mine = g_list_prepend(mine, stored);
+    g_hash_table_insert(ids, stored->id, stored);
+  }
+  return mine;
 }
 
 /* Relays answer newest first, and libmarmot keeps only a few skipped
@@ -3156,14 +3251,42 @@ flush_backfill(GhMlsGroup *group)
   g_queue_init(&group->backfill);
   g_hash_table_remove_all(group->backfill_ids);
   group->backfill_bytes = 0;
-  mine = g_list_sort(mine, stored_older_first);
-  g_object_ref(group);   /* a Commit may change the subscription meanwhile */
+  group->backfill_draining++;
+  mine = join_held_backfill(group, mine);
   for (GList *l = mine; l; l = l->next) {
     Stored *stored = l->data;
-    if (listening(group))
-      process_event(group, stored->json, stored->url, stored->stored, NULL);
+    inspect_event_order(group, stored->json, &stored->order);
   }
-  g_list_free_full(mine, stored_free);
+  mine = g_list_sort(mine, stored_older_first);
+  g_object_ref(group);   /* a Commit may change the subscription meanwhile */
+  while (mine) {
+    Stored *stored = mine->data;
+    mine = g_list_delete_link(mine, mine);
+    guint64 revision = group->order_revision;
+    if (listening(group)) {
+      EventOutcome outcome = process_event(group, stored->json, stored->url,
+                                             stored->stored, stored->retry);
+      if (stored->retry && outcome == EVENT_HELD) {
+        Held *held = g_steal_pointer(&stored->retry);
+        g_queue_push_tail(&group->held, held);
+        g_hash_table_add(group->held_ids, held->id);
+      }
+    }
+    stored_free(stored);
+    if (revision != group->order_revision) {
+      mine = join_held_backfill(group, mine);
+      for (GList *l = mine; l; l = l->next) {
+        Stored *next = l->data;
+        inspect_event_order(group, next->json, &next->order);
+      }
+      mine = g_list_sort(mine, stored_older_first);
+    }
+  }
+  group->backfill_draining--;
+  if (!group->backfill_draining && group->retry_again)
+    retry_held(group);
+  g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_UNREADABLE]);
+  sync_decrypt_pending(group);
   g_object_unref(group);
 }
 
@@ -3284,6 +3407,7 @@ keep_backfill(GhMlsGroup *group, const GhRelayUpdate *update)
     g_hash_table_add(group->backfill_ids, g_strdup(update->event_id));
   Stored *stored = g_new0(Stored, 1);
   stored->json = g_strdup(update->event_json);
+  stored->id = g_strdup(update->event_id);
   stored->url = g_strdup(update->url);
   stored->created_at = G_MAXINT64;
   stored->seq = group->backfill_seq++;
@@ -3642,6 +3766,52 @@ retry_succeeded(GhMlsService *self)
 
 /* ---- Commits: publish, then merge (gh-mls-commits.h) ---------------------------------- */
 
+/* Each operation owns its cancellation fan-in. Cancelling one caller must
+ * stop its lookups, never the service's other operations. */
+typedef struct {
+  GCancellable *combined;
+  GCancellable *caller;
+  GCancellable *activity;
+  gulong caller_handler;
+  gulong activity_handler;
+} LookupCancellation;
+
+static void
+cancel_lookup(GCancellable *source, gpointer data)
+{
+  (void)source;
+  g_cancellable_cancel(data);
+}
+
+static void
+lookup_cancellation_init(LookupCancellation *cancel, GCancellable *caller,
+                           GCancellable *activity)
+{
+  cancel->combined = g_cancellable_new();
+  if (caller) {
+    cancel->caller = g_object_ref(caller);
+    cancel->caller_handler = g_cancellable_connect(caller, G_CALLBACK(cancel_lookup),
+      g_object_ref(cancel->combined), g_object_unref);
+  }
+  if (activity) {
+    cancel->activity = g_object_ref(activity);
+    cancel->activity_handler = g_cancellable_connect(activity, G_CALLBACK(cancel_lookup),
+      g_object_ref(cancel->combined), g_object_unref);
+  }
+}
+
+static void
+lookup_cancellation_clear(LookupCancellation *cancel)
+{
+  if (cancel->caller_handler)
+    g_cancellable_disconnect(cancel->caller, cancel->caller_handler);
+  if (cancel->activity_handler)
+    g_cancellable_disconnect(cancel->activity, cancel->activity_handler);
+  g_clear_object(&cancel->caller);
+  g_clear_object(&cancel->activity);
+  g_clear_object(&cancel->combined);
+}
+
 typedef enum { OP_CREATE, OP_ADD, OP_REMOVE, OP_METADATA, OP_DEPARTURES } OpKind;
 
 typedef struct {
@@ -3662,12 +3832,16 @@ typedef struct {
   guint rate_retries;         /* stagings libmarmot refused with MARMOT_ERR_EVENT_RATE */
   guint lookups;              /* in flight */
   GError *error;              /* the first lookup failure */
+  LookupCancellation cancel;
+  guint64 generation;        /* account identity */
+  guint64 run;               /* network activity serial */
 } Op;
 
 static void
 op_free(gpointer data)
 {
   Op *op = data;
+  lookup_cancellation_clear(&op->cancel);
   g_clear_object(&op->group);
   g_free(op->name);
   g_free(op->description);
@@ -3683,6 +3857,26 @@ op_free(gpointer data)
   marmot_group_blossom_image_clear(&op->image);   /* wipes the image and upload keys */
   g_clear_error(&op->error);
   g_free(op);
+}
+
+static gboolean
+op_return_if_stopped(GTask *task)
+{
+  GhMlsService *self = g_task_get_source_object(task);
+  Op *op = g_task_get_task_data(task);
+  if (g_task_return_error_if_cancelled(task))
+    return TRUE;
+  if (self->disposed || self->generation != op->generation) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                            "The account changed before the operation completed");
+    return TRUE;
+  }
+  if (!self->online || self->run != op->run) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
+                            "The network connection changed before the operation completed");
+    return TRUE;
+  }
+  return FALSE;
 }
 
 struct _Round {
@@ -3734,6 +3928,7 @@ static void leave_continue(GhMlsGroup *group);
 static void
 after_commit(GhMlsGroup *group)
 {
+  group->order_revision++;
   /* The group moved on: a refused Commit lost its epoch (nostrc-prrl). */
   if (group->refused_json)
     set_refused(group, NULL, GH_MLS_REFUSAL_NONE);
@@ -3815,26 +4010,44 @@ round_done(GhRelayPublish *publish, const GhRelayPublishSummary *summary, gpoint
   g_idle_add(round_free_idle, round);
 }
 
+#ifdef GH_MLS_TEST_HOOKS
+static guint test_round_failure;
+void gh_mls_service_test_fail_round_once(guint boundary) { test_round_failure = boundary; }
+#endif
+
 /* Publishes the staged Commit to its relays; takes publish. */
 static void
 round_start(GhMlsGroup *group, GhMlsCommitPublish *publish)
 {
   GhMlsService *self = group->service;
-  if (group->round || !running(self) || !publish->relay_urls || !publish->relay_urls[0]) {
+  if (group->round) {
     gh_mls_commit_publish_free(publish);
-    if (!group->round)
-      schedule_retry(self);
     return;
   }
+  if (!running(self) || !publish->relay_urls || !publish->relay_urls[0]) {
+    g_autoptr(GError) error = g_error_new_literal(GH_MLS_SERVICE_ERROR,
+      GH_MLS_SERVICE_ERROR_NO_RELAYS, "The group change has no available relays");
+    gh_mls_commit_publish_free(publish);
+    complete_waiters(group, error);
+    schedule_retry(self);
+    return;
+  }
+  guint failure = 0;
+#ifdef GH_MLS_TEST_HOOKS
+  failure = test_round_failure;
+  test_round_failure = 0;
+#endif
   Round *round = g_new0(Round, 1);
   round->group = group;
   round->publish = publish;
   g_autoptr(GError) error = NULL;
-  round->relay = gh_relay_publish_new(self->generation, publish->event_json, round_update,
+  round->relay = gh_relay_publish_new(self->generation, failure == 1 ? "{}" : publish->event_json, round_update,
                                       round_done, round, &error);
   if (!round->relay) {
     g_warning("Groundhog cannot publish a group change: %s", error->message);
     round_free(round);
+    complete_waiters(group, error);
+    schedule_retry(self);
     return;
   }
   if (self->publish_deadline)
@@ -3842,7 +4055,10 @@ round_start(GhMlsGroup *group, GhMlsCommitPublish *publish)
   guint added = 0;
   for (guint i = 0; publish->relay_urls[i]; i++) {
     g_autoptr(GError) url_error = NULL;
-    if (!gh_relay_publish_add_url(round->relay, publish->relay_urls[i], &url_error))
+    /* Fault injection changes only this attempt, never the durable Commit. */
+    if (failure == 3) { added++; continue; }
+    if (!gh_relay_publish_add_url(round->relay,
+                                  failure == 2 ? "invalid://relay" : publish->relay_urls[i], &url_error))
       continue;
     /* §4.3: MLS routing relays never learn the account. */
     gh_auth_policy_apply_publish(self->policy, round->relay, GH_AUTH_PURPOSE_MLS_ROUTING,
@@ -3850,7 +4066,11 @@ round_start(GhMlsGroup *group, GhMlsCommitPublish *publish)
     added++;
   }
   if (!added) {
+    g_set_error_literal(&error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NO_RELAYS,
+                        "The group change has no usable relay URLs");
     round_free(round);
+    complete_waiters(group, error);
+    schedule_retry(self);
     return;
   }
   group->round = round;
@@ -3858,6 +4078,8 @@ round_start(GhMlsGroup *group, GhMlsCommitPublish *publish)
     group->round = NULL;
     g_warning("Groundhog cannot publish a group change: %s", error->message);
     round_free(round);
+    complete_waiters(group, error);
+    schedule_retry(self);
   }
 }
 
@@ -4047,6 +4269,10 @@ stage_change(GTask *task, GhMlsGroup *group, GhMlsCommitProducer producer, gpoin
 {
   GhMlsService *self = group->service;
   g_autoptr(GError) error = NULL;
+  if (op_return_if_stopped(task)) {
+    g_object_unref(task);
+    return;
+  }
   if (group->round || group->pending_commit) {
     /* Review M1: behind a Commit Groundhog made on its own (the SelfRemove
      * upgrade, a member's leave) the admin's change waits and is made once
@@ -4640,6 +4866,10 @@ static void
 invitees_ready(GTask *task)
 {
   Op *op = g_task_get_task_data(task);
+  if (op_return_if_stopped(task)) {
+    g_object_unref(task);
+    return;
+  }
   if (op->error) {
     g_task_return_error(task, g_steal_pointer(&op->error));
     g_object_unref(task);
@@ -4744,9 +4974,10 @@ lookup_done(GObject *source, GAsyncResult *result, gpointer data)
   Op *op = g_task_get_task_data(task);
   g_autoptr(GError) error = NULL;
   g_autoptr(GhMlsKeyPackage) kp = gh_mls_key_package_lookup_finish(result, &error);
-  if (kp) {
-    /* Both formats, whichever the group uses: evidence fetched anyway. */
-    GhMlsService *self = g_task_get_source_object(task);
+  GhMlsService *self = g_task_get_source_object(task);
+  if (kp && !g_cancellable_is_cancelled(op->cancel.combined) &&
+      op->run == self->run && op->generation == self->generation) {
+    /* Both formats, whichever the group uses: current evidence only. */
     if (kp->adopted) {
       g_ptr_array_index(op->adopted_packages, lookup->index) = g_strdup(kp->event_json);
       remember_key_package(self, kp->event_json);
@@ -4759,7 +4990,7 @@ lookup_done(GObject *source, GAsyncResult *result, gpointer data)
     if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))
       op->error = g_error_new(GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NO_KEY_PACKAGE,
                               "%s", error->message);
-    else
+    else if (error)
       op->error = g_steal_pointer(&error);
   }
   g_free(lookup);
@@ -4812,7 +5043,7 @@ look_up_invitees(GTask *task)
     lookup->task = task;
     lookup->index = i;
     gh_mls_key_package_lookup_async(self->accounts, (const gchar *const *)sources, group_relays,
-                                    op->people[i], self->lookup_deadline, self->cancellable,
+                                    op->people[i], self->lookup_deadline, op->cancel.combined,
                                     lookup_done, lookup);
   }
 }
@@ -4843,6 +5074,9 @@ op_task(GhMlsService *self, OpKind kind, GhMlsGroup *group, GCancellable *cancel
   op->expected = -1;
   op->group = group ? g_object_ref(group) : NULL;
   op->key_packages = g_ptr_array_new_with_free_func(g_free);
+  op->generation = self->generation;
+  op->run = self->run;
+  lookup_cancellation_init(&op->cancel, cancellable, self->cancellable);
   g_task_set_task_data(task, op, op_free);
   return task;
 }
@@ -4852,6 +5086,10 @@ create_group_now(GTask *task)
 {
   GhMlsService *self = g_task_get_source_object(task);
   Op *op = g_task_get_task_data(task);
+  if (op_return_if_stopped(task)) {
+    g_object_unref(task);
+    return;
+  }
   guint n_relays = g_strv_length(op->relays);
   uint8_t admins[1][32];
   memcpy(admins[0], self->account_key, 32);
@@ -6881,12 +7119,15 @@ typedef struct {
   GhMlsGroup *group;   /* a reference */
   gchar *account;
   guint64 run;
+  guint64 generation;
+  LookupCancellation cancel;
 } VerifyOp;
 
 static void
 verify_op_free(gpointer data)
 {
   VerifyOp *op = data;
+  lookup_cancellation_clear(&op->cancel);
   g_clear_object(&op->group);
   g_free(op->account);
   g_free(op);
@@ -6927,12 +7168,20 @@ verify_done(GObject *source, GAsyncResult *result, gpointer data)
   g_autoptr(GError) error = NULL;
   g_autoptr(GPtrArray) found = gh_mls_key_package_evidence_lookup_finish(result, &error);
   if (self->disposed || op->run != self->run) {
-    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
-                            "The account changed before the check finished");
+    gboolean changed = self->disposed || op->generation != self->generation;
+    g_task_return_new_error(task, G_IO_ERROR,
+      changed ? G_IO_ERROR_CANCELLED : G_IO_ERROR_NOT_CONNECTED,
+      "%s", changed ? "The account changed before the check finished"
+                    : "The network connection changed before the check finished");
     g_object_unref(task);
     return;
   }
   g_hash_table_remove(self->verifying, op->account);
+  if (g_task_return_error_if_cancelled(task)) {
+    verify_mark(self, op->account, GH_MLS_MEMBER_CHECKING, GH_MLS_MEMBER_UNVERIFIED);
+    g_object_unref(task);
+    return;
+  }
   for (guint i = 0; found && i < found->len; i++)
     remember_key_package(self, g_ptr_array_index(found, i));
   /* Every device of the account the answer confirms, in every group; the
@@ -7034,12 +7283,14 @@ gh_mls_service_verify_member_async(GhMlsService *self, GhMlsGroup *group, const 
   op->group = g_object_ref(group);
   op->account = g_strdup(account);
   op->run = self->run;
+  op->generation = self->generation;
+  lookup_cancellation_init(&op->cancel, cancellable, self->cancellable);
   g_task_set_task_data(task, op, verify_op_free);
   g_hash_table_add(self->verifying, g_strdup(account));
   verify_mark(self, account, GH_MLS_MEMBER_UNVERIFIED, GH_MLS_MEMBER_CHECKING);
   gh_mls_key_package_evidence_lookup_async(self->accounts, (const gchar *const *)relays,
                                            (const gchar *const *)group->read_relays, account,
-                                           self->lookup_deadline, self->cancellable,
+                                           self->lookup_deadline, op->cancel.combined,
                                            verify_done, task);
 }
 
@@ -9531,7 +9782,7 @@ resume_all(GhMlsService *self)
 /* ---- Generation ----------------------------------------------------------------------- */
 
 static void
-stop_generation(GhMlsService *self)
+stop_activity(GhMlsService *self, gboolean account_changed)
 {
   self->run++;
   if (self->kp_reconcile_timer) {
@@ -9585,9 +9836,10 @@ stop_generation(GhMlsService *self)
       verify_mark(self, account, GH_MLS_MEMBER_CHECKING, GH_MLS_MEMBER_UNVERIFIED);
     g_hash_table_remove_all(self->verifying);
   }
-  g_autoptr(GError) cancelled = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_CANCELLED,
-                                                    "The account changed; the change stays "
-                                                    "pending and is sent again later");
+  g_autoptr(GError) cancelled = g_error_new_literal(G_IO_ERROR,
+    account_changed ? G_IO_ERROR_CANCELLED : G_IO_ERROR_NOT_CONNECTED,
+    account_changed ? "The account changed; the change stays pending and is sent again later"
+                    : "The network is offline; the change stays pending and is sent again later");
   for (guint i = 0; i < self->groups->len; i++) {
     GhMlsGroup *group = g_ptr_array_index(self->groups, i);
     group_unsubscribe(group);
@@ -9619,8 +9871,10 @@ update_activity(GhMlsService *self)
   if (generation == self->generation && online == self->online)
     return;
   /* Nothing of the old generation (or connection) may complete in the new. */
-  stop_generation(self);
-  identity_new_generation(self, generation);
+  gboolean account_changed = generation != self->generation;
+  stop_activity(self, account_changed);
+  if (account_changed)
+    identity_new_generation(self, generation);
   self->generation = generation;
   self->online = online;
   self->kp_observed_write_relays = key_package_relays(self);
@@ -10263,7 +10517,7 @@ gh_mls_service_dispose(GObject *object)
       g_clear_signal_handler(&self->network_handler, self->network);
     if (self->relays_handler)
       g_clear_signal_handler(&self->relays_handler, self->account_relays);
-    stop_generation(self);
+    stop_activity(self, TRUE);
     identity_new_generation(self, 0);
     self->generation = 0;
     if (self->rooms)

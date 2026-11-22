@@ -425,6 +425,8 @@ start_req(Lookup *lookup)
     ? gh_relay_scope_new_with_transport(lookup->generation, filters, &self->transport,
                                         self->transport_data, on_scope_update, lookup)
     : gh_relay_scope_new(lookup->generation, filters, on_scope_update, lookup);
+  g_auto(GStrv) configured = self->settings
+    ? g_settings_get_strv(self->settings, "discovery-relays") : NULL;
   GhAuthPolicy *policy = gh_auth_policy_get_for_accounts(self->accounts);
   for (guint i = 0; i < urls->len; i++) {
     const gchar *url = g_ptr_array_index(urls, i);
@@ -433,6 +435,8 @@ start_req(Lookup *lookup)
     /* A contact-directory connection: an ephemeral key if the relay demands
      * AUTH, never the account (charter §4.3, PD-12). */
     gh_auth_policy_apply_scope(policy, lookup->scope, GH_AUTH_PURPOSE_CONTACT_DIRECTORY, url, NULL);
+    if (configured && g_strv_contains((const gchar *const *)configured, url))
+      gh_relay_scope_set_url_address_trusted(lookup->scope, url, TRUE, NULL);
     g_hash_table_insert(lookup->sources, g_strdup(url), GUINT_TO_POINTER(SOURCE_PENDING));
   }
   lookup->deadline = g_timeout_source_new_seconds(self->deadline_seconds);

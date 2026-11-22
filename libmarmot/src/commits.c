@@ -4423,6 +4423,64 @@ marmot_commit_branch_secrets(Marmot *m, const MarmotGroupId *gid, MarmotBranchSe
     return MARMOT_OK;
 }
 
+static bool
+inspect_order(const MarmotGroupId *gid, uint64_t epoch, const uint8_t tag[32],
+              const uint8_t exporter[32], const uint8_t sender_data[32], const char *content,
+              MarmotMessageOrder *out)
+{
+    uint8_t *plain = NULL;
+    size_t len = 0;
+    if (marmot_group_event_decrypt(exporter, content, &plain, &len) != 0) return false;
+    int rc = mls_private_message_sender_generation(sender_data, gid->data, gid->len, epoch,
+                                                    plain, len, &out->sender_leaf,
+                                                    &out->generation);
+    free_secret(plain, len);
+    if (rc != 0) return false;
+    out->epoch = epoch;
+    memcpy(out->state_tag, tag, 32);
+    return true;
+}
+
+MarmotError
+marmot_inspect_message_order(Marmot *m, const MarmotGroupId *gid, const char *event_json,
+                             MarmotMessageOrder *out)
+{
+    if (!m || !gid || !event_json || !out) return MARMOT_ERR_INVALID_ARG;
+    memset(out, 0, sizeof(*out));
+    if (!m->storage || !m->storage->mls_load) return MARMOT_ERR_STORAGE;
+    NostrEvent *event = nostr_event_new();
+    if (!event) return MARMOT_ERR_MEMORY;
+    if (!nostr_event_deserialize_compact(event, event_json, NULL) ||
+        nostr_event_get_kind(event) != MARMOT_KIND_GROUP_MESSAGE ||
+        !nostr_event_get_content(event)) {
+        nostr_event_free(event);
+        return MARMOT_ERR_DESERIALIZATION;
+    }
+    const char *content = nostr_event_get_content(event);
+    MlsGroup cur;
+    MarmotError err = load_current(m, gid, &cur);
+    bool found = err == MARMOT_OK && inspect_order(gid, cur.epoch,
+        cur.confirmed_transcript_hash, cur.epoch_secrets.exporter_secret,
+        cur.epoch_secrets.sender_data_secret, content, out);
+    mls_group_free(&cur);
+    ConvHistory *h = NULL;
+    if (!found && err == MARMOT_OK) err = history_load(m, gid->data, gid->len, &h);
+    for (size_t i = 0; !found && h && i < h->n_entries; i++) {
+        const MlsGroup *past = &h->entries[i].state;
+        found = inspect_order(gid, past->epoch, past->confirmed_transcript_hash,
+            past->epoch_secrets.exporter_secret, past->epoch_secrets.sender_data_secret,
+            content, out);
+    }
+    for (size_t i = 0; !found && h && i < h->n_secrets; i++) {
+        const ConvBranchSecret *bs = &h->secrets[i];
+        found = inspect_order(gid, bs->epoch, bs->tag, bs->exporter, bs->sender_data,
+                               content, out);
+    }
+    history_free(h);
+    nostr_event_free(event);
+    return found ? MARMOT_OK : err != MARMOT_OK ? err : MARMOT_ERR_MLS;
+}
+
 void
 marmot_branch_secrets_free(MarmotBranchSecret *list, size_t count)
 {
