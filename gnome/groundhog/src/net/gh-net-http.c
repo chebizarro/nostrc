@@ -169,40 +169,6 @@ ipv4_public(const guint8 *bytes)
   return gh_net_address_is_public(v4);
 }
 
-/* 64:ff9b:1::/48 (RFC 8215) is a network's own NAT64 prefix, of any RFC 6052
- * length from /48 to /96, so where the IPv4 address sits is not known. Bits
- * 64-71 are always zero, and so are the bits after the IPv4 address: every
- * layout the address fits is decoded, and all of them must be public. */
-static gboolean
-nat64_local_public(const guint8 *b)
-{
-  static const struct {
-    guint8 at[4];  /* the IPv4 address's bytes */
-    guint8 suffix; /* the first byte after it */
-  } layouts[] = {
-    { { 6, 7, 9, 10 }, 11 },   /* /48 */
-    { { 7, 9, 10, 11 }, 12 },  /* /56 */
-    { { 9, 10, 11, 12 }, 13 }, /* /64 */
-    { { 12, 13, 14, 15 }, 16 }, /* /96 */
-  };
-  if (b[8] != 0)
-    return FALSE;
-  gboolean any = FALSE;
-  for (guint i = 0; i < G_N_ELEMENTS(layouts); i++) {
-    gboolean fits = TRUE;
-    for (guint j = layouts[i].suffix; j < 16; j++)
-      fits &= b[j] == 0;
-    if (!fits)
-      continue;
-    const guint8 v4[4] = { b[layouts[i].at[0]], b[layouts[i].at[1]], b[layouts[i].at[2]],
-                           b[layouts[i].at[3]] };
-    if (!ipv4_public(v4))
-      return FALSE;
-    any = TRUE;
-  }
-  return any;
-}
-
 gboolean
 gh_net_address_is_public(GInetAddress *address)
 {
@@ -228,8 +194,8 @@ gh_net_address_is_public(GInetAddress *address)
   if (b[0] == 0x00 && b[1] == 0x64 && b[2] == 0xff && b[3] == 0x9b) {
     if (memcmp(b + 4, zero, 8) == 0)
       return ipv4_public(b + 12);          /* 64:ff9b::/96, NAT64 */
-    if (b[4] == 0 && b[5] == 1)
-      return nat64_local_public(b);        /* 64:ff9b:1::/48, local NAT64 */
+    /* The local-use /48 is not globally reachable (RFC 8215). Its actual
+     * translation prefix/suffix cannot be inferred safely from a URL. */
     return FALSE;                          /* the rest of 64:ff9b::/32 */
   }
   if (b[0] == 0x20 && b[1] == 0x02)
@@ -239,8 +205,22 @@ gh_net_address_is_public(GInetAddress *address)
     const guint8 client[4] = { b[12] ^ 0xff, b[13] ^ 0xff, b[14] ^ 0xff, b[15] ^ 0xff };
     return ipv4_public(b + 4) && ipv4_public(client);
   }
+  /* IANA's IPv6 special-purpose registry: 2001::/23 is not globally
+   * reachable except for its more-specific allocations (Teredo above).
+   * https://www.iana.org/assignments/iana-ipv6-special-registry/ */
+  if (b[0] == 0x20 && b[1] == 0x01 && b[2] < 2) {
+    if (b[2] == 0 && b[3] == 1 && memcmp(b + 4, zero, 11) == 0 &&
+        b[15] >= 1 && b[15] <= 3)
+      return TRUE;                         /* PCP, TURN, DNS-SD anycast */
+    return b[2] == 0 && (b[3] == 3 ||      /* AMT 2001:3::/32 */
+      (b[3] == 4 && b[4] == 1 && b[5] == 0x12) || /* AS112 /48 */
+      (b[3] & 0xf0) == 0x20 ||            /* ORCHIDv2 /28 */
+      (b[3] & 0xf0) == 0x30);             /* DETs /28 */
+  }
   if (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x0d && b[3] == 0xb8)
     return FALSE;                          /* 2001:db8::/32, documentation */
+  if (b[0] == 0x3f && b[1] == 0xff && (b[2] & 0xf0) == 0)
+    return FALSE;                          /* 3fff::/20, documentation */
   /* Global unicast is 2000::/3. Outside it: unique local fc00::/7,
    * link-local, multicast, discard-only 100::/64 and the reserved ::/8. */
   return (b[0] & 0xe0) == 0x20;

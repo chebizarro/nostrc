@@ -2235,6 +2235,10 @@ if (TARGET groundhog-nip29 AND TARGET groundhog-store AND TARGET groundhog-auth-
   if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES)
     target_link_libraries(groundhog PRIVATE groundhog-nip29-service)
     target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_NIP29=1)
+    if (TARGET test-groundhog-account-store)
+      target_link_libraries(test-groundhog-account-store PRIVATE groundhog-nip29-service)
+      target_compile_definitions(test-groundhog-account-store PRIVATE GROUNDHOG_HAVE_NIP29=1)
+    endif()
   endif()
   if (BUILD_TESTING AND TARGET groundhog-test-schemas AND
       TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
@@ -2327,6 +2331,10 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
   if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES)
     target_link_libraries(groundhog PRIVATE groundhog-mls-service)
     target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_MLS=1)
+    if (TARGET test-groundhog-account-store)
+      target_link_libraries(test-groundhog-account-store PRIVATE groundhog-mls-service)
+      target_compile_definitions(test-groundhog-account-store PRIVATE GROUNDHOG_HAVE_MLS=1)
+    endif()
     # Preferences shows "Let people using older Marmot apps invite me" only
     # when the older format is a choice (gh-features.h, review N4).
     if (MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER)
