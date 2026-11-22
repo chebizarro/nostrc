@@ -398,13 +398,19 @@ confirm_find(GhPublicNoteUi *self, const gchar *uri)
 
 static void
 public_action(GhConversationView *view, const gchar *action, const gchar *uri,
-              GhPublicNoteUi *self)
+              const gchar *original, GhPublicNoteUi *self)
 {
   if (!gh_account_controller_is_current(self->accounts, self->generation)) return;
   g_autoptr(GnNostrReference) reference = gn_nostr_reference_parse(uri);
   if (!reference || (reference->type != GN_NOSTR_REFERENCE_EVENT &&
                      reference->type != GN_NOSTR_REFERENCE_ADDRESS)) return;
   const GhPublicNote *note = lookup(self, reference);
+  g_autoptr(GhPublicNote) embedded = NULL;
+  if (!note && reference->type == GN_NOSTR_REFERENCE_EVENT) {
+    embedded = gh_public_note_from_signed_json(original, NULL);
+    if (embedded && g_strcmp0(embedded->id, reference->id) == 0)
+      note = embedded;
+  }
   if (!note) return;
   AdwDialog *dialog = gh_public_post_dialog_new(self->accounts, self->relays, note,
                                                 uri, g_str_equal(action, "quote"));

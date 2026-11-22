@@ -1188,6 +1188,16 @@ card_state(GhMessageRow *row)
 static void render_shot(Fixture *f, GtkPopover *popover, const gchar *name);
 
 static void
+record_public_original(GhConversationView *view G_GNUC_UNUSED,
+                       const gchar *action, const gchar *uri G_GNUC_UNUSED,
+                       const gchar *original, gpointer data)
+{
+  g_assert_cmpstr(action, ==, "repost");
+  g_assert_nonnull(original);
+  *(gchar **)data = g_strdup(original);
+}
+
+static void
 test_reference_card(Fixture *f, gconstpointer data)
 {
   (void)data;
@@ -1253,6 +1263,15 @@ test_reference_card(Fixture *f, gconstpointer data)
   g_assert_cmpstr(text_of(card_part(embedded_row, "reference-content")), ==, "the original note");
   g_assert_true(shown(row_child(embedded_row, "reference_actions")));
   g_assert_true(shown(row_child(embedded_row, "share_reference_button")));
+  g_assert_true(shown(row_child(embedded_row, "public_actions")));
+  g_autofree gchar *acted_original = NULL;
+  gulong handler = g_signal_connect(f->view, "public-reference-action",
+                                    G_CALLBACK(record_public_original), &acted_original);
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(f->view), "conversation.repost-reference",
+    "s", gh_message_get_rumor_id(embedded_message)));
+  g_assert_cmpstr(acted_original, ==, original);
+  g_signal_handler_disconnect(f->view, handler);
+
   /* nostrc-boq9.5, nostrc-1co3q: the card is a repost's bubble's content,
    * which never shows its NIP-18 JSON: resolved, or saying it isn't
    * available. A mention's card sits under its bubble. */
