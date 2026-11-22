@@ -45,6 +45,7 @@ static gboolean retention_key(GtkEventControllerKey *controller, guint keyval, g
 static void retention_save(GtkButton *button, gpointer data) {
   PageSettings *self = data;
   AdwSpinRow *row = g_object_get_data(G_OBJECT(button), "retention-row");
+  adw_spin_row_update(row);
   if (g_settings_set_int(self->settings, "log-retention-days", (gint)adw_spin_row_get_value(row)))
     adw_dialog_close(ADW_DIALOG(gtk_widget_get_ancestor(GTK_WIDGET(button), ADW_TYPE_DIALOG)));
 }

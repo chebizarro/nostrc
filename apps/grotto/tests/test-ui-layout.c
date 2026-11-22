@@ -1905,6 +1905,40 @@ static void backup_navigation(void) {
   g_assert_cmpint(g_application_run(G_APPLICATION(app), 0, NULL), ==, 0);
   g_clear_object(&app); WAIT(apps_gone == 1);
 }
+static void retention_keyboard_activate(GApplication *application, gpointer data) {
+  (void)data;
+  AdwApplicationWindow *window = ADW_APPLICATION_WINDOW(signer_window_new(ADW_APPLICATION(application)));
+  g_object_ref(window);
+  gtk_window_set_default_size(GTK_WINDOW(window), 360, 640); gtk_window_present(GTK_WINDOW(window));
+  wait_frames(GTK_WIDGET(window));
+  PageSettings *page = g_object_ref_sink(page_settings_new());
+  GSettings *settings = settings_manager_get_gsettings(settings_manager_get_default());
+  gint before = g_settings_get_int(settings, "log-retention-days");
+  g_settings_set_int(settings, "log-retention-days", 30);
+  for (guint i = 1; i <= 2; i++) {
+    page_settings_show_retention(page, GTK_WIDGET(window)); wait_frames(GTK_WIDGET(window));
+    AdwDialog *dialog = adw_application_window_get_visible_dialog(window);
+    GtkWidget *row = find_editor_control(GTK_WIDGET(dialog), ADW_TYPE_SPIN_ROW);
+    GtkWidget *spin = find_editor_control(row, GTK_TYPE_SPIN_BUTTON); g_assert_nonnull(spin);
+    g_autofree gchar *text = g_strdup_printf("%u", i);
+    gtk_editable_set_text(GTK_EDITABLE(spin), text);
+    if (i == 1) g_signal_emit_by_name(find_button(GTK_WIDGET(dialog), _("_Save")), "clicked");
+    else return_from_input(GTK_WINDOW(window), spin);
+    WAIT(!adw_application_window_get_visible_dialog(window));
+    g_assert_cmpint(g_settings_get_int(settings, "log-retention-days"), ==, i);
+  }
+  g_settings_set_int(settings, "log-retention-days", before);
+  g_object_unref(page);
+  gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window); g_application_quit(application);
+}
+static void retention_keyboard(void) {
+  guint apps_gone = 0;
+  g_autoptr(AdwApplication) app = adw_application_new("org.nostr.Grotto.RetentionKeyboardTest", G_APPLICATION_NON_UNIQUE);
+  g_object_weak_ref(G_OBJECT(app), finalised, &apps_gone);
+  g_signal_connect(app, "activate", G_CALLBACK(retention_keyboard_activate), NULL);
+  g_assert_cmpint(g_application_run(G_APPLICATION(app), 0, NULL), ==, 0);
+  g_clear_object(&app); WAIT(apps_gone == 1);
+}
 static void layout(void) {
   guint apps_gone = 0;
   g_autoptr(AdwApplication) app = adw_application_new("org.nostr.Grotto.LayoutTest", G_APPLICATION_NON_UNIQUE);
@@ -1980,6 +2014,7 @@ int main(int argc, char **argv) {
   g_test_add_func("/signer/layout/connection-link-actions", connection_link_actions);
   g_test_add_func("/signer/layout/backup-file-keyboard", backup_file_keyboard);
   g_test_add_func("/signer/layout/backup-navigation", backup_navigation);
+  g_test_add_func("/signer/layout/retention-keyboard", retention_keyboard);
   g_test_add_func("/signer/layout/assistant-input-keyboard", assistant_input_keyboard);
   }
   int result = g_test_run();
