@@ -780,25 +780,24 @@ welcome_process_impl(const MlsWelcome *welcome,
     }
     mls_tls_buf_free(&gi_tbs);
 
-    /* Adopted profile (nostrc-qp24.5.1; RFC 9420 §12.4.3.1): with the tree
-     * authenticated by the GroupInfo signature, every member leaf must
-     * itself verify -- its signature covers the account-proof dictionary --
-     * and satisfy the group's capability and component requirements; every
-     * admin must be a member. */
-    if (group_out->profile == MARMOT_GROUP_PROFILE_ADOPTED) {
-        int adm_rc = mls_group_profile_check_entered(group_out);
-        for (uint32_t i = 0; adm_rc == 0 && i < group_out->tree.n_leaves; i++) {
-            const MlsNode *n = &group_out->tree.nodes[mls_tree_leaf_to_node(i)];
-            if (n->type == MLS_NODE_LEAF &&
-                mls_leaf_node_verify_signature(&n->leaf, group_out->group_id,
-                                               group_out->group_id_len, i) != 0)
-                adm_rc = MARMOT_ERR_WELCOME_INVALID;
-        }
-        if (adm_rc != 0) {
+    /* RFC 9420 §12.4.3.1 (nostrc-3hzu): with the tree authenticated by the
+     * GroupInfo signature, every member leaf must itself pass §7.3 -- for
+     * adopted leaves the signature also covers the account-proof dictionary.
+     * Adopted groups (nostrc-qp24.5.1) must further satisfy the group's
+     * capability and component requirements, with every admin a member.
+     * Legacy trees whose commit leaves were signed without the group_id and
+     * leaf_index binding (libmarmot <= 0.3.6) are refused, as MDK does. */
+    {
+        int leaf_rc = group_out->profile == MARMOT_GROUP_PROFILE_ADOPTED
+                          ? mls_group_profile_check_entered(group_out)
+                          : 0;
+        if (leaf_rc == 0) leaf_rc = mls_group_validate_imported_leaves(group_out);
+        if (leaf_rc != 0) {
+            fprintf(stderr, "welcome invalid: ratchet tree leaf\n");
             mls_group_info_clear(&gi);
             sodium_memzero(joiner_secret, sizeof(joiner_secret));
             mls_group_free(group_out);
-            return adm_rc;
+            return leaf_rc;
         }
     }
 

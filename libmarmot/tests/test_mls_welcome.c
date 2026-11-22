@@ -36,6 +36,12 @@ static const uint8_t BOB_ID[32] = {
     0xB0, 0xB0, 0xB0, 0xB0, 0xB0, 0xB0, 0xB0, 0xB0,
     0xB0, 0xB0, 0xB0, 0xB0, 0xB0, 0xB0, 0xB0, 0xB0,
 };
+static const uint8_t CHARLIE_ID[32] = {
+    0xC4, 0xC4, 0xC4, 0xC4, 0xC4, 0xC4, 0xC4, 0xC4,
+    0xC4, 0xC4, 0xC4, 0xC4, 0xC4, 0xC4, 0xC4, 0xC4,
+    0xC4, 0xC4, 0xC4, 0xC4, 0xC4, 0xC4, 0xC4, 0xC4,
+    0xC4, 0xC4, 0xC4, 0xC4, 0xC4, 0xC4, 0xC4, 0xC4,
+};
 static const uint8_t GROUP_ID[]   = "welcome-test-group";
 
 static int
@@ -341,6 +347,74 @@ TEST(test_welcome_group_info_stays_private)
     mls_group_free(&alice_group);
 }
 
+/* nostrc-3hzu (RFC 9420 §12.4.3.1): the joiner validates every leaf of the
+ * imported tree under §7.3, not just the GroupInfo signer's key.  Charlie's
+ * leaf is altered in Alice's tree before she adds Bob, so the Welcome is
+ * otherwise coherent: Alice signs a GroupInfo whose tree hash and parent
+ * hashes cover the altered leaf. */
+enum { LEAF_OK, LEAF_BAD_SIGNATURE, LEAF_NO_MLS10, LEAF_DUP_SIG_KEY, LEAF_FAULTS };
+
+TEST(test_welcome_validates_member_leaves)
+{
+    for (int fault = LEAF_OK; fault < LEAF_FAULTS; fault++) {
+        MlsGroup alice, bob;
+        uint8_t alice_sk[MLS_SIG_SK_LEN];
+        assert(create_alice_group(&alice, alice_sk) == 0);
+
+        MlsKeyPackage charlie_kp, bob_kp;
+        MlsKeyPackagePrivate charlie_priv, bob_priv;
+        assert(mls_key_package_create(&charlie_kp, &charlie_priv, CHARLIE_ID, 32, NULL, 0) == 0);
+        assert(mls_key_package_create(&bob_kp, &bob_priv, BOB_ID, 32, NULL, 0) == 0);
+
+        MlsAddResult add;
+        assert(mls_group_add_member(&alice, &charlie_kp, &add) == 0);
+        mls_add_result_clear(&add);
+
+        MlsLeafNode *charlie = &alice.tree.nodes[mls_tree_leaf_to_node(1)].leaf;
+        assert(charlie->leaf_node_source == MLS_LEAF_NODE_SOURCE_KEY_PACKAGE);
+        switch (fault) {
+        case LEAF_BAD_SIGNATURE:
+            charlie->signature[0] ^= 1;
+            break;
+        case LEAF_NO_MLS10:
+            /* Validly signed by Charlie, but not an MLS 1.0 leaf (§7.3 step 3). */
+            for (size_t i = 0; i < charlie->version_count; i++)
+                charlie->versions[i] = 0xffff;
+            assert(mls_leaf_node_sign(charlie, charlie_priv.signature_key_private,
+                                      NULL, 0, 1) == 0);
+            break;
+        case LEAF_DUP_SIG_KEY:
+            /* Charlie's leaf re-signed under Alice's signature key (§7.3 step 8). */
+            memcpy(charlie->signature_key,
+                   alice.tree.nodes[mls_tree_leaf_to_node(0)].leaf.signature_key,
+                   MLS_SIG_PK_LEN);
+            assert(mls_leaf_node_sign(charlie, alice_sk, NULL, 0, 1) == 0);
+            break;
+        default:
+            break;
+        }
+
+        assert(mls_group_add_member(&alice, &bob_kp, &add) == 0);
+        int rc = mls_welcome_process(add.welcome_data, add.welcome_len,
+                                     &bob_kp, &bob_priv, NULL, 0, &bob);
+        if (fault == LEAF_OK) {
+            assert(rc == 0);
+            assert(bob.own_leaf_index == 2);
+            mls_group_free(&bob);
+        } else {
+            assert(rc == MARMOT_ERR_WELCOME_INVALID);
+        }
+
+        mls_add_result_clear(&add);
+        mls_key_package_clear(&charlie_kp);
+        mls_key_package_private_clear(&charlie_priv);
+        mls_key_package_clear(&bob_kp);
+        mls_key_package_private_clear(&bob_priv);
+        mls_group_free(&alice);
+        sodium_memzero(alice_sk, sizeof(alice_sk));
+    }
+}
+
 /* ── Clear tests ───────────────────────────────────────────────────────── */
 
 TEST(test_welcome_clear_null_safe)
@@ -387,6 +461,7 @@ int main(void)
     printf(" Integration:\n");
     RUN(test_add_and_welcome_integration);
     RUN(test_welcome_group_info_stays_private);
+    RUN(test_welcome_validates_member_leaves);
 
     printf(" Cleanup:\n");
     RUN(test_welcome_clear_null_safe);

@@ -3432,6 +3432,23 @@ leaf_keys_unique(const MlsRatchetTree *tree, uint32_t leaf_index)
     return 0;
 }
 
+int
+mls_group_validate_imported_leaves(const MlsGroup *g)
+{
+    if (!g) return MARMOT_ERR_WELCOME_INVALID;
+    for (uint32_t i = 0; i < g->tree.n_leaves; i++) {
+        const MlsNode *n = &g->tree.nodes[mls_tree_leaf_to_node(i)];
+        if (n->type != MLS_NODE_LEAF) continue;
+        /* The leaf is its own predecessor: there is no earlier state of an
+         * imported member to be a successor of. */
+        if (leaf_node_validate(g, &n->leaf, n->leaf.leaf_node_source, i, &n->leaf,
+                               g->extensions_data, g->extensions_len) != 0 ||
+            leaf_keys_unique(&g->tree, i) != 0)
+            return MARMOT_ERR_WELCOME_INVALID;
+    }
+    return 0;
+}
+
 /**
  * RFC 9420 §12.4.2, against the tree the proposals produced (before the
  * UpdatePath is merged): none of the UpdatePath's public keys may appear in

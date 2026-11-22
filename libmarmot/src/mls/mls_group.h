@@ -266,6 +266,19 @@ MARMOT_TEST_API int mls_group_profile_check(const MlsGroup *g);
 MARMOT_TEST_API int mls_group_profile_check_entered(const MlsGroup *g);
 
 /**
+ * RFC 9420 §12.4.3.1 for a tree imported by Welcome: every non-blank leaf
+ * passes §7.3 for its own leaf_node_source against the group `g` joins --
+ * LeafNodeTBS signature (bound to group_id and leaf_index for the update and
+ * commit sources), credential, version, ciphersuite and GroupContext
+ * extension support, mutual credential support, leaf extensions listed in its
+ * capabilities, and signature/encryption key uniqueness.  Key_package leaves'
+ * lifetimes are not enforced: a joiner inherits long-lived members whose
+ * KeyPackage lifetimes have legitimately passed.  0 or
+ * MARMOT_ERR_WELCOME_INVALID.
+ */
+int mls_group_validate_imported_leaves(const MlsGroup *g);
+
+/**
  * Reduce `g` to what reading the rest of its epoch's application messages
  * needs (nostrc-yuj2; Marmot protocol-core/retained-history.md, "Retained
  * cryptographic material": the app-payload row without the candidate-
