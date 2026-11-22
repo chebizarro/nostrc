@@ -591,13 +591,34 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/generated/nostr-config.h
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr)
 
-# pkg-config generation. Deterministic on NOSTR_WITH_GLIB alone so the produced
-# nostr.pc `Requires:` line does not vary by build host (B11).
+# Public headers include libnostrgo headers. The remaining dependencies belong
+# to the static link closure, not every shared-library consumer's link command.
+set(NOSTR_PKG_REQUIRES "libnostrgo")
 if(NOSTR_WITH_GLIB)
-  set(NOSTR_PKG_REQUIRES "glib-2.0 >= 2.50, gobject-2.0 >= 2.50")
-else()
-  set(NOSTR_PKG_REQUIRES "")
+  string(APPEND NOSTR_PKG_REQUIRES ", glib-2.0 >= 2.50, gobject-2.0 >= 2.50")
 endif()
+set(NOSTR_PKG_REQUIRES_PRIVATE "libwebsockets, openssl, libsecp256k1")
+set(NOSTR_PKG_LIBS_PRIVATE "")
+if(LIBNOSTR_WITH_NOSTRDB AND TARGET nostrdb)
+  # Keep the backend an implementation detail: no raw nostrdb headers or
+  # public package, but the archive must exist for installed static consumers.
+  install(FILES "$<TARGET_FILE:nostrdb>"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RENAME "${CMAKE_STATIC_LIBRARY_PREFIX}nostr-ndb-private${CMAKE_STATIC_LIBRARY_SUFFIX}")
+  set(NOSTR_PKG_LIBS_PRIVATE "-lnostr-ndb-private")
+  string(APPEND NOSTR_PKG_REQUIRES_PRIVATE ", libsodium")
+  if(FLATCCRT_LIB)
+    get_filename_component(_nostr_flatcc_libdir "${FLATCCRT_LIB}" DIRECTORY)
+    string(APPEND NOSTR_PKG_LIBS_PRIVATE " -L${_nostr_flatcc_libdir} -lflatccrt")
+  endif()
+  if(APPLE)
+    string(APPEND NOSTR_PKG_LIBS_PRIVATE " -framework Security")
+  endif()
+endif()
+# Derive the prefix from the installed .pc, including multiarch lib directories.
+# This also honors cmake --install --prefix instead of baking the build prefix.
+file(RELATIVE_PATH LIBNOSTR_PC_PREFIX_RELATIVE
+  "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig" "${CMAKE_INSTALL_PREFIX}")
 set(NOSTR_PKGCONF ${CMAKE_CURRENT_BINARY_DIR}/nostr.pc)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/libnostr.pc.in ${NOSTR_PKGCONF} @ONLY)
 install(FILES ${NOSTR_PKGCONF} DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)

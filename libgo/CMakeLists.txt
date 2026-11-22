@@ -461,16 +461,31 @@ endif()
 # `libgo.pc -> libnostrgo.pc` is installed alongside it so consumers on the
 # old spelling keep working during the transition.
 set(LIBNOSTRGO_PKGCONF "${CMAKE_CURRENT_BINARY_DIR}/libnostrgo.pc")
-# Libs.private:
-#   * system nsync -> "-lnsync -lpthread"  (consumers must link nsync)
-#   * vendored nsync -> "-lpthread"        (nsync is folded into libnostrgo.so
-#                                            via --whole-archive; downstream
-#                                            gets nsync symbols transitively)
+# Shared libnostrgo folds in vendored nsync; a static archive does not.
+set(LIBNOSTRGO_PC_NSYNC_CFLAGS "")
 if(NOSTRC_NSYNC_VENDORED)
-  set(LIBNOSTRGO_PC_NSYNC_LIB "")
+  file(GLOB _libgo_nsync_public_headers "${NSYNC_INCLUDE_DIR}/nsync*.h")
+  install(FILES ${_libgo_nsync_public_headers}
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT Development)
+  if(_nostrgo_type STREQUAL "STATIC_LIBRARY")
+    install(FILES "$<TARGET_FILE:nsync>"
+      DESTINATION ${CMAKE_INSTALL_LIBDIR}
+      RENAME "${CMAKE_STATIC_LIBRARY_PREFIX}nostr-nsync-private${CMAKE_STATIC_LIBRARY_SUFFIX}")
+    set(LIBNOSTRGO_PC_NSYNC_LIB "-lnostr-nsync-private ")
+  else()
+    set(LIBNOSTRGO_PC_NSYNC_LIB "")
+  endif()
 else()
-  set(LIBNOSTRGO_PC_NSYNC_LIB "-lnsync ")
+  get_filename_component(_libgo_nsync_libdir "${NSYNC_LIB}" DIRECTORY)
+  set(LIBNOSTRGO_PC_NSYNC_LIB "-L${_libgo_nsync_libdir} -lnsync ")
+  # channel/context/select public headers include nsync.h.
+  set(LIBNOSTRGO_PC_NSYNC_CFLAGS "-I${NSYNC_INCLUDE_DIR}")
 endif()
+if(WIN32)
+  string(APPEND LIBNOSTRGO_PC_NSYNC_LIB "-lstdc++ ")
+endif()
+file(RELATIVE_PATH LIBNOSTRGO_PC_PREFIX_RELATIVE
+  "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig" "${CMAKE_INSTALL_PREFIX}")
 configure_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/libnostrgo.pc.in"
   "${LIBNOSTRGO_PKGCONF}"
