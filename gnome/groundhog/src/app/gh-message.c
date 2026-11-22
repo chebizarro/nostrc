@@ -812,6 +812,9 @@ gh_message_new_from_mls(const gchar *account_pubkey, const gchar *group_id_hex,
     reason = "unsupported inner event kind";
   else if (!reason && nostr_event_get_created_at(event) <= 0)
     reason = "no created_at";
+  else if (!reason && nostr_event_get_created_at(event) >
+           g_get_real_time() / G_USEC_PER_SEC + GH_MESSAGE_MLS_MAX_FUTURE_SKEW_SECONDS)
+    reason = "created_at is too far in the future";
   else if (!reason && !lower_hex64(nostr_event_get_pubkey(event)))
     reason = "author is not a lowercase hex pubkey";
   else if (!reason && !nostr_event_get_content(event))

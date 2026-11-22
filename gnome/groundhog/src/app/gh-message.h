@@ -149,6 +149,7 @@ gint gh_message_compare(GhMessage *a, GhMessage *b);
  * a bad account or relay). */
 #define GH_MESSAGE_NIP29_SEPARATOR "\x1f"
 #define GH_MESSAGE_MAX_GROUP_ID 256
+#define GH_MESSAGE_MLS_MAX_FUTURE_SKEW_SECONDS 600
 GhMessage *gh_message_new_from_nip29_event(const gchar *account_pubkey,
                                            const gchar *relay_url,
                                            const gchar *event_json,

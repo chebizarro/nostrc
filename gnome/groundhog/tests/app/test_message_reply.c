@@ -228,6 +228,29 @@ test_extract_mentions(void)
   g_assert_cmpstr(mentions[0], ==, ACCOUNT);
 }
 
+static void
+test_mls_future_time(void)
+{
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  for (guint future = 0; future < 2; future++) {
+    gint64 timestamp = future ? now + GH_MESSAGE_MLS_MAX_FUTURE_SKEW_SECONDS + 60 : now;
+    g_autofree gchar *json = g_strdup_printf(
+      "{\"pubkey\":\"%s\",\"kind\":9,\"content\":\"clock test\",\"tags\":[],\"created_at\":%" G_GINT64_FORMAT "}",
+      ACCOUNT, timestamp);
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GhMessage) message = gh_message_new_from_mls(ACCOUNT, "aabbccdd", json, &error);
+    if (future) {
+      g_assert_null(message);
+      g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+      g_assert_nonnull(strstr(error->message, "future"));
+    } else {
+      g_assert_no_error(error);
+      g_assert_nonnull(message);
+      g_assert_cmpint(gh_message_get_created_at(message), ==, now);
+    }
+  }
+}
+
 int
 main(int argc, char **argv)
 {
@@ -240,6 +263,7 @@ main(int argc, char **argv)
   g_test_add_func("/message/reply/nip29-e-bare", test_nip29_reply_e_bare);
   g_test_add_func("/message/reply/nip29-q-tag", test_nip29_reply_q_tag);
   g_test_add_func("/message/reply/nip29-marked-over-bare", test_nip29_reply_marked_over_bare);
+  g_test_add_func("/message/reply/mls-future-time", test_mls_future_time);
   g_test_add_func("/message/reply/mls-no-reply", test_mls_no_reply);
   g_test_add_func("/message/reply/mls-e-tag", test_mls_reply_e_tag);
   g_test_add_func("/message/reply/mls-q-over-bare", test_mls_reply_q_over_bare);
