@@ -1336,7 +1336,10 @@ int main(int argc, char **argv) {
               if (!dpk) {
                 status = "BAD_KEY";
                 failed++;
-              } else if (meta.pubkey && g_ascii_strcasecmp(dpk, meta.pubkey) != 0) {
+              } else if (!meta.pubkey || !meta.pubkey[0]) {
+                status = "MISSING_PUBKEY";
+                failed++;
+              } else if (g_ascii_strcasecmp(dpk, meta.pubkey) != 0) {
                 status = "MISMATCH";
                 failed++;
               }

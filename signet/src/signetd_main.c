@@ -657,6 +657,12 @@ int main(int argc, char **argv) {
     .flush_each_write = true,
   };
   SignetAuditLogger *audit = signet_audit_logger_new(&audit_cfg);
+  if (!audit) {
+    fprintf(stderr, "signetd: configured audit logger unavailable\n");
+    sodium_free(db_key);
+    signet_config_clear(&cfg);
+    return 1;
+  }
   signet_audit_daemon_event(audit, SIGNET_AUDIT_EVENT_STARTUP, signet_now_unix(),
                             "startup", SIGNET_VERSION, config_path);
 
@@ -665,8 +671,16 @@ int main(int argc, char **argv) {
     .max_entries = cfg.replay_max_entries,
     .ttl_seconds = cfg.replay_ttl_seconds,
     .skew_seconds = cfg.replay_skew_seconds,
+    .max_entries_per_scope = 512,
+    .refuse_when_full = true,
   };
   SignetReplayCache *replay = signet_replay_cache_new(&replay_cfg);
+  if (!replay) {
+    sodium_free(db_key);
+    signet_audit_logger_free(audit);
+    signet_config_clear(&cfg);
+    return 1;
+  }
 
   /* 3) Key store (SQLCipher + mlock'd hot cache) */
   SignetKeyStoreConfig ks_cfg = {
@@ -742,6 +756,7 @@ int main(int argc, char **argv) {
     }
   }
 
+bool passkeys_start_failed = false;
 #ifdef SIGNET_ENABLE_PASSKEYS
   SignetFidoService *fido = NULL;
   SignetFidoCtapHid *ctaphid = NULL;
@@ -766,16 +781,17 @@ int main(int argc, char **argv) {
     memcpy(fido_cfg.aaguid, aaguid, sizeof(aaguid));
     memcpy(ctaphid_aaguid, aaguid, sizeof(ctaphid_aaguid));
     fido = signet_fido_service_new(&fido_cfg);
-    if (!fido) {
-      g_warning("[signetd] failed to initialize passkey service; passkeys will return NotConfigured");
+    if (cfg.passkeys_enabled && (!fido || !base_store)) {
+      g_printerr("signetd: configured passkey service unavailable\n");
+      passkeys_start_failed = true;
     }
-    if (cfg.passkeys_enabled) {
+    if (cfg.passkeys_enabled && !passkeys_start_failed) {
       g_message("[signetd] passkeys enabled backend=%s attestation=%s headless_uv=%s virtual_ctap=%s",
                 cfg.passkeys_backend, cfg.passkeys_attestation,
                 cfg.passkeys_allow_headless_uv ? "true" : "false",
                 cfg.passkeys_virtual_ctap ? "true" : "false");
     }
-    if (cfg.passkeys_virtual_ctap) {
+    if (cfg.passkeys_virtual_ctap && !passkeys_start_failed) {
       SignetFidoCtapHidConfig hid_cfg = {
         .enabled = true,
         .fido = fido,
@@ -784,19 +800,29 @@ int main(int argc, char **argv) {
       };
       ctaphid = signet_fido_ctaphid_new(&hid_cfg);
       if (!ctaphid || signet_fido_ctaphid_start(ctaphid) != 0) {
-        g_warning("[signetd] virtual CTAP-HID requested but not started");
+        g_printerr("signetd: virtual CTAP-HID requested but not started\n");
+        passkeys_start_failed = true;
       }
     }
   }
 #else
   struct SignetFidoService *fido = NULL;
-  if (cfg.passkeys_enabled) {
-    g_warning("[signetd] passkeys enabled in config but this build lacks SIGNET_ENABLE_PASSKEYS");
-  }
-  if (cfg.passkeys_virtual_ctap) {
-    g_warning("[signetd] virtual CTAP requested but this build lacks SIGNET_ENABLE_PASSKEYS");
+  if (cfg.passkeys_enabled || cfg.passkeys_virtual_ctap) {
+    g_printerr("signetd: configured passkeys/CTAP unavailable: build lacks SIGNET_ENABLE_PASSKEYS\n");
+    passkeys_start_failed = true;
   }
 #endif
+  if (passkeys_start_failed) {
+#ifdef SIGNET_ENABLE_PASSKEYS
+    signet_fido_ctaphid_free(ctaphid);
+    signet_fido_service_free(fido);
+#endif
+    signet_key_store_free(keys);
+    signet_replay_cache_free(replay);
+    signet_audit_logger_free(audit);
+    signet_config_clear(&cfg);
+    return 1;
+  }
 
   /* 4) Policy store (file-backed) */
   SignetPolicyStore *store = signet_policy_store_file_new(cfg.policy_file_path);

@@ -155,6 +155,36 @@ static int signet_copy_file(const char *src, const char *dst) {
   return rc;
 }
 
+/* Never hard-link plaintext custody into a potentially public backup inode. */
+static int signet_copy_plaintext_backup(const char *src, const char *dst) {
+  int in = open(src, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  if (in < 0) return -1;
+  int out = open(dst, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+  if (out < 0) { close(in); return -1; }
+  char buf[65536];
+  int rc = 0;
+  for (;;) {
+    ssize_t n = read(in, buf, sizeof(buf));
+    if (n < 0 && errno == EINTR) continue;
+    if (n < 0) { rc = -1; break; }
+    if (!n) break;
+    ssize_t at = 0;
+    while (at < n) {
+      ssize_t wrote = write(out, buf + at, (size_t)(n - at));
+      if (wrote < 0 && errno == EINTR) continue;
+      if (wrote <= 0) { rc = -1; break; }
+      at += wrote;
+    }
+    if (rc) break;
+  }
+  sodium_memzero(buf, sizeof(buf));
+  if (fsync(out) != 0) rc = -1;
+  close(in);
+  if (close(out) != 0) rc = -1;
+  if (rc) unlink(dst);
+  return rc;
+}
+
 /* Migrate a plaintext SQLite database in place to a SQLCipher-encrypted one.
  *
  * Uses the canonical SQLCipher recipe: acquire an EXCLUSIVE lock on the
@@ -242,14 +272,9 @@ static int signet_store_do_migrate(const char *db_path, const char *master_key) 
   /* Flush the encrypted database to disk before swapping. */
   signet_fsync_file(tmp_path);
 
-  /* Crash-safe backup of the plaintext original: prefer a cheap hard link, else
-   * a byte copy. db_path itself is never removed, so it always exists. */
-  remove(bak_path);
-  {
-    bool have_backup = (link(db_path, bak_path) == 0) ||
-                       (signet_copy_file(db_path, bak_path) == 0);
-    if (!have_backup) goto done;
-  }
+  /* Keep a private, exclusively created recovery copy. Existing files (also
+   * symlinks) require owner intervention, never unlink or overwrite them. */
+  if (signet_copy_plaintext_backup(db_path, bak_path) != 0) goto done;
   signet_fsync_file(bak_path);
 
   /* Remove stale plaintext WAL/-shm sidecars BEFORE the swap so the encrypted
@@ -626,6 +651,14 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
    * encrypted DB and refuse. Gated on runtime SQLCipher availability, so plain
    * builds keep their prior behavior. */
   if (!cfg->read_only && signet_file_is_plain_sqlite(cfg->db_path) && signet_sqlcipher_available()) {
+    if (signet_env_truthy("SIGNET_REQUIRE_ENCRYPTED_DB")) {
+      g_critical("[signet] required encryption refuses automatic plaintext migration; "
+                 "run signetctl migrate-db offline and securely remove its plaintext backup first");
+      sodium_memzero(store->dek, SIGNET_DEK_LEN);
+      sodium_munlock(store->dek, SIGNET_DEK_LEN);
+      free(store);
+      return NULL;
+    }
     if (signet_env_falsey("SIGNET_MIGRATE_PLAINTEXT_DB")) {
       g_critical("[signet] '%s' is a legacy plaintext SQLite database but this "
                  "build uses SQLCipher and SIGNET_MIGRATE_PLAINTEXT_DB=false. "

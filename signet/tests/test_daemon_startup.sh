@@ -37,6 +37,19 @@ with tempfile.TemporaryDirectory(prefix='signet-startup-') as tmp:
     cfg.write_text('[invalid\nsecret=do-not-print-this\n')
     assert b'do-not-print-this' not in refused('malformed explicit config')
     config()
+    audit_target = root/'audit-target'; audit_target.write_text('untouched')
+    audit_link = root/'audit-link'; audit_link.symlink_to(audit_target)
+    cfg.write_text(cfg.read_text()+f'path={audit_link}\n')
+    output = refused('unsafe audit path')
+    assert b'configured audit logger unavailable' in output, output
+    assert audit_target.read_text() == 'untouched'
+    assert not db.exists(), 'unsafe audit refusal happened after store creation'
+    config()
+    cfg.write_text(cfg.read_text().replace('wss://127.0.0.1:1', 'ws://127.0.0.1:1'))
+    output = refused('plaintext production relay')
+    assert b'requires wss://' in output, output
+    assert not db.exists(), 'plaintext relay refusal happened after store creation'
+    config()
     refused('empty master key', overrides={'SIGNET_DB_KEY_FILE':'', 'SIGNET_DB_KEY':''})
     refused('unavailable master key file', overrides={'SIGNET_DB_KEY_FILE':str(root/'absent')})
     refused('ambiguous master key', overrides={'SIGNET_DB_KEY':'value-must-not-be-logged'})
@@ -61,6 +74,16 @@ with tempfile.TemporaryDirectory(prefix='signet-startup-') as tmp:
         assert b'not linked against SQLCipher' in migrated.stdout, migrated.stdout
         refused('plain SQLite build refuses required encryption')
         print('CAPABILITY: wrong-key case requires SQLCipher; covered by SQLCipher suite')
+    # Enabled-but-unavailable CTAP must stop startup before any listener.
+    if not os.access('/dev/uhid', os.R_OK | os.W_OK):
+        psk = root/'fleet-psk'; psk.write_text('01'*32+'\n'); psk.chmod(0o400)
+        config(root/'passkeys.db')
+        cfg.write_text(cfg.read_text()+f'\n[passkeys]\nenabled=true\nvirtual_ctap=true\nsync_key_file={psk}\n')
+        output = refused('configured CTAP unavailable', overrides={'SIGNET_REQUIRE_ENCRYPTED_DB':'false'})
+        assert b'virtual CTAP-HID requested but not started' in output or b'build lacks SIGNET_ENABLE_PASSKEYS' in output, output
+    else:
+        print('CAPABILITY: usable UHID present; unavailable CTAP negative case not applicable')
+    config()
     # Failure of a later enabled listener unwinds an already-started bootstrap
     # listener before freeing its borrowed stores.
     with socket.socket() as busy, socket.socket() as probe:

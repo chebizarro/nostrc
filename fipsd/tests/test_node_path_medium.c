@@ -22,7 +22,7 @@ typedef struct fixture {
     _Atomic uint64_t ms;
 } fixture;
 typedef struct result { unsigned active; size_t paths; uint64_t switches; bool dwelling; } result;
-typedef struct request { bool dial, reset, reprobe, tick; unsigned rtt[2]; const char *type; uint64_t ms; } request;
+typedef struct request { bool dial, reset, reprobe, tick, roam; unsigned rtt[2]; const char *type; uint64_t ms; } request;
 static fixture *started;
 static fips_instant now(void *p) { return fips_test_instant(atomic_load(&((fixture *)p)->ms)); }
 static fixture *owner(handlers *h) { return h->clock.ctx; }
@@ -69,6 +69,29 @@ static bool command(void *user, void *message)
     if (r->dial) assert(hs_dial(h, &f->remote, (fips_transport_id){1}, &f->address, false));
     else {
         peer_rec *p = peer(h); assert(p && p->path_live);
+        if (r->roam) {
+            assert(p->path->set.len == 1 && !p->path->capable);
+            /* Remember the current endpoint as a discovery candidate. It is
+             * not an alternative until a subsequently authenticated roam. */
+            (void)fips_path_candidates_report(&p->path->table, f->lanes[0]->id,
+                p->path->set.paths[0].addr, FIPS_PATH_Discovery, &p->path->set);
+            /* Establish an exact, non-stale cache before the hot mutation. */
+            (void)hs_timers_due(h, HS_TIMER_PATHS, hs_now(h));
+            assert(!h->timers.stale && !hs_timers_due(h, HS_TIMER_PATHS, hs_now(h)));
+            fips_transport_addr moved;
+            assert(fips_transport_addr_from_string("loop:roamed", 11, &moved) == FIPS_OK);
+            hs_path_account(h, p, f->lanes[0], &moved, 80, FIPS_LINK_Heartbeat);
+            assert(p->path->eligible);
+            assert(fips_transport_addr_equal(&p->path->set.paths[0].addr, &moved));
+            assert(hs_timers_due(h, HS_TIMER_PATHS, hs_now(h)));
+            uint64_t sent = p->path->record.sent;
+            /* The ordinary dispatcher poll must fire at this instant; the
+             * fixture's maintenance tick is one million milliseconds away. */
+            assert(f->original.poll(h, hs_now(h)));
+            assert(p->path->record.sent == sent + 1);
+            puts("single-path roam folds and fires its capability probe before a tick");
+            reply(h); return true;
+        }
         if (r->reset) {
             json_t *pin = hs_path_pin(h, &p->addr, (fips_transport_id){1}, NULL, false, true); json_decref(pin);
             hs_path_peer_removed(h, p); hs_path_peer_added(h, p);
@@ -184,6 +207,7 @@ int main(void)
     a.address = *fipsd_loopback_transport_address(b.lanes[0]);
     (void)call(&a, 0, (request){.dial = true}); link_up(&a); link_up(&b);
     fipsd_loopback_network_set_filter(net, drop, NULL);
+    (void)call(&a, 1, (request){.roam = true});
     result r = call(&a, 100, (request){.reset = true, .rtt = {10, 10}}); assert(r.active == 1);
     (void)medium(&a, rt, 1, FIPS_PATH_Wireless, FIPSD_TRANSPORT_MEDIUM_CHANGED);
     r = medium(&a, rt, 2, FIPS_PATH_Wired, FIPSD_TRANSPORT_MEDIUM_CHANGED);

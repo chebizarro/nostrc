@@ -296,12 +296,16 @@ window; this is not a cross-file atomic snapshot. Protect staging as secret data
 Logs/config must never contain secret values. Secrets are not in the archive.
 
 Install root-only `secrets/spaces.credentials` in AWS credentials-file format
-with a single-bucket **PutObject-only**, no-delete credential. Set bucket lifecycle
-expiry to 30 days using a separate owner credential. The host cannot issue DeleteObject, but PutObject can overwrite known object
-names. This is **not immutable retention**: host compromise can destroy reachable
-recovery objects by overwrite. Before relying on hostile-host recovery, arrange
-independently controlled archival or storage-side immutable/versioned retention
-that the upload credential cannot undo; prove that mechanism in the restore drill. Enable `signet-backup.timer` only after a successful manual
+with a bucket-scoped **readwrite** credential. DigitalOcean Spaces scoped write
+access includes `DeleteObject`; it is not a PutObject-only or no-delete grant.
+Set bucket lifecycle expiry to 30 days using a separate owner credential.
+A compromised host can overwrite or delete reachable recovery objects. Object
+versioning can help recovery, but is not immutable retention when the credential
+can delete versions. Before relying on hostile-host recovery, arrange protected
+retention or a separate archival copy under independently controlled credentials
+that the host cannot undo; prove that mechanism in the restore drill.
+See [Spaces access permissions](https://docs.digitalocean.com/products/spaces/how-to/manage-access/).
+ Enable `signet-backup.timer` only after a successful manual
 `backup.sh`, verified upload and fresh-host restore. Failed uploads leave local
 staging and the previous successful reference intact; alert, do not report an
 off-host backup. Monitor staging disk use and remove only confirmed-off-host
@@ -433,3 +437,25 @@ independent review before tag approval; local builds cannot stand in for them.
 References: [DO create flags](https://docs.digitalocean.com/reference/doctl/reference/compute/droplet/create/),
 [Caddy global options](https://caddyserver.com/docs/caddyfile/options),
 [deployment plan](../../docs/plans/signet-production-deployment-2026-11-06.md).
+
+### Legacy plaintext migration
+
+Required-encryption startup refuses automatic plaintext migration. Run
+`signetctl migrate-db` offline as an explicit owner operation. Its
+`.plaintext-backup` is created exclusively with mode 0600; an existing path is
+refused, not overwritten. Verify the encrypted database before removing that
+plaintext copy and any separately retained legacy copies. Unlinking is not a
+secure erase guarantee on SSD, copy-on-write or snapshot storage; handle those
+copies under the storage owner's secure-deletion policy. Do not restart the
+production service until plaintext copies are dealt with.
+
+Production configuration (`SIGNET_REQUIRE_ENCRYPTED_DB=true`) requires `wss://`
+relay URLs, as does deployment preflight. Local development can explicitly set
+`SIGNET_REQUIRE_ENCRYPTED_DB=false` to use a loopback `ws://` fixture; this is
+not a production deployment profile.
+
+NIP-46 replay protection retains unexpired ids even at capacity: a full cache
+or client quota is refused, never evicted to admit another request. Each signed
+client may hold at most 512 ids within the replay retention window; the total
+remains bounded by `[replay] max_entries`. Undecryptable or malformed requests
+are not marked. Capacity refusal does not authorize a pairing.

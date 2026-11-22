@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #include <glib.h>
 #include <sqlite3.h>
@@ -84,6 +85,12 @@ static void test_migrate_plaintext_to_sqlcipher(void) {
   create_plaintext_db(db, "answer", "42");
   CHECK(signet_store_file_is_plaintext_sqlite(db) == true);
 
+  CHECK(chmod(db, 0644) == 0);
+  char *occupied = g_strdup_printf("%s.plaintext-backup", db);
+  CHECK(symlink(db, occupied) == 0);
+  CHECK(signet_store_migrate_plaintext_to_sqlcipher(db, MASTER_KEY) == -1);
+  CHECK(signet_store_file_is_plaintext_sqlite(db));
+  CHECK(unlink(occupied) == 0); g_free(occupied);
   /* Migrate. */
   int rc = signet_store_migrate_plaintext_to_sqlcipher(db, MASTER_KEY);
   CHECK(rc == 0);
@@ -95,6 +102,8 @@ static void test_migrate_plaintext_to_sqlcipher(void) {
   char *bak = g_strdup_printf("%s.plaintext-backup", db);
   CHECK(g_file_test(bak, G_FILE_TEST_EXISTS));
   CHECK(signet_store_file_is_plaintext_sqlite(bak) == true);
+  struct stat backup_stat;
+  CHECK(stat(bak, &backup_stat) == 0 && (backup_stat.st_mode & 0777) == 0600);
 
   /* Migrating an already-encrypted DB is a no-op (returns 1, nothing to do). */
   CHECK(signet_store_migrate_plaintext_to_sqlcipher(db, MASTER_KEY) == 1);
@@ -139,6 +148,10 @@ static void test_open_auto_migrates(void) {
   CHECK(signet_store_file_is_plaintext_sqlite(db) == true);
 
   SignetStoreConfig cfg = { .db_path = db, .master_key = MASTER_KEY };
+  g_setenv("SIGNET_REQUIRE_ENCRYPTED_DB", "true", TRUE);
+  CHECK(signet_store_open(&cfg) == NULL);
+  CHECK(signet_store_file_is_plaintext_sqlite(db));
+  g_unsetenv("SIGNET_REQUIRE_ENCRYPTED_DB");
   SignetStore *store = signet_store_open(&cfg);
   CHECK(store != NULL);
   CHECK(signet_store_is_encrypted(store) == true);

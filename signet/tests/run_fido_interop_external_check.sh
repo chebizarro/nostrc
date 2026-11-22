@@ -11,7 +11,7 @@ fi
 
 emitter="$1"
 here="$(cd "$(dirname "$0")" && pwd)"
-out="${2:-$here/phase0/_build}"
+out="${2:-$(cd "$(dirname "$emitter")" && pwd)/phase3_interop}"
 mkdir -p "$out"
 artifact="$out/phase3_interop_artifacts.json"
 
@@ -19,7 +19,7 @@ echo "== emitting Phase 3 wired JSON-entrypoint artifacts =="
 "$emitter" > "$artifact"
 echo "== emitted $artifact =="
 
-venv="$here/phase0/_build/venv"
+venv="$out/venv"
 if [ ! -x "$venv/bin/python" ]; then
   python3 -m venv "$venv"
 fi

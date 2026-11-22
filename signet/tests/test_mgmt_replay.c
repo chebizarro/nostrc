@@ -75,6 +75,7 @@ typedef struct {
   SignetKeyStore *ks;
   SignetMgmtHandler *mgmt;
   SignetReplayCache *replay;
+  SignetAuditLogger *audit;
   char *db_path;
   char bunker_sk_hex[65];
   char bunker_pk_hex[65];
@@ -90,9 +91,10 @@ static void fixture_setup(Fixture *f, bool with_replay_cache) {
 
   f->db_path = make_temp_db_path();
   SignetAuditLoggerConfig alc = { .path = NULL, .to_stdout = false, .flush_each_write = false };
-  SignetAuditLogger *audit = signet_audit_logger_new(&alc);
+  f->audit = signet_audit_logger_new(&alc);
+  CHECK(f->audit);
   SignetKeyStoreConfig kcfg = { .db_path = f->db_path, .master_key = MASTER_KEY };
-  f->ks = signet_key_store_new(audit, &kcfg);
+  f->ks = signet_key_store_new(f->audit, &kcfg);
   CHECK(f->ks != NULL);
 
   const char *const provs[] = { f->prov_pk_hex };
@@ -121,6 +123,7 @@ static void fixture_teardown(Fixture *f) {
   signet_mgmt_handler_free(f->mgmt);
   signet_key_store_free(f->ks);
   signet_replay_cache_free(f->replay);
+  signet_audit_logger_free(f->audit);
   unlink(f->db_path);
   g_free(f->db_path);
   sodium_memzero(f->bunker_sk_hex, sizeof(f->bunker_sk_hex));
@@ -165,6 +168,38 @@ static char *read_connect_secret(Fixture *f, const char *agent_id) {
   char *secret = rec.connect_secret ? g_strdup(rec.connect_secret) : NULL;
   signet_agent_record_clear(&rec);
   return secret;
+}
+
+/* Fresh outer wraps of one authenticated rumor must not mint twice. */
+static void test_rewrapped_rumor_rejected(void) {
+  Fixture f;
+  fixture_setup(&f, true);
+  int64_t now = time(NULL);
+  const char *rpc = "{\"jsonrpc\":\"2.0\",\"id\":\"wrapped\","
+    "\"method\":\"agent/provision\",\"params\":{\"agent_id\":\"rewrapped\"}}";
+  NostrEvent *rumor = nostr_nip17_create_rumor(f.prov_pk_hex, f.bunker_pk_hex, rpc, now);
+  CHECK(rumor);
+  NostrEvent *seal = nostr_nip17_create_seal(rumor, f.prov_sk_hex, f.bunker_pk_hex);
+  CHECK(seal);
+  char *first_secret = NULL;
+  for (int i = 0; i < 2; ++i) {
+    NostrEvent *gift = nostr_nip17_create_gift_wrap(seal, f.bunker_pk_hex);
+    CHECK(gift);
+    char *json = nostr_event_serialize_compact(gift);
+    char *id = nostr_event_get_id(gift);
+    CHECK(signet_mgmt_handler_handle_gift_wrap(f.mgmt, json, id, now) == (i ? -1 : 0));
+    char *secret = read_connect_secret(&f, "rewrapped");
+    CHECK(secret);
+    if (i) {
+      CHECK(!strcmp(secret, first_secret));
+      sodium_memzero(secret, strlen(secret)); g_free(secret);
+    } else first_secret = secret;
+    free(json); free(id); nostr_event_free(gift);
+  }
+  sodium_memzero(first_secret, strlen(first_secret)); g_free(first_secret);
+  nostr_event_free(seal); nostr_event_free(rumor);
+  fixture_teardown(&f);
+  puts("test_rewrapped_rumor_rejected: PASS");
 }
 
 /* 1: without a replay cache, duplicates execute twice (opt-in wiring). */
@@ -668,6 +703,7 @@ int main(int argc, char **argv) {
 
   test_no_cache_duplicates_execute();
   test_cache_rejects_duplicate();
+  test_rewrapped_rumor_rejected();
   test_provision_intent_preserves_identity();
   test_replayed_reissue_mints_once();
   test_missing_event_id_fails_closed();

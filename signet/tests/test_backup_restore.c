@@ -23,6 +23,7 @@
 #include <glib/gstdio.h>
 #include <sodium.h>
 #include <sqlite3.h>
+#include <sys/wait.h>
 
 #define MASTER_KEY "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 #define BACKUP_KEY "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
@@ -599,9 +600,35 @@ static void test_online_backup_consistency(void) {
   puts("test_online_backup_consistency: PASS (concurrent writes observed)");
 }
 
+static void test_cli_missing_pubkey_refused(void) {
+  CHECK(backup_cli);
+  char *db = temp_path("missing-pubkey");
+  SignetStore *store = open_store(db, MASTER_KEY); CHECK(store);
+  uint8_t sk[32] = {0}; sk[31] = 1;
+  CHECK(signet_store_put_agent_ex(store, "missing", sk, sizeof(sk),
+    "secret", NULL, "provisioned", NOW) == 0);
+  signet_store_close(store);
+  char *config = temp_path("verify-config");
+  char *ini = g_strdup_printf("[store]\ndb_path=%s\n[nostr]\nbunker_pubkey=%064d\nrelays=wss://relay.test.invalid\n", db, 1);
+  CHECK(g_file_set_contents(config, ini, -1, NULL)); g_free(ini);
+  char **env = g_get_environ();
+  env = g_environ_unsetenv(env, "SIGNET_DB_KEY_FILE");
+  env = g_environ_setenv(env, "SIGNET_DB_KEY", MASTER_KEY, TRUE);
+  char *args[] = {(char *)backup_cli, "-c", config, "list-agents", "--verify", NULL};
+  int status = -1; char *output = NULL, *errors = NULL;
+  CHECK(g_spawn_sync(NULL, args, env, G_SPAWN_DEFAULT, NULL, NULL,
+    &output, &errors, &status, NULL));
+  CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 1);
+  CHECK(output && strstr(output, "MISSING_PUBKEY"));
+  g_strfreev(env); g_free(output); g_free(errors);
+  unlink(config); unlink(db); remove_sidecars(db); g_free(config); g_free(db);
+  puts("test_cli_missing_pubkey_refused: PASS");
+}
+
 int main(int argc, char **argv) {
   backup_cli = argc > 1 ? argv[1] : NULL;
   CHECK(sodium_init() >= 0);
+  test_cli_missing_pubkey_refused();
   test_restart_durability();
   test_envelope_tamper_rejected();
   test_backup_restore_roundtrip();

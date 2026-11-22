@@ -85,6 +85,8 @@ static void test_event_cb(const SignetRelayEventView *ev, void *user_data) {
   EventCtx *ctx = (EventCtx *)user_data;
   ctx->event_count++;
   ctx->last_kind = ev->kind;
+  CHECK(ev->event_json && ev->event_json[0] == '{');
+  CHECK(ev->live_since == 0); /* direct injection never claims relay admission */
 }
 
 static void test_sig_verification_valid(void) {
@@ -283,9 +285,12 @@ static void test_subscribe_scoped_without_start(void) {
    * Either is acceptable — key thing is no crash. */
   (void)rc;
 
-  /* subscribe_kinds should also not crash. */
-  rc = signet_relay_pool_subscribe_kinds(rp, kinds, 2);
-  (void)rc;
+  /* Reconfigure repeatedly: LSan must see neither moved shells nor fields. */
+  for (int i = 0; i < 128; ++i) {
+    CHECK(signet_relay_pool_subscribe_scoped(rp, kinds, 2,
+      "abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234", i + 1) == 0);
+    CHECK(signet_relay_pool_subscribe_kinds(rp, kinds, 2) == 0);
+  }
 
   signet_relay_pool_free(rp);
   PASS();
@@ -625,6 +630,10 @@ static gboolean wire_deadline(gpointer data) {
 static void wire_event(const SignetRelayEventView *event, void *data) {
   Wire *w = data;
   if (event->kind == 12345) {
+    CHECK(event->event_id_hex && strlen(event->event_id_hex) == 64);
+    CHECK(event->pubkey_hex && strlen(event->pubkey_hex) == 64);
+    CHECK(event->content && !strcmp(event->content, "signed-reply-fixture"));
+    CHECK(event->event_json && strstr(event->event_json, "signed-reply-fixture"));
     SignetReplyAckStats stats = {0};
     signet_relay_pool_get_reply_ack_stats(w->pool, &stats);
     CHECK(stats.accepted == 1); /* OK precedes EVENT on this same connection */

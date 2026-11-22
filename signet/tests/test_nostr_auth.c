@@ -32,6 +32,7 @@ static bool tf_denied(const char *pk, void *ud)   { (void)pk; return ((FleetCtx 
 static char *tf_get_pubkey(const char *agent, void *ud) {
   (void)agent;
   FleetCtx *c = (FleetCtx *)ud;
+  if (!c->pubkey) return NULL;
   return g_strdup(c->wrong_pubkey ? BOGUS_PUBKEY : c->pubkey);
 }
 
@@ -184,6 +185,15 @@ static void test_verify_negatives(void) {
     g_free(ev); g_free(ch); signet_challenge_store_free(cs);
   }
 
+  {
+    SignetChallengeStore *cs = signet_challenge_store_new();
+    char *ch = signet_challenge_issue(cs, "unknown", now);
+    FleetCtx fc = { NULL, true, false, false };
+    SignetFleetRegistry fl = { tf_in_fleet, tf_denied, tf_get_pubkey, &fc };
+    char *ev = build_auth_event(sk, SIGNET_AUTH_KIND, ch, "unknown", "signet-auth", now);
+    CHECK(signet_auth_verify(cs, &fl, ev, now, NULL, NULL) == SIGNET_AUTH_ERR_NOT_IN_FLEET);
+    g_free(ev); g_free(ch); signet_challenge_store_free(cs);
+  }
   free(pk); free(sk);
   printf("test_verify_negatives: PASS\n");
 }

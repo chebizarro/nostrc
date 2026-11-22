@@ -1399,13 +1399,17 @@ static int signet_mgmt_handle_gift_wrap_since(SignetMgmtHandler *h,
   if (!gw) return -1;
   int rc = -1;
   if (nostr_event_deserialize_compact(gw, event_json, NULL)) {
-    char *inner = NULL;
-    char *sender = NULL;
-    int64_t rumor_at = 0;
-    /* The rumor's created_at is the sender's real, seal-authenticated time;
-     * the gift wrap's is randomized by NIP-59. */
-    if (nostr_nip17_decrypt_dm_ex(gw, h->bunker_sk_hex, &inner, &sender,
-                                  &rumor_at) == 0 && inner) {
+    NostrEvent *seal = nostr_nip17_unwrap_gift_wrap(gw, h->bunker_sk_hex);
+    NostrEvent *rumor = seal ? nostr_nip17_unwrap_seal(seal, h->bunker_sk_hex) : NULL;
+    const char *inner = rumor ? nostr_event_get_content(rumor) : NULL;
+    const char *sender = seal ? nostr_event_get_pubkey(seal) : NULL;
+    char *rumor_id = rumor ? nostr_event_get_id(rumor) : NULL;
+    int64_t rumor_at = rumor ? nostr_event_get_created_at(rumor) : 0;
+    /* Unwrap validates the canonical rumor id and signed seal. Bind that
+     * identity to the authenticated author, not the randomized outer wrap. */
+    if (rumor && inner && rumor_id && sender &&
+        nostr_event_get_kind(rumor) == 14 &&
+        nostr_nip17_validate_seal(seal, rumor)) {
       signet_mgmt_wire_diag(h,"gift_opened");
       if (live_since > 0 && rumor_at < live_since) {
         signet_mgmt_wire_diag(h,"gift_before_live");
@@ -1429,15 +1433,13 @@ static int signet_mgmt_handle_gift_wrap_since(SignetMgmtHandler *h,
       } else {
         signet_mgmt_wire_diag(h,"gift_not_backend");
         rc = signet_mgmt_handler_handle_intent(h, sender ? sender : "", inner,
-                                               event_id_hex ? event_id_hex : "",
-                                               rumor_at, now);
+                                               rumor_id, rumor_at, now);
       }
     } else signet_mgmt_gift_refusal_diag(h,gw);
-    if (inner) {
-      secure_wipe(inner, strlen(inner));
-      free(inner);
-    }
-    free(sender);
+    if (inner) secure_wipe((char *)inner, strlen(inner));
+    free(rumor_id);
+    if (rumor) nostr_event_free(rumor);
+    if (seal) nostr_event_free(seal);
   } else signet_mgmt_wire_diag(h,"gift_parse_refused");
   nostr_event_free(gw);
   return rc;
