@@ -1268,6 +1268,34 @@ marmot_commit_persist(Marmot *m, const MlsGroup *pre, const MlsGroup *post,
     return marmot_commit_persist_ex(m, pre, post, key, post_gde, group, NULL, 0, false);
 }
 
+/* Snapshot the routing mirror before a compensated legacy transition. */
+static MarmotError
+relay_urls_snapshot(MarmotStorage *s, const MarmotGroupId *gid, char ***urls, size_t *count)
+{
+    *urls = NULL;
+    *count = 0;
+    if (!s->group_relays || !s->replace_group_relays) return MARMOT_ERR_STORAGE;
+    MarmotGroupRelay *relays = NULL;
+    size_t n = 0;
+    MarmotError err = s->group_relays(s->ctx, gid, &relays, &n);
+    if (err == MARMOT_ERR_STORAGE_NOT_FOUND) err = MARMOT_OK;
+    if (err == MARMOT_OK && n > 0) {
+        *urls = calloc(n, sizeof(char *));
+        if (!*urls) err = MARMOT_ERR_MEMORY;
+        else for (size_t i = 0; i < n; i++) {
+            (*urls)[i] = relays[i].relay_url;
+            relays[i].relay_url = NULL;
+        }
+    }
+    for (size_t i = 0; i < n; i++) {
+        free(relays[i].relay_url);
+        marmot_group_id_free(&relays[i].mls_group_id);
+    }
+    free(relays);
+    if (err == MARMOT_OK) *count = n;
+    return err;
+}
+
 MarmotError
 marmot_commit_persist_ex(Marmot *m, const MlsGroup *pre, const MlsGroup *post,
                          const MarmotCommitKey *key,
@@ -1293,7 +1321,15 @@ marmot_commit_persist_ex(Marmot *m, const MlsGroup *pre, const MlsGroup *post,
     bool had_exporter = false, had_parent = false, undo_ok = true;
     MarmotError err = MARMOT_ERR_STORAGE;
     ConvHistory *old_h = NULL, *new_h = NULL;
+    char **old_relays = NULL;
+    size_t old_relay_count = 0;
+    bool relays_written = false;
     uint64_t keep_from = post->epoch > 0 ? post->epoch - 1 : 0;
+
+    if (post_gde) {
+        err = relay_urls_snapshot(s, &mgid, &old_relays, &old_relay_count);
+        if (err != MARMOT_OK) goto out;
+    }
 
     /* What the writes below replace, so a failure can put it back.  Only a
      * record that is really absent (STORAGE_NOT_FOUND) may be "restored" by
@@ -1357,8 +1393,18 @@ marmot_commit_persist_ex(Marmot *m, const MlsGroup *pre, const MlsGroup *post,
     if (err != MARMOT_OK) goto undo_parent;
     err = s->mls_store(s->ctx, "mls_group", gid, gid_len, new_state, new_state_len);
     if (err != MARMOT_OK) goto undo_state;
+    if (post_gde) {
+        err = s->replace_group_relays(s->ctx, &mgid, (const char **)post_gde->relays,
+                                       post_gde->relay_count);
+        if (err != MARMOT_OK) goto undo_mls_state;
+        relays_written = true;
+    }
     err = s->save_group(s->ctx, group);
     if (err == MARMOT_OK) goto out;
+    if (relays_written)
+        undo_ok &= s->replace_group_relays(s->ctx, &mgid, (const char **)old_relays,
+                                            old_relay_count) == MARMOT_OK;
+undo_mls_state:
 
     /* Compensation, newest write first (the backends have no transactions
      * yet, nostrc-qp24.7).  A failed undo leaves storage inconsistent, so the
@@ -1398,6 +1444,7 @@ out:
     free_secret(new_parent, new_parent_len);
     history_free(old_h);
     history_free(new_h);
+    marmot_adopted_relays_free(old_relays, old_relay_count);
     marmot_group_id_free(&mgid);
     return err;
 }
@@ -1434,6 +1481,11 @@ marmot_group_reconcile(Marmot *m, MarmotGroup *group)
         } else {
             err = group_data_of(&mls, &mls, &gde);
             if (err == MARMOT_OK && gde) err = marmot_group_apply_group_data(group, gde);
+            if (err == MARMOT_OK && gde) {
+                if (!s->replace_group_relays) err = MARMOT_ERR_STORAGE;
+                else err = s->replace_group_relays(s->ctx, &group->mls_group_id,
+                                                    (const char **)gde->relays, gde->relay_count);
+            }
         }
         marmot_group_data_extension_free(gde);
         if (err == MARMOT_OK) {
@@ -3536,7 +3588,7 @@ conv_retained(const ConvTree *t, const ConvHistory *h, int sel, int fork, bool d
 
 /* ── Undo log for backends without transactions (nostrc-qp24.7) ───────── */
 
-typedef enum { UNDO_KV, UNDO_EXPORTER, UNDO_GROUP, UNDO_MESSAGE } UndoKind;
+typedef enum { UNDO_KV, UNDO_EXPORTER, UNDO_GROUP, UNDO_MESSAGE, UNDO_RELAYS } UndoKind;
 
 typedef struct {
     UndoKind       kind;
@@ -3549,6 +3601,8 @@ typedef struct {
     MarmotGroup   *group;      /* UNDO_GROUP: the record as it was */
     MarmotMessage *msg;        /* UNDO_MESSAGE: the message, its old state */
     MarmotMessageState state;
+    char **relays;
+    size_t relay_count;
 } UndoRec;
 
 typedef struct {
@@ -3640,6 +3694,9 @@ undo_apply(Marmot *m, UndoLog *u, const MarmotGroupId *gid)
         case UNDO_GROUP:
             e = s->save_group(s->ctx, r->group);
             break;
+        case UNDO_RELAYS:
+            e = s->replace_group_relays(s->ctx, gid, (const char **)r->relays, r->relay_count);
+            break;
         case UNDO_MESSAGE:
             r->msg->state = r->state;
             e = s->save_message(s->ctx, r->msg);
@@ -3658,6 +3715,7 @@ undo_free(UndoLog *u)
         free_secret(r->old, r->old_len);
         sodium_memzero(r->secret, sizeof(r->secret));
         marmot_group_free(r->group);
+        marmot_adopted_relays_free(r->relays, r->relay_count);
         /* UNDO_MESSAGE borrows its message (freed with its page). */
     }
     free(u->recs);
@@ -3913,6 +3971,17 @@ conv_install(Marmot *m, MarmotGroup *group, const MlsGroup *cur, const ConvHisto
     if (err == MARMOT_OK) err = undo_kv(m, &undo, "mls_group", gid);
     if (err == MARMOT_OK)
         err = s->mls_store(s->ctx, "mls_group", gid->data, gid->len, state_blob, state_len);
+    if (err == MARMOT_OK && gde) {
+        UndoRec *r = undo_push(&undo);
+        if (!r) err = MARMOT_ERR_MEMORY;
+        else {
+            r->kind = UNDO_RELAYS;
+            err = relay_urls_snapshot(s, gid, &r->relays, &r->relay_count);
+            if (err != MARMOT_OK) undo.n--;
+            else err = s->replace_group_relays(s->ctx, gid, (const char **)gde->relays,
+                                                gde->relay_count);
+        }
+    }
     if (err == MARMOT_OK) err = s->save_group(s->ctx, group);
     if (err == MARMOT_OK && reorg) {
         err = invalidate_messages(m, gid, t->nodes[fork].epoch, cur->epoch, &undo, &pages,

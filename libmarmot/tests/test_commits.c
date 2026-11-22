@@ -779,6 +779,63 @@ faults_disarm(Member *x)
 
 /* ── Tests ────────────────────────────────────────────────────────────── */
 
+static void
+expect_relay_urls(Member *x, const MarmotGroupId *gid, const char *const *urls, size_t n)
+{
+    MarmotGroupRelay *relays = NULL;
+    size_t count = 0;
+    OK(marmot_get_group_relay_urls(x->m, gid, &relays, &count));
+    CHECK(count == n, "%s relay count %zu != %zu", x->name, count, n);
+    for (size_t i = 0; i < count; i++) {
+        CHECK(strcmp(relays[i].relay_url, urls[i]) == 0, "%s relay %zu", x->name, i);
+        free(relays[i].relay_url);
+        marmot_group_id_free(&relays[i].mls_group_id);
+    }
+    free(relays);
+}
+
+static void
+test_group_data_relays_follow_commit(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *urls[] = {"wss://nos.lol", "wss://relay.nostr.band"};
+    MarmotGroupConfig cfg = {0};
+    cfg.relay_urls = urls;
+    cfg.relay_count = 2;
+    char *commit = NULL;
+    OK(marmot_update_group_metadata(t.alice.m, &t.gid, &cfg, &commit));
+    merge(&t.alice, &t.gid);
+    expect_relay_urls(&t.alice, &t.gid, (const char *const *)urls, 2);
+
+    /* A failed group-record write must restore the relay mirror too. */
+    MarmotGroupRelay *before = NULL;
+    size_t n_before = 0;
+    OK(marmot_get_group_relay_urls(t.bob.m, &t.gid, &before, &n_before));
+    const char **old = calloc(n_before ? n_before : 1, sizeof(*old));
+    CHECK(old, "old relays");
+    for (size_t i = 0; i < n_before; i++) old[i] = before[i].relay_url;
+    faults_arm(&t.bob);
+    g_faults.fail_at = 4;
+    MarmotError err;
+    deliver(&t.bob, commit, &err, NULL);
+    faults_disarm(&t.bob);
+    CHECK(err == MARMOT_ERR_STORAGE_CONSTRAINT, "failed record: %d", err);
+    expect_relay_urls(&t.bob, &t.gid, old, n_before);
+    for (size_t i = 0; i < n_before; i++) {
+        free(before[i].relay_url);
+        marmot_group_id_free(&before[i].mls_group_id);
+    }
+    free(before);
+    free(old);
+    expect_commit(&t.bob, commit, "relay update");
+    expect_commit(&t.charlie, commit, "relay update");
+    for (size_t i = 0; i < 3; i++)
+        expect_relay_urls(t.all[i], &t.gid, (const char *const *)urls, 2);
+    free(commit);
+    trio_clear(&t);
+}
+
 /* Alice renames the group; Bob and Charlie process the published kind:445
  * and everyone agrees on the metadata and the epoch (was: the Commit was
  * discarded and receivers treated every kind:445 as an application
@@ -8797,6 +8854,7 @@ main(int argc, char **argv)
     RUN(test_member_cannot_post_as_another);
     RUN(test_inner_event_delivered_once);
     RUN(test_rename_reaches_every_member);
+    RUN(test_group_data_relays_follow_commit);
     RUN(test_events_signed_by_fresh_ephemeral_keys);
     RUN(test_group_events_have_strictly_increasing_created_at);
     RUN(test_group_event_lead_is_bounded);
