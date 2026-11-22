@@ -2158,7 +2158,7 @@ test_web_preview_github_card(Fixture *f, G_GNUC_UNUSED gconstpointer data)
    * keep the previous binding's and offer it again. */
   g_autofree gchar *inner = g_strdup_printf(
     "{\"kind\":9,\"pubkey\":\"%s\",\"created_at\":%" G_GINT64_FORMAT ","
-    "\"tags\":[],\"content\":\"gone\"}", hex[2], t + 120);
+    "\"tags\":[],\"content\":\"gone\"}", hex[2], now_seconds());
   g_autoptr(GError) error = NULL;
   g_autoptr(GhMessage) withdrawn = gh_message_new_from_mls(hex[1], "0123456789abcdef", inner,
                                                            &error);
@@ -3366,7 +3366,7 @@ test_states(Fixture *f, gconstpointer data)
    * summary, no preview -- live, as the mark arrives. */
   g_autofree gchar *inner = g_strdup_printf(
     "{\"kind\":9,\"pubkey\":\"%s\",\"created_at\":%" G_GINT64_FORMAT ","
-    "\"tags\":[],\"content\":\"see https://example.com/x\"}", hex[2], noon_today());
+    "\"tags\":[],\"content\":\"see https://example.com/x\"}", hex[2], now_seconds());
   g_autoptr(GError) bad = NULL;
   g_autoptr(GhMessage) group_message =
     gh_message_new_from_mls(hex[1], "0123456789abcdef", inner, &bad);
@@ -4830,7 +4830,7 @@ test_recycled_optional_subtrees(void)
 
   g_autofree gchar *inner = g_strdup_printf(
     "{\"kind\":9,\"pubkey\":\"%s\",\"created_at\":%" G_GINT64_FORMAT ","
-    "\"tags\":[],\"content\":\"withdrawn B\"}", hex[2], noon_today());
+    "\"tags\":[],\"content\":\"withdrawn B\"}", hex[2], now_seconds());
   g_autoptr(GhMessage) withdrawn = gh_message_new_from_mls(hex[1],
     "0123456789abcdef", inner, &error);
   g_assert_no_error(error);
@@ -5961,7 +5961,7 @@ static void
 test_left_group_reactions(Fixture *f, gconstpointer data)
 {
   (void)data;
-  GhMessage *target = add_group_message(f->store, TRUE, 2, noon_today(), "react here");
+  GhMessage *target = add_group_message(f->store, TRUE, 2, now_seconds(), "react here");
   GhConversation *conversation = room_of(f->store, target);
   g_autoptr(GhReactionStore) reactions = gh_reaction_store_new();
   gh_reaction_store_set_account(reactions, hex[1], NULL, NULL, NULL);
@@ -6047,7 +6047,8 @@ static void
 test_group_delete(Fixture *f, gconstpointer data)
 {
   const gboolean mls = GPOINTER_TO_INT(data);
-  gint64 t = noon_today();
+  /* Keep all three historical messages at or before now, even before noon. */
+  gint64 t = now_seconds() - 120;
   GhMessage *incoming = add_group_message(f->store, mls, 2, t, "Pizza at eight?");
   GhMessage *own = add_group_message(f->store, mls, 1, t + 60, "Wrong group, sorry");
   GhMessage *keep = add_group_message(f->store, mls, 2, t + 120, "See you there");
