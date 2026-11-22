@@ -2602,6 +2602,42 @@ test_custom_emoji_payloads(void)
 }
 
 static void
+test_reaction_utf8(void)
+{
+  Fixture f;
+  fixture_up(&f, NULL, NULL);
+  fixture_outbox(&f);
+  fake_monitor_set_available(f.network, FALSE);
+  const gchar *recipients[] = { hex_bob, NULL };
+  const gchar *target = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+  const gchar *emojis[] = { "😮", "👍", "❤️", "👩‍💻" };
+  g_autoptr(GError) error = NULL;
+  for (guint i = 0; i < G_N_ELEMENTS(emojis); i++) {
+    g_autofree gchar *id = gh_outbox_send_reaction_room(
+      f.outbox, recipients, emojis[i], target, "14", &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(id);
+  }
+  g_autoptr(GArray) ids = gh_store_outbox_list_unfinished(f.store, GH_STORE_BACKEND_NIP17,
+                                                         &error);
+  g_assert_no_error(error);
+  g_assert_cmpuint(ids->len, ==, G_N_ELEMENTS(emojis));
+  for (guint i = 0; i < ids->len; i++) {
+    g_autoptr(GhStoreOutboxEntry) entry = gh_store_outbox_load(
+      f.store, g_array_index(ids, gint64, i), &error);
+    g_assert_no_error(error);
+    g_assert_true(g_utf8_validate(entry->rumor_json, -1, NULL));
+    NostrEvent *event = nostr_event_new();
+    g_assert_cmpint(nostr_event_deserialize_unsigned(event, entry->rumor_json, NULL), ==,
+                     NOSTR_EVENT_VALIDATION_OK);
+    g_assert_cmpint(nostr_event_validate_id(event, NULL), ==, NOSTR_EVENT_VALIDATION_OK);
+    g_assert_cmpstr(nostr_event_get_content(event), ==, emojis[i]);
+    nostr_event_free(event);
+  }
+  fixture_down(&f);
+}
+
+static void
 test_reaction_same_second_toggle(void)
 {
   Fixture f;
@@ -3122,6 +3158,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/outbox/signer-refusal", test_signer_refusal_and_retry);
   g_test_add_func("/groundhog/outbox/cancel-delete", test_cancel_and_delete);
   g_test_add_func("/groundhog/outbox/custom-emoji-payloads", test_custom_emoji_payloads);
+  g_test_add_func("/groundhog/outbox/reaction-utf8", test_reaction_utf8);
   g_test_add_func("/groundhog/outbox/reaction-same-second-toggle",
                   test_reaction_same_second_toggle);
   g_test_add_func("/groundhog/outbox/restore-skips-reaction-rows",
