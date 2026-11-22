@@ -56,13 +56,14 @@ static int get_thread_count(void) {
 
 static void *fetch_goroutine(void *arg) {
     FetchCtx *ctx = arg;
-    CancelContextResult ccr = go_context_with_cancel(go_context_background());
+    CancelContextResult ccr = go_context_with_cancel(NULL);
     
     NostrFilters *fs = nostr_filters_new();
     NostrFilter *f = nostr_filter_new();
     int kinds[] = {0};
     nostr_filter_set_kinds(f, kinds, 1);
     nostr_filters_add(fs, f);
+    nostr_filter_free(f);
     
     for (size_t i = 0; i < ctx->count; i++) {
         NostrRelay *r = ctx->pool->relays[i];
@@ -97,6 +98,7 @@ static void *fetch_goroutine(void *arg) {
     g_mutex_lock(&g_filters_lock);
     g_ptr_array_add(g_filters, fs);
     g_mutex_unlock(&g_filters_lock);
+    go_context_unref(ccr.context);
     atomic_store(ctx->done, 1);
     return NULL;
 }
@@ -111,7 +113,7 @@ int main(void) {
     
     for (int i = 0; i < NUM_RELAYS; i++) {
         Error *e = NULL;
-        NostrRelay *r = nostr_relay_new(go_context_background(), urls[i], &e);
+        NostrRelay *r = nostr_relay_new(NULL, urls[i], &e);
         if (r) nostr_simple_pool_add_relay(pool, r);
     }
     
@@ -148,7 +150,7 @@ int main(void) {
         
         go_wait_group_destroy(ctx->wg);
         g_free(ctx->wg);
-        g_ptr_array_free(ctx->subs, FALSE);
+        g_ptr_array_free(ctx->subs, TRUE);
         free(ctx->done);
         g_free(ctx);
         usleep(200000);

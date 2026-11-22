@@ -17,7 +17,9 @@
 
 static NostrFilters *make_min_filters(void) {
     NostrFilters *fs = nostr_filters_new();
-    nostr_filters_add(fs, nostr_filter_new());
+    NostrFilter *filter = nostr_filter_new();
+    nostr_filters_add(fs, filter);
+    nostr_filter_free(filter);
     return fs;
 }
 

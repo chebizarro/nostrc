@@ -77,7 +77,7 @@ static void *fetch_goroutine(void *arg) {
     FetchCtx *ctx = (FetchCtx*)arg;
     atomic_fetch_add(&g_goroutines_started, 1);
     
-    CancelContextResult cancel_ctx = go_context_with_cancel(go_context_background());
+    CancelContextResult cancel_ctx = go_context_with_cancel(NULL);
     GoContext *bg = cancel_ctx.context;
     CancelFunc cancel = cancel_ctx.cancel;
     
@@ -87,6 +87,7 @@ static void *fetch_goroutine(void *arg) {
     int kinds[] = {0};
     nostr_filter_set_kinds(f, kinds, 1);
     nostr_filters_add(filters, f);
+    nostr_filter_free(f);
     
     for (size_t i = 0; i < ctx->relay_count; i++) {
         NostrRelay *relay = ctx->pool->relays[i];
@@ -153,6 +154,7 @@ static void *fetch_goroutine(void *arg) {
     }
     
     nostr_filters_free(filters);
+    go_context_unref(bg);
     atomic_store(ctx->done, 1);
     atomic_fetch_add(&g_goroutines_completed, 1);
     return NULL;
@@ -168,7 +170,7 @@ static void test_single_fetch(void) {
     
     for (int i = 0; i < 2; i++) {
         Error *err = NULL;
-        NostrRelay *r = nostr_relay_new(go_context_background(), urls[i], &err);
+        NostrRelay *r = nostr_relay_new(NULL, urls[i], &err);
         if (r) nostr_simple_pool_add_relay(pool, r);
     }
     
@@ -195,7 +197,7 @@ static void test_single_fetch(void) {
     
     go_wait_group_destroy(ctx->wg);
     g_free(ctx->wg);
-    g_ptr_array_free(ctx->subs, FALSE);
+    g_ptr_array_free(ctx->subs, TRUE);
     free(ctx->done);
     g_free(ctx);
     nostr_simple_pool_free(pool);
@@ -213,7 +215,7 @@ static void test_concurrent_fetches(void) {
     
     for (int i = 0; i < 2; i++) {
         Error *err = NULL;
-        NostrRelay *r = nostr_relay_new(go_context_background(), urls[i], &err);
+        NostrRelay *r = nostr_relay_new(NULL, urls[i], &err);
         if (r) nostr_simple_pool_add_relay(pool, r);
     }
     
@@ -250,7 +252,7 @@ static void test_concurrent_fetches(void) {
     for (int b = 0; b < 5; b++) {
         go_wait_group_destroy(contexts[b]->wg);
         g_free(contexts[b]->wg);
-        g_ptr_array_free(contexts[b]->subs, FALSE);
+        g_ptr_array_free(contexts[b]->subs, TRUE);
         free(contexts[b]->done);
         g_free(contexts[b]);
     }
