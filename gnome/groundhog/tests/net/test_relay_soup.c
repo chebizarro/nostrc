@@ -1073,6 +1073,25 @@ username_at(Socks5Fixture *socks, guint index)
 }
 
 static void
+test_upgrade_close_recovery(void)
+{
+  GhNetSession *session = install_session(GH_NET_MODE_NONE, NULL);
+  WireRelay relay = { .serve = TRUE, .close_on_connect = TRUE };
+  relay_init(&relay);
+  ScopeSeen seen = { 0 };
+  GhRelayScope *scope = open_scope(1, relay.url, &seen);
+  wait_at_least(&relay.closed_sockets, 2);
+  g_assert_cmpuint(seen.eoses, ==, 0);
+  relay.close_on_connect = FALSE;
+  wait_for_count(&seen.eoses, 1);
+  gh_relay_scope_cancel(scope);
+  gh_relay_scope_unref(scope);
+  g_free(seen.last_error);
+  relay_clear(&relay);
+  uninstall_session(session);
+}
+
+static void
 test_isolation(void)
 {
   Socks5Fixture *socks = socks5_fixture_new();
@@ -1765,6 +1784,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/net/tor-probe", test_tor_probe);
   g_test_add_func("/groundhog/net/mode-switch", test_mode_switch);
   g_test_add_func("/groundhog/net/isolation", test_isolation);
+  g_test_add_func("/groundhog/net/upgrade-close-recovery", test_upgrade_close_recovery);
   g_test_add_func("/groundhog/net/no-session-refuses", test_no_session_refuses);
   g_test_add_func("/groundhog/net/allow-local-network", test_allow_local_network);
   g_test_add_func("/groundhog/net/public-address", test_public_address);
