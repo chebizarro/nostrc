@@ -159,9 +159,9 @@ test_request_dedup(void)
   g_assert_cmpuint(stats.pending_requests, ==, 1);
   g_assert_cmpuint(stats.pending_callbacks, ==, 2);
 
+  gnostr_profile_service_shutdown();
   callback_data_clear(&cb1);
   callback_data_clear(&cb2);
-  gnostr_profile_service_shutdown();
 }
 
 /* ── Test: debounce-accumulation ──────────────────────────────────── */
@@ -258,9 +258,9 @@ test_cancel_for_user_data(void)
   g_assert_cmpuint(stats.pending_requests, ==, 2);
   g_assert_cmpuint(stats.pending_callbacks, ==, 1);
 
+  gnostr_profile_service_shutdown();
   callback_data_clear(&cb_keep);
   callback_data_clear(&cb_cancel);
-  gnostr_profile_service_shutdown();
 }
 
 /* ── Test: stats-accuracy ────────────────────────────────────────── */
