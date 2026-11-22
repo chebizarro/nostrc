@@ -43,6 +43,19 @@ CMake-built libraries/daemon; it is not an independent daemon implementation.
 remote network access on install. The native host, when built, uses its own
 manifest installer; Nix/desktop-bundle builds currently leave that host off.
 
+## Installing the panels dependency
+
+Grotto's native packages are not standalone: install **libgrotto-panels-0-0**
+(Debian/Ubuntu) or **grotto-panels** (RPM), version **0.1.0 or later**, for the
+same architecture before installing Grotto. Building Grotto also requires
+**libgrotto-panels-0-dev** or **grotto-panels-devel** respectively.
+
+If the chosen Grotto release does not include these provider packages, build
+and install them first from the same source checkout using the
+[panels package instructions](../../../gnome/grotto-panels/packaging/README.md).
+Do not force-install Grotto with unresolved dependencies or copy the panels DSO
+into its private library directory.
+
 Systemd examples install under `/usr/share/doc/grotto/examples`; use exactly one
 of `bunker.conf.example` and `headless-bunker.conf.example` as a user drop-in.
 The base unit is localhost-only. See [deployment](../DAEMON_DEPLOYMENT.md).
