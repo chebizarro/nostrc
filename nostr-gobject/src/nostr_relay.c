@@ -321,14 +321,24 @@ gnostr_relay_emit_state(GNostrRelay *self, GNostrRelayState new_state)
     }
 }
 
-/* One queued core transition. Idles of equal priority on one context are
+/* One queued state transition. Idles of equal priority on one context are
  * dispatched in the order they were attached, so transitions are announced
  * in the order the core reported them. */
 typedef struct {
     RelayCallbackData *cb_data;
+    GNostrRelay *keep_alive; /* explicit disconnect must outlive the caller's last ref */
     GNostrRelayState new_state;
     guint64 serial;
 } StateChangeData;
+
+static void
+state_change_data_free(gpointer user_data)
+{
+    StateChangeData *data = user_data;
+    relay_callback_data_unref(data->cb_data);
+    g_clear_object(&data->keep_alive);
+    g_free(data);
+}
 
 static gboolean
 set_state_on_main_thread(gpointer user_data)
@@ -343,8 +353,6 @@ set_state_on_main_thread(gpointer user_data)
             gnostr_relay_emit_state(self, data->new_state);
         g_object_unref(self);
     }
-    relay_callback_data_unref(data->cb_data);
-    g_free(data);
     return G_SOURCE_REMOVE;
 }
 
@@ -369,13 +377,13 @@ on_core_state_changed(NostrRelay *relay G_GNUC_UNUSED,
     __atomic_store_n(&self->state, g_new_state, __ATOMIC_SEQ_CST);
 
     /* Signals are emitted on the main context, never from this thread. */
-    StateChangeData *data = g_new(StateChangeData, 1);
+    StateChangeData *data = g_new0(StateChangeData, 1);
     data->cb_data = relay_callback_data_ref(cb_data);
     data->new_state = g_new_state;
     data->serial = __atomic_add_fetch(&self->state_serial, 1, __ATOMIC_SEQ_CST);
     g_object_unref(self);
 
-    g_idle_add_full(G_PRIORITY_DEFAULT, set_state_on_main_thread, data, NULL);
+    g_idle_add_full(G_PRIORITY_DEFAULT, set_state_on_main_thread, data, state_change_data_free);
 }
 
 /* ---- NIP-42 AUTH challenge callback (worker thread → main thread) ---- */
@@ -1103,12 +1111,13 @@ gnostr_relay_disconnect(GNostrRelay *self)
     /* Everything the core queued up to now is superseded by this explicit
      * DISCONNECTED; later transitions (a new connect) are still announced. */
     __atomic_store_n(&self->state, GNOSTR_RELAY_STATE_DISCONNECTED, __ATOMIC_SEQ_CST);
-    StateChangeData *data = g_new(StateChangeData, 1);
+    StateChangeData *data = g_new0(StateChangeData, 1);
     data->cb_data = relay_callback_data_new(self);
+    data->keep_alive = g_object_ref(self);
     data->new_state = GNOSTR_RELAY_STATE_DISCONNECTED;
     data->serial = __atomic_add_fetch(&self->state_serial, 1, __ATOMIC_SEQ_CST);
     __atomic_store_n(&self->state_barrier, data->serial - 1, __ATOMIC_SEQ_CST);
-    g_idle_add_full(G_PRIORITY_DEFAULT, set_state_on_main_thread, data, NULL);
+    g_idle_add_full(G_PRIORITY_DEFAULT, set_state_on_main_thread, data, state_change_data_free);
 }
 
 /* Async connect implementation */

@@ -294,6 +294,54 @@ test_worker_disconnect_emits_on_main(void)
   g_array_unref(log.pairs);
 }
 
+static gpointer
+disconnect_and_unref_from_worker(gpointer data)
+{
+  gnostr_relay_disconnect(data);
+  g_object_unref(data);
+  return NULL;
+}
+
+static void
+test_disconnect_then_unref_notifies(void)
+{
+  NostrMockRelayServerConfig cfg = nostr_mock_server_config_default();
+  NostrMockRelayServer *server = nostr_mock_server_new(&cfg);
+  g_assert_cmpint(nostr_mock_server_start(server), ==, 0);
+  GNostrRelay *relay = g_object_new(GNOSTR_TYPE_RELAY, "url",
+                                    nostr_mock_server_get_url(server), NULL);
+  nostr_relay_set_auto_reconnect(gnostr_relay_get_core_relay(relay), false);
+  StateLog log = { .pairs = g_array_new(FALSE, FALSE, sizeof(gint)),
+                   .main_thread = g_thread_self() };
+  g_signal_connect(relay, "state-changed", G_CALLBACK(on_state_changed), &log);
+  g_signal_connect(relay, "notify::connected", G_CALLBACK(on_connected_notify), &log);
+  g_autoptr(GError) error = NULL;
+  gint64 elapsed = 0;
+  g_assert_true(connect_bounded(relay, &error, &elapsed));
+  g_assert_no_error(error);
+  gint up = wait_for_emission(&log, 0, GNOSTR_RELAY_STATE_CONNECTED,
+                              GNOSTR_RELAY_STATE_CONNECTED);
+  g_assert_cmpint(up, >=, 0);
+  guint notifies_before = log.connected_notifies;
+  GWeakRef weak;
+  g_weak_ref_init(&weak, relay);
+
+  /* The worker consumes the caller's last reference before main dispatch. */
+  GThread *worker = g_thread_new("disconnect-unref", disconnect_and_unref_from_worker, relay);
+  g_thread_join(worker);
+  GNostrRelay *queued_relay = g_weak_ref_get(&weak);
+  g_assert_nonnull(queued_relay);
+  g_object_unref(queued_relay);
+  g_assert_cmpint(wait_for_emission(&log, (guint)up + 1,
+      GNOSTR_RELAY_STATE_DISCONNECTED, GNOSTR_RELAY_STATE_DISCONNECTED), >, up);
+  g_assert_cmpuint(log.connected_notifies, ==, notifies_before + 1);
+  g_assert_cmpuint(log.off_thread, ==, 0);
+  g_assert_null(g_weak_ref_get(&weak));
+  g_weak_ref_clear(&weak);
+  nostr_mock_server_free(server);
+  g_array_unref(log.pairs);
+}
+
 static void
 ignore_multi_event(GNostrPoolMultiSub *sub, const gchar *url, const gchar *json, gpointer data)
 {
@@ -352,5 +400,6 @@ main(int argc, char **argv)
                   test_state_changed_every_transition);
   g_test_add_func("/pool/multi-sub/outlives-pool", test_multi_sub_outlives_pool);
   g_test_add_func("/relay/state/worker-disconnect-main", test_worker_disconnect_emits_on_main);
+  g_test_add_func("/relay/state/disconnect-unref-notifies", test_disconnect_then_unref_notifies);
   return g_test_run();
 }
