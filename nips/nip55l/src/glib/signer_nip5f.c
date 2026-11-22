@@ -24,6 +24,12 @@
 #include "signer_gate.h"
 
 typedef struct {
+  GDestroyNotify closed;
+  gpointer data;
+} CloseNotify;
+
+typedef struct {
+  CloseNotify *notify;
   SignerCaller *who;
   gchar *key;   /* "nip5f:<n>": the gate's connection key */
   int fd;
@@ -140,10 +146,10 @@ static int error_code(const gchar *name) {
 }
 
 static void *hook_open(void *ud, const Nip5fPeer *peer) {
-  (void)ud;
   static gint counter;
   if (peer->have_creds && peer->uid != (unsigned int)getuid()) return NULL;
   Conn *c = g_new0(Conn, 1);
+  c->notify = ud;
   c->key = g_strdup_printf("nip5f:%d", g_atomic_int_add(&counter, 1) + 1);
   c->fd = peer->conn_fd;
   c->who = signer_caller_for_peer(c->key, peer->have_creds, peer->uid,
@@ -159,7 +165,12 @@ static void hook_close(void *ud, void *conn) {
   on_main(closed_idle, g_strdup(c->key), g_free);
   signer_caller_free(c->who);
   g_free(c->key);
+  CloseNotify *notify = c->notify;
   g_free(c);
+  if (notify) {
+    if (notify->closed) notify->closed(notify->data);
+    g_free(notify);
+  }
 }
 
 static int hook_request(void *ud, void *conn, const char *method, const char *a, const char *b,
@@ -263,9 +274,20 @@ void nip55l_nip5f_stop(void) {
   server = NULL;
 }
 
-gboolean nip55l_nip5f_serve_unidentified(int fd) {
+gboolean nip55l_nip5f_serve_unidentified_full(int fd, GDestroyNotify closed, gpointer data) {
   Nip5fPeer peer = { 0, 0, 0, -1, fd };
-  return nostr_nip5f_serve_connection(fd, &peer, &hooks, NULL) == 0;
+  CloseNotify *notify = g_new0(CloseNotify, 1);
+  notify->closed = closed;
+  notify->data = data;
+  if (nostr_nip5f_serve_connection(fd, &peer, &hooks, notify) != 0) {
+    g_free(notify);
+    return FALSE;
+  }
+  return TRUE;
+}
+
+gboolean nip55l_nip5f_serve_unidentified(int fd) {
+  return nip55l_nip5f_serve_unidentified_full(fd, NULL, NULL);
 }
 
 #else /* !NIP55L_HAVE_NIP5F */
@@ -280,6 +302,11 @@ void nip55l_nip5f_stop(void) {}
 
 gboolean nip55l_nip5f_serve_unidentified(int fd) {
   (void)fd;
+  return FALSE;
+}
+
+gboolean nip55l_nip5f_serve_unidentified_full(int fd, GDestroyNotify closed, gpointer data) {
+  (void)fd; (void)closed; (void)data;
   return FALSE;
 }
 
