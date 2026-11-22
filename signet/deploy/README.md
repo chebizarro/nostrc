@@ -306,7 +306,24 @@ retention or a separate archival copy under independently controlled credentials
 that the host cannot undo; prove that mechanism in the restore drill.
 See [Spaces access permissions](https://docs.digitalocean.com/products/spaces/how-to/manage-access/).
  Enable `signet-backup.timer` only after a successful manual
-`backup.sh`, verified upload and fresh-host restore. Failed uploads leave local
+`backup.sh`, verified upload and fresh-host restore. `ops.py backup` downloads
+all three uploaded objects (`store.db`, `config.tar.gz`, `checksums.json`) and
+compares their byte lengths and SHA-256 hashes before recording off-host success.
+It does not treat an ETag or successful upload exit as content verification.
+The Spaces credential therefore needs read access as well as upload access.
+A mismatch or failed read leaves the previous success receipt unchanged and
+removes the temporary read-back files. This verifies retrieval at backup time,
+not retention or recovery on a fresh host.
+
+The hermetic S3 regression uses the real AWS CLI against a loopback-only fake
+endpoint, with fixture credentials (no cloud access):
+
+```sh
+python3 signet/tests/test_backup_upload.py /absolute/path/to/aws
+```
+
+Run `backup.sh` against the intended live Spaces bucket and perform the fresh-host
+restore drill before enabling the timer. Failed uploads leave local
 staging and the previous successful reference intact; alert, do not report an
 off-host backup. Monitor staging disk use and remove only confirmed-off-host
 staging older than the chosen local retention (recommended seven days). Audit
