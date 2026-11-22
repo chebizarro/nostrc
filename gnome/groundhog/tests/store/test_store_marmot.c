@@ -1882,6 +1882,9 @@ test_snapshot_rollback_byte_identical(void)
   advance_group_state(s, &b, 10, 0x22);
   assert_marmot_ok(s->mls_store(s->ctx, "kp_priv", a.data, a.len, (const uint8_t *) "rotated", 7));
   assert_marmot_ok(s->mls_store(s->ctx, "kp_full", a.data, a.len, (const uint8_t *) "full", 4));
+  /* libmarmot's sender high-water mark (nostrc-ow0c) is group-keyed but
+   * must survive a rollback of the group's state. */
+  assert_marmot_ok(s->mls_store(s->ctx, "mls_send_hwm", a.data, a.len, (const uint8_t *) "hwm", 3));
   g_autofree gchar *b_state =
     sql_dump(store, "SELECT * FROM mls_kv WHERE key <> CAST('group-A' AS BLOB) OR label <> 'mls_group'");
   assert_marmot_ok(s->rollback_snapshot(s->ctx, &a, "s"));
@@ -2555,6 +2558,7 @@ assert_labels_classified(GhStore *store)
     "kp_slot", "kp_slot_adopted", "kp_life", "kp_used", "kp_priv",
     "kp_full", "welcome_data", EVENT_TIME_LABEL,
     "welcome_signer",   /* a join fact, group-keyed, kept out of snapshots */
+    "mls_send_hwm",     /* sender generations handed out: never rolled back */
     NULL,
   };
   g_autofree gchar *labels = sql_text(store, "SELECT group_concat(label, ',') FROM "
