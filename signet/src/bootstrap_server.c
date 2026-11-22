@@ -332,15 +332,23 @@ handle_challenge(SignetBootstrapServer *bs, struct MHD_Connection *conn) {
   const char *agent_id = MHD_lookup_connection_value(
       conn, MHD_GET_ARGUMENT_KIND, "agent_id");
 
-  if (!agent_id || !agent_id[0])
+  if (!agent_id || !agent_id[0] ||
+      strnlen(agent_id, SIGNET_AUTH_AGENT_ID_MAX + 1) > SIGNET_AUTH_AGENT_ID_MAX)
     return send_json(conn, MHD_HTTP_BAD_REQUEST,
-                     json_error("missing agent_id query parameter"));
+                     json_error("invalid agent_id query parameter"));
+
+  SignetAgentMeta meta = {0};
+  int rc = signet_store_get_agent_meta(bs->store, agent_id, &meta);
+  signet_agent_meta_clear(&meta);
+  if (rc != 0)
+    return send_json(conn, rc > 0 ? MHD_HTTP_NOT_FOUND : MHD_HTTP_INTERNAL_SERVER_ERROR,
+                     json_error("agent not provisioned"));
 
   int64_t now = signet_now_unix();
   char *challenge = signet_challenge_issue(bs->challenges, agent_id, now);
   if (!challenge)
-    return send_json(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
-                     json_error("failed to issue challenge"));
+    return send_json(conn, MHD_HTTP_TOO_MANY_REQUESTS,
+                     json_error("challenge capacity reached"));
 
   JsonObject *response = json_object_new();
   json_object_set_string_member(response, "challenge", challenge);
