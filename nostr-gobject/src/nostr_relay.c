@@ -574,10 +574,10 @@ gnostr_relay_get_property(GObject    *object,
         g_value_set_string(value, self->url);
         break;
     case PROP_STATE:
-        g_value_set_enum(value, self->state);
+        g_value_set_enum(value, gnostr_relay_get_state(self));
         break;
     case PROP_CONNECTED:
-        g_value_set_boolean(value, self->state == GNOSTR_RELAY_STATE_CONNECTED);
+        g_value_set_boolean(value, gnostr_relay_get_state(self) == GNOSTR_RELAY_STATE_CONNECTED);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
@@ -1103,10 +1103,12 @@ gnostr_relay_disconnect(GNostrRelay *self)
     /* Everything the core queued up to now is superseded by this explicit
      * DISCONNECTED; later transitions (a new connect) are still announced. */
     __atomic_store_n(&self->state, GNOSTR_RELAY_STATE_DISCONNECTED, __ATOMIC_SEQ_CST);
-    __atomic_store_n(&self->state_barrier,
-                     __atomic_load_n(&self->state_serial, __ATOMIC_SEQ_CST),
-                     __ATOMIC_SEQ_CST);
-    gnostr_relay_emit_state(self, GNOSTR_RELAY_STATE_DISCONNECTED);
+    StateChangeData *data = g_new(StateChangeData, 1);
+    data->cb_data = relay_callback_data_new(self);
+    data->new_state = GNOSTR_RELAY_STATE_DISCONNECTED;
+    data->serial = __atomic_add_fetch(&self->state_serial, 1, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&self->state_barrier, data->serial - 1, __ATOMIC_SEQ_CST);
+    g_idle_add_full(G_PRIORITY_DEFAULT, set_state_on_main_thread, data, NULL);
 }
 
 /* Async connect implementation */
@@ -1183,7 +1185,7 @@ gnostr_relay_connect_async(GNostrRelay         *self,
         g_object_unref(task);
         return;
     }
-    if (self->state == GNOSTR_RELAY_STATE_CONNECTED && nostr_relay_is_established(self->relay)) {
+    if (gnostr_relay_get_state(self) == GNOSTR_RELAY_STATE_CONNECTED && nostr_relay_is_established(self->relay)) {
         g_task_return_boolean(task, TRUE);
         g_object_unref(task);
         return;
@@ -1227,7 +1229,7 @@ gnostr_relay_publish(GNostrRelay *self, NostrEvent *event, GError **error)
         return FALSE;
     }
 
-    if (self->state != GNOSTR_RELAY_STATE_CONNECTED) {
+    if (gnostr_relay_get_state(self) != GNOSTR_RELAY_STATE_CONNECTED) {
         if (error) {
             g_set_error_literal(error,
                                 NOSTR_ERROR,
@@ -1316,14 +1318,14 @@ GNostrRelayState
 gnostr_relay_get_state(GNostrRelay *self)
 {
     g_return_val_if_fail(GNOSTR_IS_RELAY(self), GNOSTR_RELAY_STATE_DISCONNECTED);
-    return self->state;
+    return __atomic_load_n(&self->state, __ATOMIC_SEQ_CST);
 }
 
 gboolean
 gnostr_relay_get_connected(GNostrRelay *self)
 {
     g_return_val_if_fail(GNOSTR_IS_RELAY(self), FALSE);
-    return self->state == GNOSTR_RELAY_STATE_CONNECTED;
+    return gnostr_relay_get_state(self) == GNOSTR_RELAY_STATE_CONNECTED;
 }
 
 NostrRelay *
@@ -1414,7 +1416,7 @@ gnostr_relay_authenticate(GNostrRelay *self, GError **error)
         return FALSE;
     }
 
-    if (self->state != GNOSTR_RELAY_STATE_CONNECTED) {
+    if (gnostr_relay_get_state(self) != GNOSTR_RELAY_STATE_CONNECTED) {
         relay_auth_handler_unref(handler);
         g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_CONNECTION_FAILED,
                             "not connected");
