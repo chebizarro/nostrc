@@ -108,6 +108,15 @@ typedef struct {
     nostr_timestamp_t last_members_update;
     nostr_timestamp_t last_roles_update;
     nostr_timestamp_t last_pins_update;
+
+    /* Canonical winner per snapshot kind (NIP-01 equal-time lowest-id rule).
+     * Zero-initialize with the rest of the group; empty means no canonical id
+     * has been merged yet. Appended public state requires consumer rebuilds. */
+    char last_metadata_event_id[65];
+    char last_admins_event_id[65];
+    char last_members_event_id[65];
+    char last_roles_event_id[65];
+    char last_pins_event_id[65];
 } nostr_group_t;
 
 NOSTR_NIP29_API bool nostr_group_address_parse(const char *raw, nostr_group_address_t *out);
