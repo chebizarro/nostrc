@@ -1,0 +1,18 @@
+[
+  {"id":"nostrc-old","title":"Idle claim","status":"in_progress","updated_at":"2026-10-01T00:00:00Z"},
+  {"id":"nostrc-boundary","status":"in_progress","updated_at":"2026-10-22T00:00:00Z"},
+  {"id":"nostrc-empty","status":"open","issue_type":"epic"},
+  {"id":"nostrc-parent","status":"open","issue_type":"task"},
+  {"id":"nostrc-parent.1","status":"closed","dependencies":[{"type":"parent-child","depends_on_id":"nostrc-parent"}]},
+  {"id":"nostrc-child","status":"closed","dependencies":[{"type":"parent-child","depends_on_id":"nostrc-parent"}]},
+  {"id":"nostrc-live","status":"open","issue_type":"epic"},
+  {"id":"nostrc-live.1","status":"open"},
+  {"id":"nostrc-blocked","status":"open","dependencies":[{"type":"blocks","depends_on_id":"nostrc-empty"}]},
+  {"id":"nostrc-branch","status":"open","notes":"Implemented+committed on branch marmot-track-b (tip @LANDED@), NOT yet merged to master. Pending: merge marmot-track-b + full verify."},
+  {"id":"nostrc-tip","status":"open","notes":"Work on branch `landed-tip`; awaiting merge."},
+  {"id":"nostrc-unmerged","status":"open","notes":"Work on branch other; awaiting merge."},
+  {"id":"nostrc-commits","status":"open","notes":"commit @MASTER@, tip @OTHER@; commit @DANGLING@; committed as b171bda1. @MASTER@ repeated.","description":"Landed @MASTER@; blob @BLOB@; 0xbebebebe event aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa worddeadbeef deadbeef @MASTER@x."},
+  {"id":"nostrc-dup","status":"open","dependencies":[{"type":"duplicates","depends_on_id":"nostrc-keeper"}]},
+  {"id":"nostrc-keeper","status":"closed"},
+  {"id":"nostrc-closed","status":"closed","issue_type":"epic","notes":"commit @OTHER@"}
+]

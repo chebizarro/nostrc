@@ -22182,6 +22182,33 @@
         "nip55l.dbus_contract"
       ],
       "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
+    },
+    "beads.reconcile.regressions": {
+      "nodes": [
+        "beads.reconcile"
+      ],
+      "profiles": [
+        "selection.operational.linux",
+        "selection.operational.macos"
+      ],
+      "kind": "command",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "command": [
+        "python3",
+        "{source}/scripts/test-beads-reconcile.py"
+      ],
+      "working_directory": "{source}",
+      "environment": {
+        "PYTHONDONTWRITEBYTECODE": "1"
+      },
+      "runtime_inputs": [
+        "{source}/scripts/beads-reconcile.py",
+        "{source}/scripts/test-beads-reconcile.py",
+        "{source}/tests/fixtures/beads-reconcile.json"
+      ],
+      "build_targets": []
     }
   },
   "coverage_gaps": [
@@ -25113,6 +25140,16 @@
       "owner_paths": [
         ".github/workflows/fips-ci.yml"
       ]
+    },
+    "beads.reconcile": {
+      "id": "beads.reconcile",
+      "owner_paths": [
+        "scripts/beads-reconcile.py",
+        "scripts/test-beads-reconcile.py",
+        "tests/fixtures/beads-reconcile.json"
+      ],
+      "depends_on": [],
+      "rationale": "Internal read-only beads/git reconciliation tool and fixture regression; no build or runtime component impact."
     }
   },
   "path_rules": [
@@ -30149,6 +30186,30 @@
         "nip58"
       ],
       "reason": "Checked tag, address, JSON and unsigned-event helpers shared only by these codecs."
+    },
+    {
+      "exact": "scripts/beads-reconcile.py",
+      "nodes": [
+        "beads.reconcile"
+      ],
+      "effect": "impact",
+      "reason": "Reconciliation implementation, executable regression and fixture select only their portable Python/Git check."
+    },
+    {
+      "exact": "scripts/test-beads-reconcile.py",
+      "nodes": [
+        "beads.reconcile"
+      ],
+      "effect": "impact",
+      "reason": "Reconciliation implementation, executable regression and fixture select only their portable Python/Git check."
+    },
+    {
+      "exact": "tests/fixtures/beads-reconcile.json",
+      "nodes": [
+        "beads.reconcile"
+      ],
+      "effect": "impact",
+      "reason": "Reconciliation implementation, executable regression and fixture select only their portable Python/Git check."
     }
   ],
   "profiles": {
