@@ -1140,6 +1140,7 @@ test_consent(void)
   g_autoptr(GBytes) second = make_jpeg(8 * 1024, 30);
   gh_attachment_ui_offer_bytes(f.s.window, second, "photo2.jpg", "image/jpeg");
   sheet = wait_page(&f, "preview");
+  g_assert_nonnull(strstr(gh_attachment_sheet_get_server_note(sheet), "signed by your account"));
   gtk_widget_activate_action(GTK_WIDGET(sheet), "sheet.send", NULL);
   gh_test_spin_until(sheet_closed, &f);
   g_assert_cmpuint(blossom_fixture_count(f.blossom, "PUT"), ==, puts + 1);

@@ -273,6 +273,7 @@ update_notes(GhAttachmentUi *ui)
     return;
   g_auto(GStrv) list = offer_servers(ui, ui->offer);
   g_autofree gchar *host = list[0] ? host_of(list[0]) : NULL;
+  g_autofree gchar *destinations = g_strjoinv(", ", list);
   gboolean tor = gh_attachments_get_tor(ui->attachments);
   g_autofree gchar *server_note = NULL;
   if (ui->offer->policy_servers && !list[0])
@@ -293,14 +294,23 @@ update_notes(GhAttachmentUi *ui)
     server_note = g_strdup("");
   else if (tor)
     server_note = g_strdup_printf(
-      _("The file is encrypted on this device, then uploaded to %s through Tor. The server keeps "
+      _("The file is encrypted on this device, then tried on these servers in order through Tor: %s. The accepting server keeps "
         "the encrypted file and can see its size and when it's uploaded, but not your IP address "
-        "or what the file contains."), host);
+        "or what the file contains."), destinations);
   else
     server_note = g_strdup_printf(
-      _("The file is encrypted on this device, then uploaded to %s. The server keeps the "
+      _("The file is encrypted on this device, then tried on these servers in order: %s. The accepting server keeps the "
         "encrypted file and can see its size, when it's uploaded and your IP address, but not "
-        "what the file contains."), host);
+        "what the file contains."), destinations);
+  for (guint i = 0; list[i]; i++) {
+    if (gh_attachments_get_consent(ui->attachments, list[i])) {
+      gchar *with_signing = g_strconcat(server_note, "\n\n",
+        _("Uploads to servers you have approved are signed by your account, so those servers learn the file is yours."), NULL);
+      g_free(server_note);
+      server_note = with_signing;
+      break;
+    }
+  }
   gint64 timer = gh_composer_get_disappearing_timer(ui->composer);
   g_autofree gchar *duration = timer > 0 ? describe_timer(timer) : NULL;
   g_autofree gchar *timer_note =
