@@ -95,8 +95,29 @@ static void test_new_group_invalid_addresses(void) {
     assert(nostr_new_group("wss://relay.example.com/test-group") == NULL);
     assert(nostr_new_group("wss://relay.example.com'") == NULL);
     assert(nostr_new_group("'test-group") == NULL);
-    assert(nostr_new_group("wss://relay.example.com'BadGroup") == NULL);
-    assert(nostr_new_group("wss://relay.example.com'test group") == NULL);
+    assert(nostr_new_group("wss://relay.example.com'bad\x1fgroup") == NULL);
+    assert(nostr_new_group("wss://relay.example.com'bad\ngroup") == NULL);
+}
+
+static void test_opaque_group_ids(void) {
+    const char *ids[] = {"Tnq7x2ZTgrPZWFrC", "test group", "O'Brien", "group.+:42", "日本語"};
+    for (size_t i = 0; i < sizeof(ids) / sizeof(ids[0]); i++) {
+        char address[256];
+        snprintf(address, sizeof address, "wss://relay.example.com'%s", ids[i]);
+        nostr_group_t *group = nostr_new_group(address);
+        assert(group && strcmp(group->address.id, ids[i]) == 0);
+        char *encoded = nostr_group_address_to_string(&group->address);
+        assert(encoded && strcmp(encoded, address) == 0);
+        free(encoded);
+        NostrEvent *event = snapshot_event(NOSTR_KIND_SIMPLE_GROUP_METADATA, 10, ids[i]);
+        assert(nostr_group_merge_in_metadata_event(group, event));
+        nostr_event_free(event);
+        nostr_free_group(group);
+    }
+    nostr_group_address_t bad = { .relay = "wss://relay.example.com", .id = "bad\177group" };
+    assert(!nostr_group_address_is_valid(&bad));
+    bad.id = "bad\302\205group";
+    assert(!nostr_group_address_is_valid(&bad));
 }
 
 static void test_free_null(void) {
@@ -405,7 +426,7 @@ static void test_metadata_subgroups(void) {
     add_tag(event, nostr_tag_new("parent", "social", NULL));   /* only one allowed: first wins */
     add_tag(event, nostr_tag_new("child", "nip29", NULL));
     add_tag(event, nostr_tag_new("child", "nostr", NULL));     /* self-reference dropped */
-    add_tag(event, nostr_tag_new("child", "Bad Id", NULL));    /* invalid id dropped */
+    add_tag(event, nostr_tag_new("child", "bad\037id", NULL));    /* invalid id dropped */
     add_tag(event, nostr_tag_new("child", "blossom", NULL));
     add_tag(event, nostr_tag_new("child", "nip29", NULL));     /* duplicate dropped */
     add_tag(event, nostr_tag_new("child", "", NULL));
@@ -526,8 +547,8 @@ static void test_reference_parse(void) {
     nostr_group_address_t addr;
     char *code = (char *)"sentinel";
 
-    assert(nostr_group_reference_parse("wss://relay.example.com'pizza", &addr, &code));
-    assert(strcmp(addr.relay, "wss://relay.example.com") == 0 && strcmp(addr.id, "pizza") == 0);
+    assert(nostr_group_reference_parse("wss://relay.example.com'Tnq7x2ZTgrPZWFrC", &addr, &code));
+    assert(strcmp(addr.relay, "wss://relay.example.com") == 0 && strcmp(addr.id, "Tnq7x2ZTgrPZWFrC") == 0);
     assert(code == NULL);
     nostr_group_address_clear(&addr);
 
@@ -540,11 +561,11 @@ static void test_reference_parse(void) {
     free(code);
     nostr_group_address_clear(&addr);
 
-    char *naddr = make_group_naddr(NOSTR_KIND_SIMPLE_GROUP_METADATA, "pizza", "wss://groups.example.com");
+    char *naddr = make_group_naddr(NOSTR_KIND_SIMPLE_GROUP_METADATA, "Tnq7x2ZTgrPZWFrC", "wss://groups.example.com");
     char buf[1024];
     snprintf(buf, sizeof buf, "nostr:%s?invite=Xy7-Q", naddr);
     assert(nostr_group_reference_parse(buf, &addr, &code));
-    assert(strcmp(addr.relay, "wss://groups.example.com") == 0 && strcmp(addr.id, "pizza") == 0);
+    assert(strcmp(addr.relay, "wss://groups.example.com") == 0 && strcmp(addr.id, "Tnq7x2ZTgrPZWFrC") == 0);
     assert(code && strcmp(code, "Xy7-Q") == 0);
     free(code);
     nostr_group_address_clear(&addr);
@@ -578,6 +599,7 @@ static void test_reference_parse(void) {
 int main(void) {
     test_new_group_valid();
     test_new_group_invalid_addresses();
+    test_opaque_group_ids();
     test_free_null();
     test_permission_conversions();
     test_metadata_merge_flags_copy_and_replacement();
