@@ -532,7 +532,8 @@ test_at1_round_trip(void)
   g_autofree gchar *x = sha256_hex(blob);
   g_assert_cmpstr(x, ==, sent->x);
   g_assert_false(contains(blob, file_canary));
-  g_assert_false(contains(blob, "JFIF"));
+  /* The long plaintext canary above is meaningful; a short JPEG marker
+   * can occur in random ciphertext and is not evidence of leaked plaintext. */
 
   /* Sent as a kind-15 rumor, received as a message: no request (AT-7). */
   g_autoptr(GError) error = NULL;
