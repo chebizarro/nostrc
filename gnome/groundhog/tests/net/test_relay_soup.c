@@ -1080,7 +1080,7 @@ capture_soup_open(GhRelayScope *scope, const gchar *url, const NostrFilters *fil
                     gpointer data, GError **error)
 {
   gpointer *handle = data;
-  *handle = gh_relay_soup_scope_open(scope, url, filters, NULL, NULL, NULL, error);
+  *handle = gh_relay_soup_scope_open(scope, url, filters, NULL, NULL, NULL, FALSE, error);
   return *handle;
 }
 
@@ -1116,6 +1116,38 @@ test_event_resets_backoff_without_eose(void)
   g_assert_null(handle);
   g_free(seen.last_error);
   relay_clear(&relay);
+}
+
+static void
+test_direct_untrusted_socket_filter(void)
+{
+  GhNetSession *session = install_session(GH_NET_MODE_NONE, NULL);
+  Tripwire trip = { 0 };
+  tripwire_init(&trip);
+  const gchar *hosts[] = { "127.0.0.1", REBIND_HOST };
+  for (guint i = 0; i < G_N_ELEMENTS(hosts); i++) {
+    g_autofree gchar *url = g_strdup_printf("wss://%s:%u/relay", hosts[i], trip.port);
+    ScopeSeen seen = { 0 };
+    GhRelayScope *scope = open_scope(1, url, &seen);
+    wait_at_least(&seen.errors, 1);
+    g_assert_cmpuint(trip.accepted, ==, 0);
+    gh_relay_scope_cancel(scope);
+    gh_relay_scope_unref(scope);
+    PublishSeen sent = { 0 };
+    GhRelayPublish *publish = start_publish(url, "must never reach a private socket", &sent);
+    wait_at_least(&sent.done, 1);
+    g_assert_cmpuint(trip.accepted, ==, 0);
+    g_assert_cmpint(sent.outcome, ==, GH_RELAY_PUBLISH_CONNECTION_FAILED);
+    gh_relay_publish_unref(publish);
+    g_free(seen.last_error);
+    g_free(sent.message);
+  }
+  gboolean resolved = FALSE;
+  for (guint i = 0; i < dns_names->len; i++)
+    resolved |= g_strcmp0(g_ptr_array_index(dns_names, i), REBIND_HOST) == 0;
+  g_assert_true(resolved); /* the rebinding answer was actually evaluated */
+  tripwire_clear(&trip);
+  uninstall_session(session);
 }
 
 static void
@@ -1863,6 +1895,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/net/mode-switch", test_mode_switch);
   g_test_add_func("/groundhog/net/isolation", test_isolation);
   g_test_add_func("/groundhog/net/upgrade-close-recovery", test_upgrade_close_recovery);
+  g_test_add_func("/groundhog/net/direct-untrusted-socket-filter", test_direct_untrusted_socket_filter);
   g_test_add_func("/groundhog/net/event-resets-backoff", test_event_resets_backoff_without_eose);
   g_test_add_func("/groundhog/net/no-session-refuses", test_no_session_refuses);
   g_test_add_func("/groundhog/net/allow-local-network", test_allow_local_network);

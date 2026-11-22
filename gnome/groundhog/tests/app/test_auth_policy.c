@@ -366,6 +366,11 @@ test_matrix(void)
       g_autofree gchar *url = g_strdup_printf("wss://%s-%s.test.invalid",
                                               gh_auth_purpose_to_string(p), write ? "w" : "r");
       Conn *conn = write ? open_publish(&f, p, url) : open_scope(&f, generation(&f), p, url);
+      gboolean owned = p != GH_AUTH_PURPOSE_CONTACT_DIRECTORY &&
+        p != GH_AUTH_PURPOSE_RECIPIENT_WRAP && p != GH_AUTH_PURPOSE_GROUP &&
+        p != GH_AUTH_PURPOSE_MLS_ROUTING;
+      g_assert_cmpint(write ? gh_relay_publish_url_address_trusted(conn->publish, url)
+                            : gh_relay_scope_url_address_trusted(conn->scope, url), ==, owned);
       guint calls = f.mock.calls;
       demand_auth(conn);
       gh_test_spin_until(auth_sent, conn);

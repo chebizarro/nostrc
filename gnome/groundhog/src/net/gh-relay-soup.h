@@ -44,7 +44,7 @@ typedef void (*GhRelaySoupStatusFunc)(gpointer data, gboolean connected);
 gpointer gh_relay_soup_scope_open(GhRelayScope *scope, const gchar *url,
                                   const NostrFilters *filters, GProxyResolver *resolver,
                                   GhRelaySoupStatusFunc status, gpointer status_data,
-                                  GError **error);
+                                  gboolean public_only, GError **error);
 void gh_relay_soup_scope_close(gpointer handle);
 /* Current base of the reconnect ladder (seconds), for diagnostics. Owner context only. */
 guint gh_relay_soup_scope_get_retry_seconds(gpointer handle);
@@ -58,7 +58,7 @@ gboolean gh_relay_soup_scope_send_event(gpointer handle, const gchar *signed_eve
 gpointer gh_relay_soup_publish_open(GhRelayPublish *publish, const gchar *url,
                                     const gchar *event_json, GProxyResolver *resolver,
                                     GhRelaySoupStatusFunc status, gpointer status_data,
-                                    GError **error);
+                                    gboolean public_only, GError **error);
 void gh_relay_soup_publish_close(gpointer handle);
 gboolean gh_relay_soup_publish_send_auth(gpointer handle, const gchar *signed_event_json,
                                          GError **error);
