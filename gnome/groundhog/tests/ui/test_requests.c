@@ -885,7 +885,7 @@ test_gui_requests_view(void)
   /* Honest about what Block does: this conversation, undone by writing. */
   g_assert_nonnull(strstr(adw_alert_dialog_get_body(confirm), "in this conversation"));
   g_assert_nonnull(strstr(adw_alert_dialog_get_body(confirm),
-                          "start a new message to them: that unblocks the conversation"));
+                          "start a new message with exactly the same people. That unblocks this conversation"));
   respond(confirm, "block-confirm");
   g_assert_null(room_of(&f, y));
   g_assert_true(blocked(&f, y));
