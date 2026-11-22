@@ -253,7 +253,9 @@ class MDKGateTests(unittest.TestCase):
             # Require evidence of real LOCK_NB contention, not merely a started
             # process that could be cancelled before ever attempting the lock.
             deadline = time.monotonic()+10
-            while not list(self.evidence.glob('*/'+version+'-waiting.json')):
+            while not any(
+                    json.loads((path.parent/'config.json').read_text()).get('source') == str(other)
+                    for path in self.evidence.glob('*/'+version+'-waiting.json')):
                 if time.monotonic()>deadline: self.fail('second supervisor never contended for fixed-tag lock')
                 time.sleep(.01)
             second.terminate()

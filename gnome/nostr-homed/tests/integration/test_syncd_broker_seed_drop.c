@@ -19,6 +19,7 @@
  */
 
 #define _GNU_SOURCE
+#include "nh_syncd_spawn.h"
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -51,33 +52,23 @@ static int file_exists(const char *path) {
 /* Spawn the daemon binary at `bin` with --check and env overrides.
  * Returns child exit status (>= 0) or -1 on spawn failure. */
 static int run_daemon_check(const char *bin,
+                            const char *root,
                             const char *state_dir,
                             const char *home,
-                            const char *seed_file /* nullable */,
-                            const char *seed_hex_env /* nullable */) {
-    pid_t pid = fork();
-    if (pid < 0) return -1;
-    if (pid == 0) {
-        /* Child. */
-        setenv("NOSTR_HOMED_SYNCD_HOME", home, 1);
-        setenv("NOSTR_HOMED_SYNCD_STATE_DIR", state_dir, 1);
-        unsetenv("NOSTR_HOMED_SYNCD_SEED_FILE");
-        unsetenv("NOSTR_HOMED_SYNCD_SEED_HEX");
-        if (seed_file) setenv("NOSTR_HOMED_SYNCD_SEED_FILE", seed_file, 1);
-        if (seed_hex_env) setenv("NOSTR_HOMED_SYNCD_SEED_HEX", seed_hex_env, 1);
-        /* Provide dummies for other required-in-prod env; --check exits
-         * before opening sockets so URL contents don't matter. */
-        setenv("NOSTR_HOMED_SYNCD_NSEC_HEX", SEED_HEX, 1);
-        setenv("NOSTR_HOMED_SYNCD_BLOSSOM", "https://ignored.example", 1);
-        setenv("NOSTR_HOMED_SYNCD_RELAYS", "wss://ignored.example", 1);
-        execl(bin, bin, "--check", (char *)NULL);
-        perror("execl");
-        _exit(127);
-    }
-    int st = 0;
-    if (waitpid(pid, &st, 0) < 0) return -1;
-    if (!WIFEXITED(st)) return -1;
-    return WEXITSTATUS(st);
+                            const char *seed_file,
+                            const char *seed_hex_env) {
+    nh_syncd_sandbox sb = {0};
+    snprintf(sb.root, sizeof sb.root, "%s", root);
+    snprintf(sb.home, sizeof sb.home, "%s", home);
+    snprintf(sb.state, sizeof sb.state, "%s", state_dir);
+    snprintf(sb.seed_path, sizeof sb.seed_path, "%s", seed_file);
+    snprintf(sb.log, sizeof sb.log, "%s/daemon.log", root);
+    char seed_env[128];
+    if (seed_hex_env)
+        snprintf(seed_env, sizeof seed_env, "NOSTR_HOMED_SYNCD_SEED_HEX=%s", seed_hex_env);
+    const char *extra_env[] = {seed_hex_env ? seed_env : NULL, NULL};
+    pid_t pid = nh_syncd_spawn(bin, &sb, true, extra_env);
+    return pid < 0 ? -1 : nh_syncd_wait(pid, 20.0);
 }
 
 int main(int argc, char **argv) {
@@ -108,7 +99,7 @@ int main(int argc, char **argv) {
     assert(write_file(seed_path, SEED_HEX, 64) == 0);
     assert(file_exists(seed_path));
 
-    int rc = run_daemon_check(bin, state, home, seed_path, NULL);
+    int rc = run_daemon_check(bin, root, state, home, seed_path, NULL);
     fprintf(stderr, "scenario A: exit=%d, drop-file-still-present=%d\n",
             rc, file_exists(seed_path));
     assert(rc == 0);
@@ -121,7 +112,7 @@ int main(int argc, char **argv) {
     rm_rf(state); assert(mkdir(state, 0700) == 0);
     /* No drop file. */
     assert(!file_exists(seed_path));
-    rc = run_daemon_check(bin, state, home, seed_path /* still points at absent file */,
+    rc = run_daemon_check(bin, root, state, home, seed_path /* still points at absent file */,
                           SEED_HEX);
     fprintf(stderr, "scenario B: exit=%d\n", rc);
     assert(rc == 0);
@@ -134,7 +125,7 @@ int main(int argc, char **argv) {
      * drop file (proves it took the broker path first). --- */
     assert(write_file(seed_path, SEED_HEX, 64) == 0);
     rm_rf(state); assert(mkdir(state, 0700) == 0);
-    rc = run_daemon_check(bin, state, home, seed_path, SEED_HEX);
+    rc = run_daemon_check(bin, root, state, home, seed_path, SEED_HEX);
     fprintf(stderr, "scenario C: exit=%d, drop-file-still-present=%d\n",
             rc, file_exists(seed_path));
     assert(rc == 0);

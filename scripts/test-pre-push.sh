@@ -57,8 +57,9 @@ hook <<< "$refs_clean" > "$tmp/out" 2>&1 || { cat "$tmp/out"; echo 'clean push b
 grep -q STATIC_GUARD_RAN "$tmp/out"
 if hook <<< "$refs_ws" > "$tmp/out" 2>&1; then echo 'whitespace error passed' >&2; exit 1; fi
 grep -q 'whitespace errors' "$tmp/out"
-if hook < /dev/null > "$tmp/out" 2>&1; then echo 'empty input accepted' >&2; exit 1; fi
-grep -q 'No pre-push refs received' "$tmp/out"
+hook < /dev/null > "$tmp/out" 2>&1 || { cat "$tmp/out"; echo 'no-op push blocked' >&2; exit 1; }
+grep -q 'No pre-push ref updates; nothing to check' "$tmp/out"
+if grep -q STATIC_GUARD_RAN "$tmp/out"; then echo 'no-op ran static guards' >&2; exit 1; fi
 echo "(delete) $z refs/heads/gone $clean" | hook > /dev/null
 echo "(delete) $(printf '%064d' 0) refs/heads/gone $clean" | hook > /dev/null
 

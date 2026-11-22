@@ -36,6 +36,8 @@ BuildRequires:  pkgconfig(gstreamer-video-1.0)
 BuildRequires:  pkgconfig(gstreamer-app-1.0)
 # Complete source archive carries third_party/nsync (no distro nsync required).
 Provides:       bundled(nsync)
+Provides:       grotto-daemon = %{version}-%{release}
+Obsoletes:      grotto-daemon < 0.1.2
 BuildRequires:  desktop-file-utils
 BuildRequires:  appstream
 BuildRequires:  systemd-rpm-macros

@@ -113,6 +113,9 @@ test_lru_evicts_oldest(void)
     GnostrProfileMeta *first_check = gnostr_profile_provider_get(first_key);
     g_assert_nonnull(first_check);
 
+    gnostr_profile_meta_free(first);
+    gnostr_profile_meta_free(second);
+    gnostr_profile_meta_free(first_check);
     gnostr_profile_provider_shutdown();
 }
 

@@ -10,7 +10,9 @@ libgit2/curl/SQLite build dependencies into a signer-only package.
 - **Debian/Ubuntu**: copy `debian/` to a complete monorepo source root's
   `debian/`, then `dpkg-buildpackage -us -uc -b`. CMake builds
   `apps/grotto/all` and installs only `build/apps/grotto`; BUILD_TESTING is off.
-  GUI and daemon are not split. Breaks/Replaces handles the old 0.1.0-1 split.
+  GUI and daemon are not split. Breaks/Replaces handles split `grotto-daemon` packages predating 0.1.2,
+  including the previously shipped 0.1.1-alpha1 package. RPM and Arch also
+  replace the retired split daemon package.
 - **RPM**: `rpm/grotto.spec`; use a complete local `grotto-0.1.1-alpha1.tar.gz`
   with root `grotto-0.1.1-alpha1/`, including checked-out submodules, not GitHub's
   incomplete source archive. Build with `rpmbuild -ba`. The dependency floor,
@@ -40,6 +42,19 @@ CMake-built libraries/daemon; it is not an independent daemon implementation.
 `signer/desktop-contract` checks this contract. No package enables GUI login or
 remote network access on install. The native host, when built, uses its own
 manifest installer; Nix/desktop-bundle builds currently leave that host off.
+
+## Installing the panels dependency
+
+Grotto's native packages are not standalone: install **libgrotto-panels-0-0**
+(Debian/Ubuntu) or **grotto-panels** (RPM), version **0.1.0 or later**, for the
+same architecture before installing Grotto. Building Grotto also requires
+**libgrotto-panels-0-dev** or **grotto-panels-devel** respectively.
+
+If the chosen Grotto release does not include these provider packages, build
+and install them first from the same source checkout using the
+[panels package instructions](../../../gnome/grotto-panels/packaging/README.md).
+Do not force-install Grotto with unresolved dependencies or copy the panels DSO
+into its private library directory.
 
 Systemd examples install under `/usr/share/doc/grotto/examples`; use exactly one
 of `bunker.conf.example` and `headless-bunker.conf.example` as a user drop-in.

@@ -90,27 +90,16 @@ gnome = import('gnome')
 blueprint_compiler = find_program('blueprint-compiler', required: false)
 nostr_gtk_blueprint_deps = []
 if blueprint_compiler.found()
-  # Compile all blueprint files into the source data/ tree so GResource can find them
-  _blp_sources = [
-    ['data/ui/gnostr-composer.blp',     'data/ui/gnostr-composer.ui'],
-    ['data/ui/widgets/gnostr-timeline-view.blp', 'data/ui/widgets/gnostr-timeline-view.ui'],
-  ]
-  foreach _blp : _blp_sources
-    _compiled = custom_target('blp-' + _blp[0].underscorify(),
-      input: files(_blp[0]),
-      output: _blp[1].split('/')[-1],
-      command: [blueprint_compiler, 'compile',
-                '--output', meson.current_source_dir() / _blp[1],
-                '@INPUT@'])
-    nostr_gtk_blueprint_deps += _compiled
-  endforeach
+  # Preserve resource paths while generating only in the build tree.
+  subdir('data/ui')
+  subdir('data/ui/widgets')
 endif
 
 # ── GResource ────────────────────────────────────────────────────────
 nostr_gtk_resources = gnome.compile_resources(
   'nostr-gtk-resources',
   'data/nostr-gtk.gresource.xml',
-  source_dir: 'data',
+  source_dir: [meson.current_build_dir() / 'data', 'data'],
   c_name: 'nostr_gtk',
   dependencies: nostr_gtk_blueprint_deps)
 
