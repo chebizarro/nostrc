@@ -176,8 +176,20 @@ static void unaligned_json_tokens(void)
     }
 }
 
+static void empty_filter_clone(void)
+{
+    struct ndb_filter source, clone;
+    CHECK(ndb_filter_init(&source));
+    CHECK(ndb_filter_end(&source));
+    CHECK(ndb_filter_clone(&clone, &source));
+    CHECK(clone.num_elements == 0);
+    ndb_filter_destroy(&clone);
+    ndb_filter_destroy(&source);
+}
+
 int main(void)
 {
+    empty_filter_clone();
     unaligned_json_tokens();
     unaligned_sha256();
     full_width_varints();

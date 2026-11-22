@@ -1,0 +1,41 @@
+--- a/src/nostrdb.c
++++ b/src/nostrdb.c
+@@ -619,17 +619,18 @@
+ {
+ 	size_t src_size, elem_size, data_size;
+ 
++	if (!src || !src->finalized)
++		return 0;
++
+ 	memcpy(dst, src, sizeof(*src));
+ 
+-	elem_size = src->elem_buf.end - src->elem_buf.start;
+-	data_size = src->data_buf.end - src->data_buf.start;
++	elem_size = src->elem_buf.start ? src->elem_buf.end - src->elem_buf.start : 0;
++	data_size = src->data_buf.start ? src->data_buf.end - src->data_buf.start : 0;
+ 	src_size = data_size + elem_size;
+ 
+-	// let's only allow finalized filters to be cloned
+-	if (!src || !src->finalized)
+-		return 0;
+-
+-	dst->elem_buf.start = malloc(src_size);
++	dst->elem_buf.start = malloc(src_size ? src_size : 1);
++	if (dst->elem_buf.start == NULL)
++		return 0;
+ 	dst->elem_buf.end = dst->elem_buf.start + elem_size;
+ 	dst->elem_buf.p = dst->elem_buf.end;
+ 
+@@ -637,10 +638,8 @@
+ 	dst->data_buf.end = dst->data_buf.start + data_size;
+ 	dst->data_buf.p = dst->data_buf.end;
+ 
+-	if (dst->elem_buf.start == NULL)
+-		return 0;
+-
+-	memcpy(dst->elem_buf.start, src->elem_buf.start, src_size);
++	if (src_size)
++		memcpy(dst->elem_buf.start, src->elem_buf.start, src_size);
+ 
+ 	return 1;
+ }
