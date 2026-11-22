@@ -82,6 +82,11 @@ class DeploymentContracts(unittest.TestCase):
         self.assertNotIn('setcap', d)
         self.assertNotIn('ENV SIGNET_DB_KEY', d)
 
+    def test_root_configure_dependencies(self):
+        # fipsd is enabled by the root CMake configure used by both routes.
+        for relative in ('signet/Dockerfile', '.github/workflows/signet-ci.yml'):
+            self.assertIn('libyaml-dev', (ROOT / relative).read_text(), relative)
+
     def test_secret_environment_refused(self):
         with tempfile.TemporaryDirectory() as t:
             p = Path(t) / 'deploy.env'

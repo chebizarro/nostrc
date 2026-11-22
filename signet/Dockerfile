@@ -12,7 +12,7 @@ RUN case "$SIGNET_PASSKEYS" in ON|OFF) ;; *) exit 1;; esac \
     libglib2.0-dev libjson-glib-dev libjansson-dev libssl-dev \
     libsqlite3-dev libsqlcipher-dev libsodium-dev libmicrohttpd-dev \
     libsecp256k1-dev libcurl4-openssl-dev libwebsockets-dev libnsync-dev \
-    libgit2-dev ca-certificates \
+    libgit2-dev libyaml-dev ca-certificates \
  && if [ "$SIGNET_PASSKEYS" = ON ]; then apt-get install -y --no-install-recommends libcbor-dev; fi \
  && rm -rf /var/lib/apt/lists/* \
  && pip3 install --no-cache-dir --break-system-packages "cmake==$CMAKE_VERSION" "meson==$MESON_VERSION"

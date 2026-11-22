@@ -87,7 +87,7 @@ jobs:
             build-essential cmake meson ninja-build pkg-config clang \
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libglib2.0-dev libsoup-3.0-dev \
-            libjson-glib-dev libgit2-dev libnsync-dev \
+            libjson-glib-dev libgit2-dev libnsync-dev libyaml-dev \
             libsqlite3-dev libmicrohttpd-dev libcbor-dev libsqlcipher-dev python3-jsonschema
           echo "CC=clang" >> "$GITHUB_ENV"
           echo "CXX=clang++" >> "$GITHUB_ENV"
