@@ -1853,7 +1853,6 @@ static void connection_link_actions(void) {
   g_clear_object(&app); WAIT(apps_gone == 1);
 }
 static void backup_file_keyboard_activate(GApplication *application, gpointer data) {
-  (void)data;
   accounts_store_add(accounts_store_get_default(), npub, "My identity", NULL);
   g_settings_set_string(settings_manager_get_gsettings(settings_manager_get_default()), "default-identity", npub);
   SignerWindow *window = signer_window_new(ADW_APPLICATION(application)); g_object_ref(window);
@@ -1863,6 +1862,19 @@ static void backup_file_keyboard_activate(GApplication *application, gpointer da
   GtkWidget *save = GTK_WIDGET(gtk_widget_get_template_child(page, GROTTO_TYPE_IDENTITY_DETAIL, "save_row"));
   WAIT(gtk_widget_is_sensitive(save)); g_signal_emit_by_name(save, "activated"); wait_frames(GTK_WIDGET(window));
   AdwDialog *dialog = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
+  adw_dialog_close(dialog); WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
+  guint exports_before = encrypted_exports;
+  signer_window_show_page(window, "backup"); wait_frames(GTK_WIDGET(window));
+  g_assert_true(find_editor_control(GTK_WIDGET(window), GROTTO_TYPE_IDENTITY_DETAIL) == page);
+  signer_window_show_page(window, "backup"); wait_frames(GTK_WIDGET(window));
+  g_assert_true(find_editor_control(GTK_WIDGET(window), GROTTO_TYPE_IDENTITY_DETAIL) == page);
+  g_assert_cmpuint(encrypted_exports, ==, exports_before);
+  if (data) {
+    gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window); g_application_quit(application);
+    return;
+  }
+  g_signal_emit_by_name(save, "activated"); wait_frames(GTK_WIDGET(window));
+  dialog = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
   GtkWidget *entry = find_editor_control(GTK_WIDGET(dialog), GN_TYPE_SECURE_ENTRY); g_assert_nonnull(entry);
   GtkWidget *focus = gtk_root_get_focus(GTK_ROOT(window)); g_assert_nonnull(focus);
   g_assert_true(gtk_widget_is_ancestor(focus, entry));
@@ -1882,6 +1894,14 @@ static void backup_file_keyboard(void) {
   g_autoptr(AdwApplication) app = adw_application_new("org.nostr.Grotto.BackupFileKeyboardTest", G_APPLICATION_NON_UNIQUE);
   g_object_weak_ref(G_OBJECT(app), finalised, &apps_gone);
   g_signal_connect(app, "activate", G_CALLBACK(backup_file_keyboard_activate), NULL);
+  g_assert_cmpint(g_application_run(G_APPLICATION(app), 0, NULL), ==, 0);
+  g_clear_object(&app); WAIT(apps_gone == 1);
+}
+static void backup_navigation(void) {
+  guint apps_gone = 0;
+  g_autoptr(AdwApplication) app = adw_application_new("org.nostr.Grotto.BackupNavigationTest", G_APPLICATION_NON_UNIQUE);
+  g_object_weak_ref(G_OBJECT(app), finalised, &apps_gone);
+  g_signal_connect(app, "activate", G_CALLBACK(backup_file_keyboard_activate), GINT_TO_POINTER(1));
   g_assert_cmpint(g_application_run(G_APPLICATION(app), 0, NULL), ==, 0);
   g_clear_object(&app); WAIT(apps_gone == 1);
 }
@@ -1959,6 +1979,7 @@ int main(int argc, char **argv) {
   g_test_add_func("/signer/layout/first-run-connect-destination", first_run_connect_destination);
   g_test_add_func("/signer/layout/connection-link-actions", connection_link_actions);
   g_test_add_func("/signer/layout/backup-file-keyboard", backup_file_keyboard);
+  g_test_add_func("/signer/layout/backup-navigation", backup_navigation);
   g_test_add_func("/signer/layout/assistant-input-keyboard", assistant_input_keyboard);
   }
   int result = g_test_run();
