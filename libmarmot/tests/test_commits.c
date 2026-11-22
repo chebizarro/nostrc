@@ -836,6 +836,34 @@ test_group_data_relays_follow_commit(void)
     trio_clear(&t);
 }
 
+/* A no-op GroupContextExtensions proposal is still privileged, even when
+ * the only resulting state difference is the committer's UpdatePath. */
+static void
+test_noop_group_context_commit_is_privileged(void)
+{
+    Trio t;
+    trio_init(&t);
+    MlsGroup g;
+    load_mls(&t.charlie, &t.gid, &g);
+    char *event = forge_extensions_commit(&t.charlie, &t.gid,
+                                           g.extensions_data, g.extensions_len, t.nostr_gid);
+    mls_group_free(&g);
+    Snapshot before;
+    snapshot(&t.alice, &t.gid, &before);
+    MarmotError err;
+    deliver(&t.alice, event, &err, NULL);
+    CHECK(err == MARMOT_ERR_COMMIT_FROM_NON_ADMIN, "non-admin no-op GCE: %d", err);
+    expect_unchanged(&t.alice, &t.gid, &before, "no-op GCE refused");
+    snapshot_clear(&before);
+    free(event);
+    load_mls(&t.alice, &t.gid, &g);
+    event = forge_extensions_commit(&t.alice, &t.gid, g.extensions_data, g.extensions_len, t.nostr_gid);
+    mls_group_free(&g);
+    expect_commit(&t.bob, event, "admin no-op GCE");
+    free(event);
+    trio_clear(&t);
+}
+
 /* Alice renames the group; Bob and Charlie process the published kind:445
  * and everyone agrees on the metadata and the epoch (was: the Commit was
  * discarded and receivers treated every kind:445 as an application
@@ -8855,6 +8883,7 @@ main(int argc, char **argv)
     RUN(test_inner_event_delivered_once);
     RUN(test_rename_reaches_every_member);
     RUN(test_group_data_relays_follow_commit);
+    RUN(test_noop_group_context_commit_is_privileged);
     RUN(test_events_signed_by_fresh_ephemeral_keys);
     RUN(test_group_events_have_strictly_increasing_created_at);
     RUN(test_group_event_lead_is_bounded);

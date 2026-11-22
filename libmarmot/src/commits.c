@@ -684,6 +684,11 @@ marmot_commit_authorize_ex(const MlsGroup *pre, const MlsGroup *post,
                         memcmp(pre->extensions_data, post->extensions_data,
                                pre->extensions_len) != 0);
     key->privileged = members_changed || ext_changed;
+    if (departures && departures->shape_known) {
+        bool self_update = departures->proposal_count == 0 && departures->has_path;
+        key->privileged |= !(self_update || sr_only);
+    }
+
 
     MarmotGroupDataExtension *before = NULL, *after = NULL;
     MarmotError err = group_data_of(pre, pre, &before);
