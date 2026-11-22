@@ -6,6 +6,8 @@ includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
 Name: libmarmot
 Description: C implementation of the Marmot protocol (MLS + Nostr)
 Version: @MARMOT_VERSION_STRING@
-Requires: libsodium openssl
+Requires: libsodium openssl libsecp256k1
+Requires.private: @MARMOT_PC_REQUIRES_PRIVATE@
+Libs.private: -lnostr_nip44_core
 Libs: -L${libdir} -lmarmot
 Cflags: -I${includedir}

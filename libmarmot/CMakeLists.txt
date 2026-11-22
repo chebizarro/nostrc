@@ -212,6 +212,13 @@ target_compile_options(marmot PRIVATE
 )
 
 # ─── pkg-config ──────────────────────────────────────────────────────────
+set(MARMOT_PC_REQUIRES_PRIVATE "nostr libnostrgo")
+if(SQLITE3_FOUND)
+  string(APPEND MARMOT_PC_REQUIRES_PRIVATE " sqlite3")
+endif()
+if(LMDB_FOUND)
+  string(APPEND MARMOT_PC_REQUIRES_PRIVATE " lmdb")
+endif()
 configure_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/marmot.pc.in
   ${CMAKE_CURRENT_BINARY_DIR}/marmot.pc
