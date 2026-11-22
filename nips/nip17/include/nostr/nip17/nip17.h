@@ -180,6 +180,17 @@ typedef struct {
 } NostrDmRelayList;
 
 /**
+ * Builds an UNSIGNED kind-10050 event for an external signer. No clock, secret
+ * key or relay access. author is 64 lowercase hex characters; created_at is
+ * nonnegative. relays is a NULL-terminated, nonempty array of nonempty URLs.
+ * Preserves caller relay order/duplicates, as the signed compatibility API does.
+ * Caller signs and publishes, then frees with nostr_event_free(). Returns NULL
+ * with errno set on invalid arguments or allocation failure.
+ */
+NOSTR_NIP17_API NostrEvent *nostr_nip17_build_dm_relay_list_unsigned(
+    const char **relays, const char *author, int64_t created_at);
+
+/**
  * nostr_nip17_create_dm_relay_list:
  * @relays: NULL-terminated array of relay URLs
  * @sk_hex: private key to sign the event (64 hex chars)
