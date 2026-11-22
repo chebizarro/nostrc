@@ -261,12 +261,36 @@ static void relay_ok_result_free(NostrRelayOkResult *res) {
 }
 
 static void relay_ok_waiter_free(NostrRelayOkWaiter *waiter) {
-    if (!waiter) return;
+    if (!waiter || atomic_fetch_sub(&waiter->refs, 1) != 1) return;
     if (waiter->done) {
         go_channel_close(waiter->done);
+        void *late = NULL;
+        while (go_channel_try_receive(waiter->done, &late) == 0)
+            relay_ok_result_free(late);
         go_channel_free(waiter->done);
     }
     free(waiter);
+}
+
+static void relay_ok_waiter_insert(NostrRelay *r, const char *id, NostrRelayOkWaiter *waiter) {
+    NostrRelayOkWaiter *old = go_hash_map_get_string(r->priv->ok_callbacks, id);
+    atomic_fetch_add(&waiter->refs, 1);
+    go_hash_map_insert_str(r->priv->ok_callbacks, id, waiter);
+    relay_ok_waiter_free(old);
+}
+
+static void relay_ok_waiter_remove(NostrRelay *r, const char *id, NostrRelayOkWaiter *waiter) {
+    if (go_hash_map_get_string(r->priv->ok_callbacks, id) == waiter) {
+        go_hash_map_remove_str(r->priv->ok_callbacks, id);
+        relay_ok_waiter_free(waiter);
+    }
+}
+
+static _Atomic(NostrRelayDialHook) g_pending_ok_hook;
+static _Atomic(void *) g_pending_ok_hook_data;
+void nostr_relay_test_set_pending_ok_hook(NostrRelayDialHook hook, void *data) {
+    atomic_store(&g_pending_ok_hook_data, data);
+    atomic_store(&g_pending_ok_hook, hook);
 }
 
 static NostrRelayOkResult *relay_ok_result_new(bool ok, const char *reason) {
@@ -285,9 +309,10 @@ static bool relay_pending_ok_fail_cb(HashKey *key, void *value, void *user_data)
         NostrRelayOkResult *res = relay_ok_result_new(false, reason);
         if (res) {
             res->disconnected = true;
-            (void)go_channel_send(waiter->done, res);
+            if (go_channel_try_send(waiter->done, res) != 0) relay_ok_result_free(res);
         }
     }
+    relay_ok_waiter_free(waiter); /* detached map reference */
     return true;
 }
 
@@ -307,6 +332,8 @@ static void relay_fail_pending_ok(NostrRelay *r, const char *reason) {
     nsync_mu_unlock(&r->priv->mutex);
 
     if (old) {
+        NostrRelayDialHook hook = atomic_load(&g_pending_ok_hook);
+        if (hook) hook(r, atomic_load(&g_pending_ok_hook_data));
         go_hash_map_for_each_with_data(old, relay_pending_ok_fail_cb,
                                        (void *)(reason ? reason : "relay disconnected"));
         go_hash_map_destroy(old);
@@ -549,8 +576,8 @@ void nostr_relay_dispatch_control_envelope(NostrRelay *r, NostrEnvelope *envelop
             r->priv->ok_callbacks ? go_hash_map_get_string(r->priv->ok_callbacks, oe->event_id) : NULL;
         if (waiter && waiter->done) {
             NostrRelayOkResult *res = relay_ok_result_new(oe->ok, oe->reason);
-            if (res) (void)go_channel_send(waiter->done, res);
-            go_hash_map_remove_str(r->priv->ok_callbacks, oe->event_id);
+            if (res && go_channel_try_send(waiter->done, res) != 0) relay_ok_result_free(res);
+            relay_ok_waiter_remove(r, oe->event_id, waiter);
         }
         ok_slot = relay_callback_slot_ref_locked(r->priv->ok_slot);
         nsync_mu_unlock(&r->priv->mutex);
@@ -2106,6 +2133,7 @@ bool nostr_relay_publish_and_wait(NostrRelay *relay, NostrEvent *event,
         if (err) *err = new_error(1, "failed to allocate OK waiter");
         return false;
     }
+    atomic_init(&waiter->refs, 1);
     waiter->done = go_channel_create(1);
     if (!waiter->done) {
         free(event_id);
@@ -2115,7 +2143,7 @@ bool nostr_relay_publish_and_wait(NostrRelay *relay, NostrEvent *event,
     }
 
     nsync_mu_lock(&relay->priv->mutex);
-    go_hash_map_insert_str(relay->priv->ok_callbacks, event_id, waiter);
+    relay_ok_waiter_insert(relay, event_id, waiter);
     nsync_mu_unlock(&relay->priv->mutex);
 
     nostr_relay_publish(relay, event);
@@ -2138,7 +2166,7 @@ bool nostr_relay_publish_and_wait(NostrRelay *relay, NostrEvent *event,
         relay_ok_result_free(ok_res);
     } else {
         nsync_mu_lock(&relay->priv->mutex);
-        go_hash_map_remove_str(relay->priv->ok_callbacks, event_id);
+        relay_ok_waiter_remove(relay, event_id, waiter);
         nsync_mu_unlock(&relay->priv->mutex);
         if (err) *err = new_error(1, "timed out waiting for relay OK for event %s", event_id);
     }
@@ -2188,14 +2216,17 @@ static void relay_auth_impl(NostrRelay *relay, void (*sign)(NostrEvent *, Error 
     NostrRelayOkWaiter *waiter = NULL;
     if (!failure && wait_ms) {
         waiter = (NostrRelayOkWaiter *)calloc(1, sizeof(*waiter));
-        if (waiter) waiter->done = go_channel_create(1);
+        if (waiter) {
+            atomic_init(&waiter->refs, 1);
+            waiter->done = go_channel_create(1);
+        }
         if (!waiter || !waiter->done) {
             relay_ok_waiter_free(waiter);
             waiter = NULL;
             failure = new_error(1, "failed to allocate OK waiter");
         } else {
             nsync_mu_lock(&relay->priv->mutex);
-            go_hash_map_insert_str(relay->priv->ok_callbacks, event_id, waiter);
+            relay_ok_waiter_insert(relay, event_id, waiter);
             nsync_mu_unlock(&relay->priv->mutex);
         }
     }
@@ -2221,7 +2252,7 @@ static void relay_auth_impl(NostrRelay *relay, void (*sign)(NostrEvent *, Error 
         nsync_mu_lock(&relay->priv->mutex);
         if (relay->priv->ok_callbacks &&
             go_hash_map_get_string(relay->priv->ok_callbacks, event_id) == waiter)
-            go_hash_map_remove_str(relay->priv->ok_callbacks, event_id);
+            relay_ok_waiter_remove(relay, event_id, waiter);
         nsync_mu_unlock(&relay->priv->mutex);
         relay_ok_waiter_free(waiter);
     }

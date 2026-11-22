@@ -129,6 +129,7 @@ typedef struct _NostrRelayOkResult {
 } NostrRelayOkResult;
 
 typedef struct _NostrRelayOkWaiter {
+    atomic_uint refs; /* caller + map (including a detached failure iterator) */
     GoChannel *done; /* carries NostrRelayOkResult* */
 } NostrRelayOkWaiter;
 
@@ -144,6 +145,7 @@ void nostr_relay_test_set_reconnect_hook(NostrRelayDialHook hook, void *data);
 /* Private barriers after detaching an old connection / before a leased write. */
 void nostr_relay_test_set_retire_hook(NostrRelayDialHook hook, void *data);
 void nostr_relay_test_set_lease_hook(NostrRelayDialHook hook, void *data);
+void nostr_relay_test_set_pending_ok_hook(NostrRelayDialHook hook, void *data);
 
 /* nostrc-xbso: releases the caller's reference on an answer channel of
  * nostr_relay_write() it will not read (any more): closes it, so the writer's
