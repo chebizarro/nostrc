@@ -844,6 +844,7 @@ export headers are still part of the owning package's build contract.
 | `nip49` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip49/CMakeLists.txt` |
 | `nip50` | Unversioned | No bump: inline-only public API; empty library translation unit has no exports; `nips/nip50/CMakeLists.txt` |
 | `nip51` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip51/CMakeLists.txt` |
+| `nip78` | 0.1.0 | Initial installed unsigned application-data codec; `nips/nip78/CMakeLists.txt` (`project`); `nips/nip78/nip78.pc.in` inherits project version |
 | `nip52` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip52/CMakeLists.txt` |
 | `nip53` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip53/CMakeLists.txt` |
 | `nip54` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip54/CMakeLists.txt` |
@@ -1916,3 +1917,9 @@ No bump: libgo 0.3.0, libjson 2.0.0, the FIPS component family and nostr-homed 0
 - nip59: no bump; unchanged artifacts and public contracts.
 - Shared libraries use VERSION=SemVer and SOVERSION=major via apply_versioning,
   like libnostr; static/OBJECT libraries have no SONAME. No release tags changed.
+
+nostrc-j4jlx (metadesk md-055m): nip78 starts at 0.1.0 Unreleased (new installed library/pkg-config/public unsigned build and owned parse APIs). nip17 remains unversioned: additive unsigned kind-10050 builder; signed API retained as wrapper, no authoritative numeric version to bump. libnostr and GNostr unchanged; no release or tag.
+
+N1/N2 integration: the unsigned nip17 builder is included in nip17's initial
+unreleased 0.1.0 installed contract above; the N2 note describes its original
+unversioned master base. No additional nip17 version bump or release tag.
