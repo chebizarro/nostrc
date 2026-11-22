@@ -2,6 +2,7 @@
 """Focused link/install regression for NostrcVisibility, shared and static."""
 import pathlib
 import platform
+import re
 import shutil
 import subprocess
 import tempfile
@@ -16,6 +17,16 @@ def run(*args, **kwargs):
 
 
 class VisibilityTests(unittest.TestCase):
+    def test_gnostr_loader_regressions_disallow_unresolved_symbol_waivers(self):
+        cmake = (ROOT / "apps/gnostr/CMakeLists.txt").read_text()
+        targets = ("plugin-raw-relay-api", "image-viewer-remote-media",
+                   "delete-authorization", "ndb-main-thread-violations",
+                   "real-bind-latency", "dm-files-key-encoding", "sync-bridge-user-state")
+        for name in targets:
+            with self.subTest(target=name):
+                self.assertNotRegex(cmake, r"target_link_options\(\s*gnostr-test-" +
+                    re.escape(name) + r"\s+[^)]*(?:ignore-in-object-files|dynamic_lookup)")
+
     def test_compile_only_probes_recover_cached_failure(self):
         for language, extension in (("C", "c"), ("CXX", "cpp")):
             with self.subTest(language=language), tempfile.TemporaryDirectory(prefix="nostrc-visibility-probe-") as tmp:

@@ -1,6 +1,23 @@
 #include <glib.h>
 
 #include "../src/sync/gnostr-sync-bridge.h"
+#include "../src/util/follow_list.h"
+#include "../src/util/pin_list.h"
+
+/* State-only coverage must not turn into a relay/list integration test. */
+void gnostr_follow_list_fetch_async(const gchar *pubkey, GCancellable *cancel,
+    GnostrFollowListCallback callback, gpointer data) {
+  (void)pubkey; (void)cancel; (void)callback; (void)data;
+  g_error("user-state fixture attempted a follow-list fetch");
+}
+GnostrPinList *gnostr_pin_list_get_default(void) {
+  g_error("user-state fixture attempted pin-list access");
+}
+void gnostr_pin_list_fetch_async(GnostrPinList *self, const char *pubkey,
+    const char *const *relays, GnostrPinListFetchCallback callback, gpointer data) {
+  (void)self; (void)pubkey; (void)relays; (void)callback; (void)data;
+  g_error("user-state fixture attempted a pin-list fetch");
+}
 
 static void
 test_set_switch_clear_sequence(void)

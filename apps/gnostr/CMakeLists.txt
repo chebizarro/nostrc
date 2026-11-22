@@ -1127,7 +1127,7 @@ if (BUILD_TESTING)
 
   # NIP-17 kind-15 decryption-key/-nonce encoding (nostrc-qh4j): writes hex,
   # reads hex or legacy base64, 12- or 16-byte nonces. Built without
-  # HAVE_SOUP3; the Blossom upload path it never calls stays unresolved.
+  # HAVE_SOUP3; the encoding-only fixture does not use Blossom uploads.
   if (OPENSSL_FOUND)
     add_executable(gnostr-test-dm-files-key-encoding
       tests/test_dm_files_key_encoding.c
@@ -1144,11 +1144,6 @@ if (BUILD_TESTING)
       ${PROJECT_ROOT}/nostr-gobject/include)
     target_link_libraries(gnostr-test-dm-files-key-encoding PRIVATE
       PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB OpenSSL::Crypto)
-    if (APPLE)
-      target_link_options(gnostr-test-dm-files-key-encoding PRIVATE -Wl,-undefined,dynamic_lookup)
-    else()
-      target_link_options(gnostr-test-dm-files-key-encoding PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
-    endif()
     _gnostr_apply_sanitizers(gnostr-test-dm-files-key-encoding)
     add_test(NAME gnostr-test-dm-files-key-encoding COMMAND gnostr-test-dm-files-key-encoding)
     set_tests_properties(gnostr-test-dm-files-key-encoding PROPERTIES
@@ -1336,11 +1331,6 @@ if (BUILD_TESTING)
     ${PROJECT_ROOT}/nostr-gobject/include)
   target_link_libraries(gnostr-test-sync-bridge-user-state PRIVATE
     PkgConfig::GLIB nostr_gobject)
-  if (APPLE)
-    target_link_options(gnostr-test-sync-bridge-user-state PRIVATE -Wl,-undefined,dynamic_lookup)
-  else()
-    target_link_options(gnostr-test-sync-bridge-user-state PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
-  endif()
   _gnostr_apply_sanitizers(gnostr-test-sync-bridge-user-state)
   add_test(NAME gnostr-test-sync-bridge-user-state COMMAND gnostr-test-sync-bridge-user-state)
   set_tests_properties(gnostr-test-sync-bridge-user-state PROPERTIES
