@@ -24,6 +24,10 @@ test_secret_input_exe = executable('test_secret_input', 'test_secret_input.c',
 test_http_listen_exe = executable('test_http_listen', 'test_http_listen.c',
   link_with: signet_core, include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
+test_bootstrap_security_exe = executable('test_bootstrap_security', 'test_bootstrap_security.c',
+  link_with: signet_core, include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
+test('bootstrap_security', test_bootstrap_security_exe)
 test_http_routes_exe = executable('test_http_routes', 'test_http_routes.c',
   link_with: signet_core, include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)

@@ -7,6 +7,7 @@
  */
 
 #include "signet/nostr_auth.h"
+#include "nostr_auth_private.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -156,10 +157,14 @@ static const char *signet_event_get_tag_value(NostrEvent *evt, const char *tag_n
 
 /* ----------------------------- verification ------------------------------ */
 
-SignetAuthResult signet_auth_verify(SignetChallengeStore *cs,
+static SignetAuthResult signet_auth_verify_bound(SignetChallengeStore *cs,
                                     const SignetFleetRegistry *fleet,
                                     const char *auth_event_json,
                                     int64_t now,
+                                    const char *expected_purpose,
+                                    const char *expected_agent,
+                                    const char *expected_pubkey,
+                                    const char *expected_token_hash,
                                     char **out_agent_id,
                                     char **out_pubkey_hex) {
   if (out_agent_id) *out_agent_id = NULL;
@@ -212,9 +217,25 @@ SignetAuthResult signet_auth_verify(SignetChallengeStore *cs,
     nostr_event_free(evt);
     return SIGNET_AUTH_ERR_MISSING_PURPOSE;
   }
-  if (strcmp(purpose, "signet-auth") != 0) {
+  if (strcmp(purpose, expected_purpose) != 0) {
     nostr_event_free(evt);
     return SIGNET_AUTH_ERR_WRONG_PURPOSE;
+  }
+
+  if (expected_agent && strcmp(agent_id, expected_agent) != 0) {
+    nostr_event_free(evt);
+    return SIGNET_AUTH_ERR_CHALLENGE_MISMATCH;
+  }
+  if (expected_pubkey && (!pubkey || g_ascii_strcasecmp(pubkey, expected_pubkey) != 0)) {
+    nostr_event_free(evt);
+    return SIGNET_AUTH_ERR_PUBKEY_MISMATCH;
+  }
+  if (expected_token_hash) {
+    const char *token_hash = signet_event_get_tag_value(evt, "token");
+    if (!token_hash || strcmp(token_hash, expected_token_hash) != 0) {
+      nostr_event_free(evt);
+      return SIGNET_AUTH_ERR_INVALID_EVENT;
+    }
   }
 
   /* 5. Challenge lookup and validation. */
@@ -283,6 +304,22 @@ SignetAuthResult signet_auth_verify(SignetChallengeStore *cs,
 
   nostr_event_free(evt);
   return SIGNET_AUTH_OK;
+}
+
+SignetAuthResult signet_auth_verify(SignetChallengeStore *cs,
+    const SignetFleetRegistry *fleet, const char *auth_event_json, int64_t now,
+    char **out_agent_id, char **out_pubkey_hex) {
+  return signet_auth_verify_bound(cs, fleet, auth_event_json, now, "signet-auth",
+      NULL, NULL, NULL, out_agent_id, out_pubkey_hex);
+}
+
+SignetAuthResult signet_bootstrap_auth_verify(SignetChallengeStore *cs,
+    const char *auth_event_json, int64_t now, const char *agent_id,
+    const char *bootstrap_pubkey, const char *token_hash) {
+  if (!agent_id || !agent_id[0] || !bootstrap_pubkey || !bootstrap_pubkey[0] ||
+      !token_hash || !token_hash[0]) return SIGNET_AUTH_ERR_INVALID_EVENT;
+  return signet_auth_verify_bound(cs, NULL, auth_event_json, now,
+      "signet-bootstrap", agent_id, bootstrap_pubkey, token_hash, NULL, NULL);
 }
 
 void signet_challenge_store_cleanup(SignetChallengeStore *cs, int64_t now) {
