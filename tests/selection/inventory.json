@@ -20,6 +20,29 @@
     ]
   },
   "checks": {
+    "gnome.shell_extension": {
+      "nodes": [
+        "gnome.nostr_shell_extension"
+      ],
+      "profiles": [
+        "selection.operational.linux",
+        "selection.operational.macos"
+      ],
+      "kind": "command",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "command": [
+        "bash",
+        "{source}/scripts/test-shell-extension.sh"
+      ],
+      "working_directory": "{source}",
+      "environment": {},
+      "runtime_inputs": [
+        "{source}/scripts/test-shell-extension.sh"
+      ],
+      "build_targets": []
+    },
     "grotto.settings.host": {
       "nodes": [
         "gnome.nostr_settings",
@@ -25153,6 +25176,14 @@
     }
   },
   "path_rules": [
+    {
+      "exact": "scripts/test-shell-extension.sh",
+      "effect": "impact",
+      "reason": "Standalone shell-extension regression entrypoint",
+      "nodes": [
+        "gnome.nostr_shell_extension"
+      ]
+    },
     {
       "effect": "impact",
       "exact": ".github/workflows/fips-ci.yml",

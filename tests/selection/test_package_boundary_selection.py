@@ -10,6 +10,18 @@ class PackageBoundarySelection(unittest.TestCase):
     def setUpClass(cls):
         cls.policy = s.load_inventory(ROOT / "tests/selection/inventory.json")
 
+    def test_shell_extension_selects_standalone_checks_only(self):
+        for path in ("gnome/nostr-shell-extension/extension.js",
+                     "gnome/nostr-shell-extension/lib/state.js",
+                     "scripts/test-shell-extension.sh"):
+            plan = s.make_plan(self.policy, [change(path)], head="a" * 40,
+                               base="b" * 40, context="local")
+            self.assertEqual(plan["effective_mode"], "affected")
+            self.assertEqual(set(plan["selected_checks"]), {"gnome.shell_extension"})
+        plan = s.make_plan(self.policy, [change("apps/grotto/src/main.c")],
+                           head="a" * 40, base="b" * 40, context="local")
+        self.assertNotIn("gnome.shell_extension", plan["selected_checks"])
+
     def test_script_and_allowlist_edits_select_only_boundary_commands(self):
         paths = (
             "scripts/check-package-boundaries.sh",
