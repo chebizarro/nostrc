@@ -594,6 +594,9 @@ int signet_bootstrap_server_start(SignetBootstrapServer *bs) {
       NULL, NULL,
       signet_bootstrap_handler, bs,
       MHD_OPTION_SOCK_ADDR, (struct sockaddr *)&bs->address.address,
+      MHD_OPTION_CONNECTION_TIMEOUT, (unsigned int)5,
+      MHD_OPTION_CONNECTION_LIMIT, (unsigned int)128,
+      MHD_OPTION_PER_IP_CONNECTION_LIMIT, (unsigned int)32,
       MHD_OPTION_NOTIFY_COMPLETED, signet_post_ctx_free, bs,
       MHD_OPTION_END);
 

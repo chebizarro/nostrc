@@ -376,6 +376,9 @@ int signet_health_server_start(SignetHealthServer *hs) {
       NULL, NULL,                        /* accept policy: accept all */
       signet_health_handler, hs,         /* handler + cls */
       MHD_OPTION_SOCK_ADDR, (struct sockaddr *)&hs->address.address,
+      MHD_OPTION_CONNECTION_TIMEOUT, (unsigned int)5,
+      MHD_OPTION_CONNECTION_LIMIT, (unsigned int)128,
+      MHD_OPTION_PER_IP_CONNECTION_LIMIT, (unsigned int)32,
       MHD_OPTION_END);
 
   if (!hs->mhd) return -1;

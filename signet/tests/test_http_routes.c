@@ -8,6 +8,7 @@
 #include <nostr-keys.h>
 #include <json-glib/json-glib.h>
 #include <time.h>
+#include <errno.h>
 
 static char *agent_pubkey(const char *agent, void *data) {
   SignetAgentMeta meta = {0};
@@ -45,6 +46,19 @@ static void auth_route(unsigned short port, SignetChallengeStore *challenges,
   free(json); nostr_event_free(event); g_free(challenge);
 }
 
+/* An incomplete local request must not occupy a server slot indefinitely. */
+static void idle_connection_expires(unsigned short port) {
+  int fd = http_connect("127.0.0.1", port); CHECK(fd >= 0);
+  const char *partial = "GET /health HTTP/1.1\r\nHost:";
+  CHECK(send(fd, partial, strlen(partial), 0) == (ssize_t)strlen(partial));
+  struct timeval deadline = {.tv_sec = 12};
+  CHECK(!setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &deadline, sizeof(deadline)));
+  char byte;
+  ssize_t got = recv(fd, &byte, 1, 0);
+  CHECK(got == 0 || (got < 0 && errno == ECONNRESET));
+  close(fd);
+}
+
 int main(void) {
   CHECK(sodium_init() >= 0);
   SignetKeyStoreConfig kc = {.db_path = ":memory:",
@@ -64,6 +78,7 @@ int main(void) {
   CHECK(signet_bootstrap_server_start(bs) == 0);
   unsigned short port = signet_bootstrap_server_bound_port(bs);
   CHECK(port);
+  idle_connection_expires(port);
   const char *agent = "agent\"\\\nname";
   const char *sk = "0000000000000000000000000000000000000000000000000000000000000001";
   char *pk = nostr_key_get_public(sk); CHECK(pk);
@@ -105,6 +120,7 @@ int main(void) {
     .provisioner_writeback_failed = true, .provisioner_writeback_failures = 3};
   signet_health_server_set_snapshot(hs, &snap);
   port = signet_health_server_bound_port(hs);
+  idle_connection_expires(port);
   CHECK(http_get(port, "/ready", NULL, response, sizeof(response)) == 200);
   CHECK(strstr(response, "\"provisioner_writeback_failed\":true"));
   CHECK(http_get(port, "/metrics", NULL, response, sizeof(response)) == 200);
