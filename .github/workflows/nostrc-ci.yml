@@ -106,6 +106,7 @@ jobs:
           case "${{ matrix.sanitizer }}" in
             asan_ubsan)
               cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" -DCMAKE_VERBOSE_MAKEFILE=ON \
+                -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/nostrc-stage" \
                 -DENABLE_NIP19=ON -DENABLE_NIP49=ON \
                 "${FUZZ_FLAGS[@]}" \
                 -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DGO_WARNINGS_AS_ERRORS=ON \
@@ -115,6 +116,7 @@ jobs:
               ;;
             tsan)
               cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" -DCMAKE_VERBOSE_MAKEFILE=ON \
+                -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/nostrc-stage" \
                 -DENABLE_NIP19=ON -DENABLE_NIP49=ON \
                 -DGO_ENABLE_TSAN=ON -DGO_WARNINGS_AS_ERRORS=ON \
                 -DWITH_NOSTRDB=ON -DLIBNOSTR_WITH_NOSTRDB=ON \
@@ -124,6 +126,12 @@ jobs:
 
       - name: Build (verbose)
         run: cmake --build build -j --verbose
+
+      - name: Installed NIP consumers (pkg-config and CMake)
+        if: matrix.sanitizer == 'asan_ubsan'
+        run: |
+          cmake -DTEST_BINARY_DIR="$PWD/build/version-scope-check" -P tests/packaging/check-version-scope.cmake
+          python3 tests/packaging/check-nip-install.py --build build --sanitize
 
       # TSAN temporarily disabled
 

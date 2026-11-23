@@ -22,6 +22,8 @@
  *   pool-backoff  rate-limited: reissued after the ladder delay
  */
 #include <netinet/in.h>
+#include <errno.h>
+#include <nostr/testing/relay_control.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -47,6 +49,7 @@
 #include "nostr-subscription.h"
 #include "nostr-tag.h"
 #include "../src/relay-private.h"
+#include "../src/subscription-private.h"
 
 #define CHECK(expr) do { if (!(expr)) { \
     fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #expr); \
@@ -62,7 +65,8 @@ typedef enum {
     REQ_RATE_ONCE       /* first REQ rate-limited:, then EVENT+EOSE */
 } ReqPolicy;
 
-enum { CMD_RECHALLENGE = 1, CMD_DROP = 2 };
+enum { CMD_RECHALLENGE = 1, CMD_DROP = 2, CMD_PUBLISH_OK, CMD_PUBLISH_REJECT, CMD_REPLAY };
+static void fixture_signal(void);
 
 typedef struct {
     struct lws_context *ctx;
@@ -76,6 +80,10 @@ typedef struct {
     atomic_bool foreign_ok;    /* answer AUTH with an OK for another event id */
     atomic_int pending_cmd;
     /* observations */
+    atomic_int closes;
+    atomic_int publishes;
+    atomic_int recovered_since;
+    atomic_bool expect_recovery_since;
     atomic_int connections;
     atomic_int reqs;
     atomic_int auths;          /* ["AUTH",...] frames received */
@@ -91,6 +99,9 @@ typedef struct {
     bool close_now;
     bool authed;
     int serial;
+    char publish_id[65];
+    char subscriptions[8][128];
+    size_t subscriptions_count;
     char challenge[64];
 } Conn;
 
@@ -158,6 +169,21 @@ static void on_req(struct lws *wsi, Conn *c, const char *text) {
     char id[128];
     memcpy(id, sid, (size_t)(end - sid));
     id[end - sid] = '\0';
+    CHECK(c->subscriptions_count < 8);
+    bool known = false;
+    for (size_t i = 0; i < c->subscriptions_count; i++)
+        if (!strcmp(c->subscriptions[i], id)) known = true;
+    if (!known) snprintf(c->subscriptions[c->subscriptions_count++], 128, "%s", id);
+    if (atomic_load(&fx.expect_recovery_since)) {
+        NostrEnvelope *env = nostr_envelope_parse(text);
+        CHECK(env && env->type == NOSTR_ENVELOPE_REQ);
+        NostrFilters *filters = ((NostrReqEnvelope *)env)->filters;
+        CHECK(filters && filters->count == 1);
+        int64_t since = filters->filters[0].since;
+        CHECK(since >= (int64_t)time(NULL) - 70 && since <= (int64_t)time(NULL));
+        atomic_fetch_add(&fx.recovered_since, 1);
+        nostr_envelope_free(env);
+    }
     int n = atomic_fetch_add(&fx.reqs, 1);
     ReqPolicy policy = (ReqPolicy)atomic_load(&fx.policy);
     const char *closed = NULL;
@@ -189,6 +215,19 @@ static int callback(struct lws *wsi, enum lws_callback_reasons reason,
         Conn *a = lws_wsi_user(fx.active);
         if (cmd == CMD_RECHALLENGE) challenge(fx.active, a);
         if (cmd == CMD_DROP) { a->close_now = true; lws_callback_on_writable(fx.active); }
+        if (cmd == CMD_PUBLISH_OK || cmd == CMD_PUBLISH_REJECT) {
+            CHECK(a->publish_id[0]);
+            push(fx.active, a, fmt(cmd == CMD_PUBLISH_OK ? "[\"OK\",\"%s\",true,\"%s\"]" :
+                "[\"OK\",\"%s\",false,\"%s\"]", a->publish_id,
+                cmd == CMD_PUBLISH_OK ? "" : "blocked: fixture rejection"));
+        }
+        if (cmd == CMD_REPLAY)
+            for (size_t i = 0; i < a->subscriptions_count; i++) {
+                push(fx.active, a, fmt("[\"EVENT\",\"%s\",%s]", a->subscriptions[i], fx.event_json));
+                push(fx.active, a, fmt("[\"EOSE\",\"%s\"]", a->subscriptions[i], NULL));
+            }
+        if (cmd == CMD_REPLAY)
+            push(fx.active, a, fmt("[\"OK\",\"%s\",true,\"%s\"]", "replay-barrier", ""));
         break;
     }
     case LWS_CALLBACK_RECEIVE: {
@@ -199,8 +238,30 @@ static int callback(struct lws *wsi, enum lws_callback_reasons reason,
             NostrEnvelope *envelope = nostr_envelope_parse(text);
             if (envelope && envelope->type == NOSTR_ENVELOPE_AUTH)
                 on_auth_frame(wsi, c, text);
-            else if (!strncmp(text, "[\"EVENT\",", 9) && strstr(text, "22242"))
-                atomic_fetch_add(&fx.auth_as_event, 1);
+            else if (envelope && envelope->type == NOSTR_ENVELOPE_CLOSE) {
+                const char *id = ((NostrCloseEnvelope *)envelope)->message;
+                for (size_t i = 0; i < c->subscriptions_count; i++)
+                    if (!strcmp(c->subscriptions[i], id)) {
+                        memcpy(c->subscriptions[i], c->subscriptions[--c->subscriptions_count], 128);
+                        break;
+                    }
+                atomic_fetch_add(&fx.closes, 1);
+                fixture_signal();
+            } else if (!strncmp(text, "[\"EVENT\",", 9)) {
+                NostrEvent *ev = nostr_event_new();
+                text[strlen(text) - 1] = '\0';
+                CHECK(nostr_event_deserialize(ev, text + 9) == 0);
+                if (ev->kind == 22242) atomic_fetch_add(&fx.auth_as_event, 1);
+                else {
+                    char *id = nostr_event_get_id(ev);
+                    CHECK(id);
+                    snprintf(c->publish_id, sizeof(c->publish_id), "%s", id);
+                    free(id);
+                    atomic_fetch_add(&fx.publishes, 1);
+                    fixture_signal();
+                }
+                nostr_event_free(ev);
+            }
             if (envelope) nostr_envelope_free(envelope);
         }
         free(text);
@@ -263,6 +324,10 @@ static void fixture_start(ReqPolicy policy, bool accept) {
     atomic_store(&fx.accept_auth, accept);
     atomic_store(&fx.foreign_ok, false);
     atomic_store(&fx.pending_cmd, 0);
+    atomic_store(&fx.closes, 0);
+    atomic_store(&fx.publishes, 0);
+    atomic_store(&fx.recovered_since, 0);
+    atomic_store(&fx.expect_recovery_since, false);
     atomic_store(&fx.connections, 0);
     atomic_store(&fx.reqs, 0);
     atomic_store(&fx.auths, 0);
@@ -331,6 +396,12 @@ static struct {
     int challenges;
     bool async;
 } obs;
+
+static void fixture_signal(void) {
+    pthread_mutex_lock(&obs.mu);
+    pthread_cond_broadcast(&obs.cv);
+    pthread_mutex_unlock(&obs.mu);
+}
 
 static void obs_reset(void) {
     pthread_mutex_lock(&obs.mu);
@@ -948,6 +1019,404 @@ static void test_pool_backoff(void) {
     pool_case_end(&pc);
 }
 
+
+/* Independent handles and publish cancellation exercise the shipped pool worker
+ * and wire fixture. The only bounded waits are hang watchdogs. */
+typedef struct {
+    int events, eoses, closed;
+    bool block, entered, release, close_started, close_done, self_close;
+} HandleObs;
+
+static void handle_event(NostrPoolSubscription *h, NostrIncomingEvent *in, void *data) {
+    HandleObs *o = data;
+    pthread_mutex_lock(&obs.mu);
+    o->events++;
+    if (o->block) {
+        o->entered = true;
+        pthread_cond_broadcast(&obs.cv);
+        while (!o->release) pthread_cond_wait(&obs.cv, &obs.mu);
+    }
+    bool close = o->self_close;
+    pthread_cond_broadcast(&obs.cv);
+    pthread_mutex_unlock(&obs.mu);
+    if (close) nostr_pool_subscription_close(h);
+    nostr_event_free(in->event);
+}
+static void handle_state(NostrPoolSubscription *h, NostrRelay *relay, const char *state,
+    const char *reason, const NostrPoolCallbackInfo *info, void *data) {
+    (void)h; (void)relay; (void)reason;
+    CHECK(info && info->frame.connection_generation > 0);
+    HandleObs *o = data;
+    pthread_mutex_lock(&obs.mu);
+    if (!strcmp(state, "EOSE")) o->eoses++;
+    else o->closed++;
+    pthread_cond_broadcast(&obs.cv);
+    pthread_mutex_unlock(&obs.mu);
+}
+static NostrPoolSubscription *open_handle(PoolCase *pc, HandleObs *o, bool unique) {
+    NostrFilters *fs = nostr_filters_new();
+    NostrFilter *f = nostr_filter_new();
+    int kind = 1;
+    nostr_filter_set_kinds(f, &kind, 1);
+    CHECK(nostr_filters_add(fs, f));
+    nostr_filter_free(f);
+    const char *urls[] = {fx.url, fx.url}; /* duplicate URL must create one REQ */
+    NostrPoolSubscription *h = nostr_simple_pool_subscription_open(pc->pool, urls, 2,
+        fs, unique, handle_event, handle_state, o);
+    CHECK(h);
+    nostr_filters_free(fs); /* ownership was copied */
+    return h;
+}
+typedef struct {
+    NostrSimplePool *pool;
+    NostrPoolRelaySnapshot *items;
+    size_t count;
+    bool captured;
+} SnapshotProbe;
+static void snapshot_at_disconnect(NostrRelay *relay, NostrRelayListenEvent event, void *data) {
+    (void)relay;
+    SnapshotProbe *probe = data;
+    if (event != NOSTR_RELAY_LISTEN_DISCONNECTED) return;
+    NostrPoolRelaySnapshot *items = NULL;
+    size_t count = 0;
+    CHECK(nostr_simple_pool_snapshot_relays(probe->pool, &items, &count));
+    CHECK(count == 1 && items[0].connection_state != NOSTR_RELAY_STATE_CONNECTED);
+    pthread_mutex_lock(&obs.mu);
+    if (!probe->captured) {
+        probe->items = items; probe->count = count; probe->captured = true;
+    } else nostr_simple_pool_snapshot_relays_free(items, count);
+    pthread_cond_broadcast(&obs.cv);
+    pthread_mutex_unlock(&obs.mu);
+}
+static void test_handles(void) {
+    PoolCase pc = pool_case(REQ_GATED, true, NOSTR_RELAY_AUTH_ON_CHALLENGE, true);
+    CHECK(nostr_simple_pool_set_recovery_window(pc.pool, 60));
+    HandleObs a = {0}, b = {0}, c = {0};
+    NostrPoolSubscription *ha = open_handle(&pc, &a, true);
+    NostrPoolSubscription *hb = open_handle(&pc, &b, true);
+    WAIT_FOR(a.eoses == 1 && b.eoses == 1);
+    CHECK(a.events == 1 && b.events == 1); /* same ID delivered once per handle */
+    int oks = obs.ok_frames;
+    fixture_command(CMD_REPLAY);
+    WAIT_FOR(obs.ok_frames == oks + 1); /* reader has processed both duplicate EVENTs */
+    CHECK(a.events == 1 && b.events == 1);
+    int closes = atomic_load(&fx.closes);
+    nostr_pool_subscription_close(ha);
+    nostr_pool_subscription_close(ha);
+    WAIT_FOR(atomic_load(&fx.closes) == closes + 1);
+    NostrPoolSubscription *hc = open_handle(&pc, &c, true);
+    WAIT_FOR(c.eoses == 1);
+    CHECK(c.events == 1); /* independent history after close/handle replacement */
+    nostr_pool_subscription_close(ha); /* stale closed handle cannot close its replacement */
+    uint64_t generation = nostr_relay_get_connection_generation(pc.relay);
+    NostrPoolRelaySnapshot *before = NULL;
+    size_t n = 0;
+    CHECK(nostr_simple_pool_snapshot_relays(pc.pool, &before, &n) && n == 1);
+    CHECK(!strcmp(before[0].url, fx.url));
+    CHECK(before[0].auth.state == NOSTR_RELAY_AUTH_STATE_ACCEPTED);
+    SnapshotProbe probe = {.pool = pc.pool};
+    void *listener = nostr_relay_add_listener(pc.relay, snapshot_at_disconnect, &probe, NULL);
+    CHECK(listener);
+    atomic_store(&fx.expect_recovery_since, true);
+    fixture_command(CMD_DROP);
+    WAIT_FOR(probe.captured);
+    WAIT_FOR(b.eoses == 2 && c.eoses == 2);
+    CHECK(a.eoses == 1 && a.events == 1);
+    CHECK(b.events == 1 && c.events == 1); /* dedup survives reconnect */
+    CHECK(atomic_load(&fx.recovered_since) >= 2);
+    NostrPoolRelaySnapshot *after = NULL;
+    CHECK(nostr_simple_pool_snapshot_relays(pc.pool, &after, &n) && n == 1);
+    CHECK(after[0].auth.connection_generation > generation);
+    CHECK(before[0].auth.connection_generation == generation); /* owned stable snapshot */
+    nostr_relay_remove_listener(pc.relay, listener);
+    nostr_simple_pool_snapshot_relays_free(probe.items, probe.count);
+    nostr_pool_subscription_free(ha);
+    nostr_pool_subscription_free(hb);
+    nostr_pool_subscription_free(hc);
+    pool_case_end(&pc);
+    CHECK(before[0].url[0] && after[0].url[0]); /* outlive pool */
+    nostr_simple_pool_snapshot_relays_free(before, n);
+    nostr_simple_pool_snapshot_relays_free(after, n);
+}
+
+static void test_handle_held_close(void) {
+    PoolCase pc = pool_case(REQ_BLOCKED, true, NOSTR_RELAY_AUTH_ON_CHALLENGE, true);
+    HandleObs a = {0}, b = {0};
+    NostrPoolSubscription *ha = open_handle(&pc, &a, true);
+    NostrPoolSubscription *hb = open_handle(&pc, &b, true);
+    WAIT_FOR(a.closed == 1 && b.closed == 1);
+    nostr_pool_subscription_close(ha); /* remove its parked REQ, not the sibling's */
+    atomic_store(&fx.policy, REQ_GATED);
+    fixture_command(CMD_DROP);
+    WAIT_FOR(b.eoses == 1);
+    CHECK(a.closed == 1 && !a.events && !a.eoses);
+    CHECK(b.events == 1);
+    nostr_simple_pool_stop(pc.pool);
+    nostr_simple_pool_start(pc.pool);
+    WAIT_FOR(b.eoses == 2);
+    CHECK(b.events == 1); /* handle dedup survives stop/start as well */
+    nostr_pool_subscription_free(ha);
+    pool_case_end(&pc); /* a caller-owned handle may outlive pool destruction */
+    nostr_pool_subscription_close(hb);
+    nostr_pool_subscription_free(hb);
+}
+
+static void test_handle_backoff_snapshot(void) {
+    PoolCase pc = pool_case(REQ_RATE_ONCE, true, NOSTR_RELAY_AUTH_ON_CHALLENGE, true);
+    CHECK(nostr_simple_pool_set_closed_backoff(pc.pool, 60000, 60000));
+    HandleObs a = {0}, b = {0}, c = {0};
+    NostrPoolSubscription *ha = open_handle(&pc, &a, true);
+    WAIT_FOR(a.closed == 1);
+    NostrPoolSubscription *hb = open_handle(&pc, &b, true);
+    WAIT_FOR(b.eoses == 1);
+    NostrPoolRelaySnapshot *items = NULL;
+    size_t count = 0;
+    CHECK(nostr_simple_pool_snapshot_relays(pc.pool, &items, &count) && count == 1);
+    /* Sibling B's EOSE must not reset A's backoff ladder. The long policy is
+     * inspected at protocol barriers, never slept out to complete a test. */
+    CHECK(items[0].closed_backoff_ms > 0 && items[0].closed_backoff_ms <= 60000);
+    nostr_simple_pool_snapshot_relays_free(items, count);
+    nostr_pool_subscription_close(ha);
+    CHECK(nostr_simple_pool_snapshot_relays(pc.pool, &items, &count) && count == 1);
+    CHECK(items[0].closed_backoff_ms == 0);
+    nostr_simple_pool_snapshot_relays_free(items, count);
+    NostrPoolSubscription *hc = open_handle(&pc, &c, true);
+    WAIT_FOR(c.eoses == 1);
+    CHECK(b.events == 1 && c.events == 1);
+    nostr_pool_subscription_free(ha);
+    nostr_pool_subscription_free(hb);
+    nostr_pool_subscription_free(hc);
+    pool_case_end(&pc);
+}
+
+static void test_handle_self_close(void) {
+    PoolCase pc = pool_case(REQ_GATED, true, NOSTR_RELAY_AUTH_ON_CHALLENGE, true);
+    HandleObs a = {.self_close = true};
+    NostrPoolSubscription *h = open_handle(&pc, &a, false);
+    WAIT_FOR(a.events == 1);
+    nostr_pool_subscription_close(h); /* joins callback's self-close */
+    CHECK(a.eoses == 0); /* queued boundary cannot start a callback after close */
+    nostr_pool_subscription_free(h);
+    pool_case_end(&pc);
+}
+
+typedef struct { NostrPoolSubscription *h; HandleObs *o; } CloseJob;
+static void *close_handle_thread(void *data) {
+    CloseJob *job = data;
+    pthread_mutex_lock(&obs.mu);
+    job->o->close_started = true;
+    pthread_cond_broadcast(&obs.cv);
+    pthread_mutex_unlock(&obs.mu);
+    nostr_pool_subscription_close(job->h);
+    pthread_mutex_lock(&obs.mu);
+    job->o->close_done = true;
+    pthread_cond_broadcast(&obs.cv);
+    pthread_mutex_unlock(&obs.mu);
+    return NULL;
+}
+static void inject_event(NostrSubscription *sub) {
+    NostrEvent *ev = nostr_event_new();
+    CHECK(nostr_event_deserialize(ev, fx.event_json) == 0);
+    nostr_subscription_dispatch_event(sub, ev);
+}
+static void test_handle_close_race(void) {
+    PoolCase pc = pool_case(REQ_GATED, true, NOSTR_RELAY_AUTH_ON_CHALLENGE, true);
+    HandleObs a = {.block = true}, b = {0};
+    NostrPoolSubscription *ha = open_handle(&pc, &a, false);
+    WAIT_FOR(a.entered);
+    pthread_mutex_lock(&pc.pool->pool_mutex);
+    CHECK(pc.pool->subs_count == 1);
+    NostrSubscription *sub = nostr_subscription_ref(pc.pool->subs[0]);
+    pthread_mutex_unlock(&pc.pool->pool_mutex);
+    CloseJob job = {ha, &a};
+    pthread_t closer;
+    CHECK(!pthread_create(&closer, NULL, close_handle_thread, &job));
+    WAIT_FOR(a.close_started);
+    inject_event(sub); /* producer races the pending close and in-flight callback */
+    NostrClosedEnvelope closed = {.base.type = NOSTR_ENVELOPE_CLOSED,
+        .subscription_id = nostr_subscription_get_id(sub), .reason = "auth-required: fixture race"};
+    nostr_relay_dispatch_control_envelope(pc.relay, &closed.base);
+    pthread_mutex_lock(&obs.mu);
+    CHECK(!a.close_done);
+    a.release = true;
+    pthread_cond_broadcast(&obs.cv);
+    pthread_mutex_unlock(&obs.mu);
+    pthread_join(closer, NULL);
+    int delivered = a.events;
+    inject_event(sub); /* explicit late delivery after cancellation is ignored */
+    nostr_relay_dispatch_control_envelope(pc.relay, &closed.base);
+    nostr_subscription_unref(sub);
+    NostrPoolSubscription *hb = open_handle(&pc, &b, false);
+    WAIT_FOR(b.eoses == 1);
+    CHECK(a.events == delivered);
+    pthread_mutex_lock(&obs.mu);
+    b.self_close = true;
+    pthread_mutex_unlock(&obs.mu);
+    fixture_command(CMD_REPLAY);
+    WAIT_FOR(b.events == 2);
+    /* close from its own callback is reentrant and idempotent from here. */
+    nostr_pool_subscription_close(hb);
+    nostr_pool_subscription_free(ha);
+    nostr_pool_subscription_free(hb);
+    pool_case_end(&pc);
+}
+
+typedef struct {
+    NostrRelay *relay;
+    NostrEvent *event;
+    GoContext *cancel;
+    Error *error;
+    bool accepted, done;
+} PublishJob;
+static void *publish_thread(void *data) {
+    PublishJob *job = data;
+    job->accepted = nostr_relay_publish_and_wait_with_context(job->relay, job->event,
+        10000, job->cancel, &job->error);
+    pthread_mutex_lock(&obs.mu);
+    job->done = true;
+    pthread_cond_broadcast(&obs.cv);
+    pthread_mutex_unlock(&obs.mu);
+    return NULL;
+}
+static void test_publish_cancel(void) {
+    fixture_start(REQ_GATED, true);
+    NostrRelay *relay = relay_connect();
+    NostrEvent *ev = nostr_event_new();
+    CHECK(nostr_event_deserialize(ev, fx.event_json) == 0);
+    GoContext *root = go_context_background();
+    CancelContextResult cc = go_context_with_cancel(root);
+    PublishJob job = {.relay = relay, .event = ev, .cancel = cc.context};
+    pthread_t publisher;
+    CHECK(!pthread_create(&publisher, NULL, publish_thread, &job));
+    WAIT_FOR(atomic_load(&fx.publishes) == 1);
+    Error *error = NULL;
+    CHECK(!nostr_relay_publish_and_wait_with_context(relay, ev, 100, cc.context, &error));
+    CHECK(error && strstr(error->message, "already exists"));
+    free_error(error);
+    cc.cancel(cc.context);
+    pthread_join(publisher, NULL);
+    CHECK(!job.accepted && job.error && job.error->code == ECANCELED);
+    free_error(job.error);
+    int oks = obs.ok_frames;
+    fixture_command(CMD_PUBLISH_OK); /* real late wire OK */
+    WAIT_FOR(obs.ok_frames == oks + 1);
+    CHECK(!job.accepted);
+    go_context_unref(cc.context);
+
+    /* Wire OK false is a rejection, not cancellation or send success. */
+    job = (PublishJob){.relay = relay, .event = ev};
+    CHECK(!pthread_create(&publisher, NULL, publish_thread, &job));
+    WAIT_FOR(atomic_load(&fx.publishes) == 2);
+    fixture_command(CMD_PUBLISH_REJECT);
+    pthread_join(publisher, NULL);
+    CHECK(!job.accepted && job.error && strstr(job.error->message, "blocked:"));
+    free_error(job.error);
+
+    /* Cancel and wire OK are issued without waiting for the publish thread;
+     * an OK that loses to cancellation must not leak or settle a later call. */
+    cc = go_context_with_cancel(root);
+    job = (PublishJob){.relay = relay, .event = ev, .cancel = cc.context};
+    CHECK(!pthread_create(&publisher, NULL, publish_thread, &job));
+    WAIT_FOR(atomic_load(&fx.publishes) == 3);
+    cc.cancel(cc.context);
+    fixture_command(CMD_PUBLISH_OK);
+    pthread_join(publisher, NULL);
+    CHECK(!job.accepted && job.error && job.error->code == ECANCELED);
+    free_error(job.error);
+    go_context_unref(cc.context);
+    WAIT_FOR(obs.ok_frames == oks + 3);
+
+    job = (PublishJob){.relay = relay, .event = ev};
+    CHECK(!pthread_create(&publisher, NULL, publish_thread, &job));
+    WAIT_FOR(atomic_load(&fx.publishes) == 4);
+    fixture_command(CMD_PUBLISH_OK);
+    pthread_join(publisher, NULL);
+    CHECK(job.accepted && !job.error); /* waiter can be reused after cancellation */
+    go_context_unref(root);
+    nostr_event_free(ev);
+    nostr_relay_close(relay, NULL);
+    nostr_relay_free(relay);
+    fixture_stop();
+}
+
+typedef struct {
+    NostrRelay *relay;
+    GoContext *cancel;
+    CancelFunc cancel_fn;
+    const char *event_id;
+    bool ok, go;
+    int ready;
+} PublishRace;
+static void race_start(PublishRace *r) {
+    pthread_mutex_lock(&obs.mu);
+    r->ready++;
+    pthread_cond_broadcast(&obs.cv);
+    while (!r->go) pthread_cond_wait(&obs.cv, &obs.mu);
+    pthread_mutex_unlock(&obs.mu);
+}
+static void *race_cancel(void *data) {
+    PublishRace *r = data;
+    race_start(r);
+    r->cancel_fn(r->cancel);
+    return NULL;
+}
+static void *race_ok(void *data) {
+    PublishRace *r = data;
+    race_start(r);
+    NostrOKEnvelope ok = {.base.type = NOSTR_ENVELOPE_OK,
+        .event_id = (char *)r->event_id, .ok = r->ok, .reason = "blocked: race fixture"};
+    nostr_relay_dispatch_control_envelope(r->relay, &ok.base);
+    return NULL;
+}
+static void test_publish_cancel_race(void) {
+    fixture_start(REQ_GATED, true);
+    NostrRelay *relay = relay_connect();
+    NostrEvent *ev = nostr_event_new();
+    CHECK(nostr_event_deserialize(ev, fx.event_json) == 0);
+    char *id = nostr_event_get_id(ev);
+    GoContext *root = go_context_background();
+    for (int i = 0; i < 16; i++) {
+        CancelContextResult cc = go_context_with_cancel(root);
+        PublishJob job = {.relay = relay, .event = ev, .cancel = cc.context};
+        pthread_t publisher, canceller, acknowledger;
+        CHECK(!pthread_create(&publisher, NULL, publish_thread, &job));
+        WAIT_FOR(atomic_load(&fx.publishes) == i + 1); /* actual wire EVENT */
+        PublishRace race = {.relay = relay, .cancel = cc.context, .cancel_fn = cc.cancel,
+            .event_id = id, .ok = (i % 2) == 0};
+        CHECK(!pthread_create(&canceller, NULL, race_cancel, &race));
+        CHECK(!pthread_create(&acknowledger, NULL, race_ok, &race));
+        WAIT_FOR(race.ready == 2);
+        pthread_mutex_lock(&obs.mu);
+        race.go = true;
+        pthread_cond_broadcast(&obs.cv);
+        pthread_mutex_unlock(&obs.mu);
+        pthread_join(canceller, NULL);
+        pthread_join(acknowledger, NULL);
+        pthread_join(publisher, NULL);
+        if (job.accepted) CHECK(race.ok && !job.error);
+        else {
+            CHECK(job.error);
+            CHECK(job.error->code == ECANCELED || (!race.ok && strstr(job.error->message, "blocked:")));
+            free_error(job.error);
+        }
+        go_context_unref(cc.context);
+    }
+    /* Precancelled calls never enqueue an EVENT. */
+    CancelContextResult cc = go_context_with_cancel(root);
+    cc.cancel(cc.context);
+    Error *err = NULL;
+    CHECK(!nostr_relay_publish_and_wait_with_context(relay, ev, 1000, cc.context, &err));
+    CHECK(err && err->code == ECANCELED && atomic_load(&fx.publishes) == 16);
+    free_error(err);
+    go_context_unref(cc.context);
+    go_context_unref(root);
+    free(id);
+    nostr_event_free(ev);
+    nostr_relay_close(relay, NULL);
+    nostr_relay_free(relay);
+    fixture_stop();
+}
+
 int main(int argc, char **argv) {
     unsetenv("NOSTR_TEST_MODE");
     lws_set_log_level(LLL_ERR, NULL);
@@ -970,6 +1439,10 @@ int main(int argc, char **argv) {
         { "unanswered", test_unanswered }, { "admission", test_admission },
         { "pool-auth", test_pool_auth }, { "pool-reject", test_pool_reject },
         { "pool-refused", test_pool_refused }, { "pool-handrolled", test_pool_handrolled }, { "pool-reconnect", test_pool_reconnect },
+        { "handles", test_handles }, { "handle-self-close", test_handle_self_close }, { "handle-held-close", test_handle_held_close },
+        { "handle-close-race", test_handle_close_race },
+        { "handle-backoff-snapshot", test_handle_backoff_snapshot },
+        { "publish-cancel", test_publish_cancel }, { "publish-cancel-race", test_publish_cancel_race },
         { "pool-blocked", test_pool_blocked }, { "pool-backoff", test_pool_backoff },
     };
     int ran = 0;

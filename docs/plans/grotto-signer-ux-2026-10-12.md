@@ -154,7 +154,7 @@ Preserved unchanged: `SignEvent(sss)→s`, `ApproveRequest(sbbt)→b`, `GetAppro
 
 Additive `GetApprovalInfo` fields (old UIs ignore unknowns): `transport:s`, `operation:s`, `event_kind:u` (only when present), `event_summary:a{sv}` (validated type, content preview, tag counts, operation details — never keys, pairing tokens, ciphertext bodies or decrypted private payloads), `reason:s`, `reason_source:s` (`caller`|`signer`), `flow_id:s`, `expires_at:t`, `remaining_seconds:u` (authoritative snapshot), `state:s`.
 
-**New `org.nostr.Grotto.Control1`** at `/org/nostr/signer/grotto`, exported by `grotto-daemon` (`apps/grotto/data/org.nostr.Grotto.Control1.xml`, `apps/grotto/daemon/grotto_control.{c,h}`). All management and sensitive-read methods require the existing trusted-approver check; owning `org.nostr.Grotto` alone is insufficient.
+**New `org.nostr.Grotto.Control1`** at `/org/nostr/signer/grotto`, exported by `grotto-daemon` (`gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml`, `apps/grotto/daemon/grotto_control.{c,h}`). All management and sensitive-read methods require the existing trusted-approver check; owning `org.nostr.Grotto` alone is insufficient.
 
 | Method | In → out | Behaviour |
 |---|---|---|
@@ -425,7 +425,7 @@ Paths are repo-relative. G00(b) confirmed the references below on 2026-10-12; **
 | `nips/nip55l/dbus/org.nostr.Signer.xml` | Add `CallWithContext`; preserve all existing signatures | Context dispatch |
 | `nips/nip55l/CMakeLists.txt`, `nips/nip55l/tests/test_signer_dbus_contract.c` | Register new sources + contract tests | Above |
 | `apps/grotto/daemon/main_daemon.c` | Create shared services/control; remove deny-unattended signing path; headless policy; clean shutdown | Gate, bunker adapter |
-| `apps/grotto/daemon/grotto_control.{c,h}` **new**; `apps/grotto/data/org.nostr.Grotto.Control1.xml` **new** | Authenticated management dispatcher/revisions; canonical contract | Shared service |
+| `apps/grotto/daemon/grotto_control.{c,h}` **new**; `gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml` **new** | Authenticated management dispatcher/revisions; canonical contract | Shared service |
 | `apps/grotto/src/bunker_service.{c,h}` | Real startup errors, async request adapter, client identity binding, method enforcement, pairing/reconfigure; documented state/ownership | Core async API |
 | `nostr-gobject/src/nostr_nip46_bunker.c`, `nostr-gobject/include/nostr-gobject-1.0/nostr_nip46_bunker.h` | Request-aware async bridge, transport-key setter, explicit stop; retain legacy APIs | Core changes |
 | `nips/nip46/src/core/nip46_session.c`, `nips/nip46/include/nostr/nip46/{nip46_bunker.h,nip46_types.h}` | Request context, deferred response, connect-token validation, stop/cancel, RPC dedup | G00 proof |

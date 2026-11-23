@@ -30,8 +30,8 @@
     },
     {
       "status": "M",
-      "old_path": "apps/grotto/data/org.nostr.Grotto.Control1.xml",
-      "new_path": "apps/grotto/data/org.nostr.Grotto.Control1.xml"
+      "old_path": "gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml",
+      "new_path": "gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml"
     },
     {
       "status": "M",
@@ -434,6 +434,7 @@
     "desktop.signer.publish",
     "desktop.signer.settings",
     "desktop.signer.share",
+    "gnome.shell_extension",
     "gnostr.signer_adapter",
     "grotto.build_contract",
     "grotto.default_build",

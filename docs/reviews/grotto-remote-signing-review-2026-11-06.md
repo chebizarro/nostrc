@@ -20,7 +20,7 @@ Evidence labels: **confirmed/executed** means run in this review; **confirmed/st
 
 ### F1 — S2, confirmed/executed and static — New offline reasons copy credential-bearing relay URLs into status and normal logs
 
-**Where:** `apps/grotto/src/bunker_service.c:555-557`, passed unredacted to `set_state()` at `:108-113`; admitted relay inputs at `apps/grotto/src/pairing_uri.c:12-24` and `apps/grotto/src/bunker_service.c:683-695`. Control1 exposes the reason at `apps/grotto/daemon/grotto_control.c:185-187`; the new adapter/display wiring is `apps/grotto/src/grotto-panels-control1-service.c:189-190` and `gnome/grotto-panels/src/grotto-remote-panel.c:132`.
+**Where:** `apps/grotto/src/bunker_service.c:555-557`, passed unredacted to `set_state()` at `:108-113`; admitted relay inputs at `apps/grotto/src/pairing_uri.c:12-24` and `apps/grotto/src/bunker_service.c:683-695`. Control1 exposes the reason at `apps/grotto/daemon/grotto_control.c:185-187`; the new adapter/display wiring is `gnome/grotto-panels/control-client/grotto-panels-control1-service.c:189-190` and `gnome/grotto-panels/src/grotto-remote-panel.c:132`.
 
 The new reason interpolates the whole relay URL. Userinfo and fragments are rejected, but the host accepts query parameters, and nip55l normalization preserves them (`nips/nip55l/src/core/signer_ops.c:1382-1403`). There is no credential redaction before the reason becomes a normal `g_message` journal entry or a `bunker_error` value. Turning off markup correctly prevents markup interpretation; it does not sanitize sensitive content.
 

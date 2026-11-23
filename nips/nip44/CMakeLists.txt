@@ -37,17 +37,7 @@ endif()
 # libporthome's installed static closure needs the public KDF implementation,
 # not a private-source copy. The optional GLib layer is not part of that closure.
 include(GNUInstallDirs)
-install(TARGETS nostr_nip44_core ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(DIRECTORY ${NIP44_INC}/nostr/nip44/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip44)
-
-# Installed consumers (including libmarmot's Meson build) resolve this module
-# instead of finding an archive and manually reconstructing its dependencies.
-# NIP-44 is not independently versioned: the module tracks its libnostr bundle.
-file(RELATIVE_PATH NIP44_PC_PREFIX_RELATIVE
-  "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig" "${CMAKE_INSTALL_PREFIX}")
-configure_file(nostr-nip44.pc.in nostr-nip44.pc @ONLY)
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-nip44.pc"
-  DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
 
 # Tests
 enable_testing()
@@ -91,3 +81,24 @@ target_link_libraries(nip44_demo_encrypt PRIVATE nostr nostr_nip44_core OpenSSL:
 add_executable(nip44_vector_demo ${CMAKE_CURRENT_SOURCE_DIR}/examples/nip44_vector_demo.c)
 target_include_directories(nip44_vector_demo PRIVATE ${NIP44_INC})
 target_link_libraries(nip44_vector_demo PRIVATE nostr nostr_nip44_core OpenSSL::Crypto)
+
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcNipPackage.cmake")
+declare_component_version(nip44 0 1 1)
+nostrc_install_nip(nostr_nip44_core nip44 "nostr >= 2.5.2" "" EXTERNAL_PRIVATE openssl libsecp256k1)
+
+# Keep the relocatable module name used by installed libmarmot and libporthome
+# consumers, with the same version and mixed link contract as nip44.pc.
+nostrc_pkg_config_shared(NIP44_PC_EXTERNAL openssl libsecp256k1)
+file(RELATIVE_PATH NIP44_PC_PREFIX_RELATIVE
+  "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig" "${CMAKE_INSTALL_PREFIX}")
+set(NIP44_PC_LIBDIR "${CMAKE_INSTALL_LIBDIR}")
+if(NOT IS_ABSOLUTE "${NIP44_PC_LIBDIR}")
+  set(NIP44_PC_LIBDIR "\${prefix}/${NIP44_PC_LIBDIR}")
+endif()
+set(NIP44_PC_INCLUDEDIR "${CMAKE_INSTALL_INCLUDEDIR}")
+if(NOT IS_ABSOLUTE "${NIP44_PC_INCLUDEDIR}")
+  set(NIP44_PC_INCLUDEDIR "\${prefix}/${NIP44_PC_INCLUDEDIR}")
+endif()
+configure_file(nostr-nip44.pc.in nostr-nip44.pc @ONLY)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-nip44.pc"
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)

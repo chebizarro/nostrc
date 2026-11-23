@@ -964,27 +964,27 @@ msgstr ""
 msgid "Connecting to signer…"
 msgstr ""
 
-#: src/grotto-panels-control1-service.c:108
+#: ../../gnome/grotto-panels/control-client/grotto-panels-control1-service.c:108
 msgid "Previous access policy — unchanged until explicitly upgraded"
 msgstr ""
 
-#: src/grotto-panels-control1-service.c:110
+#: ../../gnome/grotto-panels/control-client/grotto-panels-control1-service.c:110
 msgid "Share public key (after first consent)"
 msgstr ""
 
-#: src/grotto-panels-control1-service.c:112
+#: ../../gnome/grotto-panels/control-client/grotto-panels-control1-service.c:112
 msgid "Read relay list"
 msgstr ""
 
-#: src/grotto-panels-control1-service.c:112
+#: ../../gnome/grotto-panels/control-client/grotto-panels-control1-service.c:112
 msgid "Check connection"
 msgstr ""
 
-#: src/grotto-panels-control1-service.c:113
+#: ../../gnome/grotto-panels/control-client/grotto-panels-control1-service.c:113
 msgid "Routine operations, not custom event types"
 msgstr ""
 
-#: src/grotto-panels-control1-service.c:114
+#: ../../gnome/grotto-panels/control-client/grotto-panels-control1-service.c:114
 msgid "Public publishing: notes, reposts, reactions, articles and comments"
 msgstr ""
 

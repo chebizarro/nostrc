@@ -1,10 +1,11 @@
 prefix=${pcfiledir}/@NIP44_PC_PREFIX_RELATIVE@
-libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
-includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+libdir=@NIP44_PC_LIBDIR@
+includedir=@NIP44_PC_INCLUDEDIR@
 
 Name: nostr-nip44
-Description: Nostr NIP-44 v2 encryption core (libnostr bundle)
-Version: @NOSTR_VERSION@
-Requires.private: nostr, openssl, libsecp256k1
+Description: Nostr NIP-44 v2 encryption core (compatibility module)
+Version: @nip44_VERSION@
+Requires: nostr >= 2.5.2
 Libs: -L${libdir} -lnostr_nip44_core
-Cflags: -I${includedir}
+Libs.private: @NIP44_PC_EXTERNAL_LIBS@
+Cflags: -I${includedir} -DNOSTR_NIP44_CORE_STATIC_DEFINE
