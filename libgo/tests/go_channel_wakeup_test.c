@@ -21,6 +21,10 @@ static void observed_wait(nsync_cv *, nsync_mu *);
 #define NOSTR_METRICS_API
 #define NOSTR_ENABLE_METRICS 0
 #define nsync_cv_wait observed_wait
+/* Headers have selected the feature set above and may have normalized these
+ * macros. Let the included implementation repeat its own definitions. */
+#undef _POSIX_C_SOURCE
+#undef _DEFAULT_SOURCE
 #include "../src/channel.c"
 #undef nsync_cv_wait
 
