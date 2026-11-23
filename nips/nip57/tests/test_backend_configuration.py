@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the root build's unsupported storage/decoder configurations."""
+"""Exercise the root build's storage and decoder configure contract."""
 import argparse
 from pathlib import Path
 import shutil
@@ -25,6 +25,8 @@ cases = [
     ("nip57-no-decoder", ["-DBUILD_GROUNDHOG=OFF", "-DWITH_NOSTRDB=OFF",
                           "-DLIBNOSTR_WITH_NOSTRDB=OFF", "-DENABLE_NIP57=ON"],
      "NIP-57 requires LIBNOSTR_WITH_NOSTRDB=ON"),
+    ("core-no-backend", ["-DBUILD_GROUNDHOG=OFF", "-DWITH_NOSTRDB=OFF",
+                         "-DLIBNOSTR_WITH_NOSTRDB=OFF"], None),
 ]
 args.build_root.mkdir(parents=True, exist_ok=True)
 for name, flags, diagnostic in cases:
@@ -35,8 +37,16 @@ for name, flags, diagnostic in cases:
         result = subprocess.run(["cmake", "-S", str(source), "-B", str(build),
                                  *common, *flags], text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        if result.returncode == 0 or diagnostic not in result.stdout:
-            raise SystemExit(f"{name}: wrong configure result\n{result.stdout}")
-        print(f"{name}: PASS (rejected with required diagnostic)")
+        if diagnostic is None:
+            if result.returncode != 0:
+                raise SystemExit(f"{name}: configure unexpectedly failed\n{result.stdout}")
+            cache = (build / "CMakeCache.txt").read_text().splitlines()
+            if "ENABLE_NIP57:BOOL=OFF" not in cache:
+                raise SystemExit(f"{name}: expected NIP-57 to default OFF")
+            print(f"{name}: PASS (configured with NIP-57 OFF by default)")
+        else:
+            if result.returncode == 0 or diagnostic not in result.stdout:
+                raise SystemExit(f"{name}: wrong configure result\n{result.stdout}")
+            print(f"{name}: PASS (rejected with required diagnostic)")
     finally:
         shutil.rmtree(build, ignore_errors=True)

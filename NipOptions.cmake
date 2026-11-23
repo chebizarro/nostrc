@@ -222,8 +222,9 @@ if(ENABLE_NIP54)
     add_subdirectory(nips/nip54)
 endif()
 
-# NIP-57 Lightning Zaps
-option(ENABLE_NIP57 "Enable nip57 (Lightning Zaps)" ON)
+# NIP-57 uses libnostr's BOLT11 decoder. Default to its availability, but
+# keep explicit requests so the NIP-57 subdirectory can reject unsupported ON.
+option(ENABLE_NIP57 "Enable nip57 (Lightning Zaps)" ${LIBNOSTR_WITH_NOSTRDB})
 if(ENABLE_NIP57)
     add_subdirectory(nips/nip57)
 endif()
