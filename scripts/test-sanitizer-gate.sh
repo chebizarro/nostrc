@@ -34,14 +34,21 @@ listed="$(awk '/GROUNDHOG_SANITIZER_TESTS: >-/ { on = 1; next }
 [ "$(printf '%s\n' "${GH_SAN_TESTS[@]}")" = "$listed" ] || fail "tests differ from the workflow's list"
 [ "${#GH_SAN_TESTS[@]}" -ge 40 ] || fail "only ${#GH_SAN_TESTS[@]} tests read"
 has groundhog-mls-service "${GH_SAN_TESTS[@]}" || fail "groundhog-mls-service (nostrc-kdxe) not read"
-has test_connection_recv_drain "${GH_SAN_TESTS[@]}" || fail "the last (non-groundhog) test not read"
+has test_connection_recv_drain "${GH_SAN_TESTS[@]}" || fail "non-groundhog test not read"
 [ "${GH_SAN_TARGETS[0]}" = groundhog ] || fail "groundhog is not built first"
 has test-groundhog-mls-service "${GH_SAN_TARGETS[@]}" || fail "groundhog-* not mapped to test-*"
 has test_connection_recv_drain "${GH_SAN_TARGETS[@]}" || fail "other tests not kept as targets"
+for test in libnostr_subscription_enqueue nostrdb_supersession_{crowded,increasing,missing-d}; do
+    has "$test" "${GH_SAN_TESTS[@]}" || fail "sanitizer regression $test not read"
+done
 expected_targets=(groundhog)
 for test in "${GH_SAN_TESTS[@]}"; do
     case "$test" in
+        libnostr_subscription_enqueue) expected_targets+=(test_subscription_enqueue) ;;
+        nostrdb_supersession_crowded|nostrdb_supersession_increasing|nostrdb_supersession_missing-d)
+            expected_targets+=(test_nostrdb_supersession) ;;
         groundhog-launch) expected_targets+=(groundhog) ;;
+        groundhog-call-media-two-process) expected_targets+=(test-groundhog-call-media) ;;
         groundhog-*-gui) expected_targets+=("test-${test%-gui}") ;;
         groundhog-*) expected_targets+=("test-$test") ;;
         *) expected_targets+=("$test") ;;
@@ -271,7 +278,11 @@ check_inputs() {
 }
 check_inputs > "$tmp/out" 2>&1 || fail "check-inputs rejected covered inputs: $(cat "$tmp/out")"
 grep -q 'all 6 source inputs' "$tmp/out" || fail "check-inputs count: $(cat "$tmp/out")"
-grep -q -- '-t inputs groundhog test-groundhog-identity .*test_connection_recv_drain$' "$tmp/ninja-trace" ||
+unique_targets=()
+for target in "${expected_targets[@]}"; do
+    has "$target" "${unique_targets[@]:-}" || unique_targets+=("$target")
+done
+grep -Fxq -- "-t inputs ${unique_targets[*]}" <(cut -d ' ' -f 3- "$tmp/ninja-trace") ||
     fail "check-inputs did not ask for the job's targets"
 # SDK extraction moved real Groundhog inputs out of the existing prefixes.
 # Exercise the input audit itself, not affected()'s conservative fallback.
