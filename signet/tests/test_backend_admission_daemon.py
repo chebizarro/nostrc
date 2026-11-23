@@ -166,19 +166,20 @@ def run(daemon_binary, crypto_binary):
 
                 relay = Relay(handle)
                 config = directory / "authority.ini"
+                db_path = directory / "authority.db"
                 config.write_text(
                     "[server]\nhealth_port=0\nlog_level=info\n[store]\ndb_path=" +
-                    str(directory / "authority.db") + "\n[nostr]\nrelays=" + relay.url +
+                    str(db_path) + "\n[nostr]\nrelays=" + relay.url +
                     "\nidentity=admission-wire-fixture\n[backend_admission]\nauthority_id=" +
                     AUTHORITY + "\noperator_pubkey=" + peer.ready["operator_pubkey"] +
                     "\n[audit]\nstdout=false\npath=" + str(directory / "audit.log") +
                     "\n[policy_defaults]\ndefault_decision=deny\n[bootstrap]\nport=0\n"
                     "[dbus]\nunix_enabled=false\ntcp_enabled=false\n[nip5l]\nenabled=false\n"
                     "[ssh_agent]\nenabled=false\n[passkeys]\nenabled=false\nvirtual_ctap=false\n")
+                # The loopback ws:// relay is not a production deployment.
+                # A key still enables SQLCipher without the production TLS gate.
                 daemon_env = {**env, "SIGNET_DB_KEY_FILE": str(directory / "master.hex"),
-                              "SIGNET_BUNKER_NSEC_FILE": str(directory / "bunker.hex"),
-                              "SIGNET_REQUIRE_ENCRYPTED_DB":
-                                  "true" if peer.ready["sqlcipher_available"] else "false"}
+                              "SIGNET_BUNKER_NSEC_FILE": str(directory / "bunker.hex")}
                 daemon = subprocess.Popen([daemon_binary, "-c", str(config)], env=daemon_env,
                                           stdout=subprocess.DEVNULL, stderr=daemon_stderr)
 
@@ -186,6 +187,9 @@ def run(daemon_binary, crypto_binary):
                     try:
                         event = responses.get(timeout=10)
                     except queue.Empty:
+                        exit_code = daemon.poll()
+                        if exit_code is not None:
+                            raise AssertionError(f"daemon_exited_before_authenticated_reply: {exit_code}") from None
                         raise AssertionError("actual_daemon_authenticated_reply_missing") from None
                     opened = peer.call({"op": "open", "actor": actor, "event": event})
                     assert opened["authority_authenticated"], opened.get("error", "authority_not_authenticated")
@@ -239,6 +243,13 @@ def run(daemon_binary, crypto_binary):
                                   expected_revision=terminal["revision"],
                                   predecessor_proof_digest=HASH)["result"]
                 assert sealed["phase"] == "SEALED", "seal_failed"
+
+                # Check the daemon's actual store, not just the peer's SQLCipher probe.
+                sqlite_magic = b"SQLite format 3\x00"
+                with db_path.open("rb") as db:
+                    header = db.read(len(sqlite_magic))
+                assert len(header) == len(sqlite_magic), "authority_database_header_missing"
+                assert (header != sqlite_magic) == peer.ready["sqlcipher_available"], "authority_database_encryption_mismatch"
                 print("real daemon: independently canonical unsigned replies, authenticated refusal, enroll/activate/open, first/duplicate Begin, terminal Finish/status and Seal PASS")
             finally:
                 if daemon is not None:
