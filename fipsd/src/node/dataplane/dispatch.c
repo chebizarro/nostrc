@@ -68,6 +68,22 @@ static void link_sent(handlers *h, peer_rec *rec, fips_rekey *m, const fipsd_dp_
         if (r.teardown) hs_remove_peer(h, rec, FIPS_REKEY_CLOSE_Admin, false, FIPS_FMP_ResourceExhaustion);
     }
 }
+static void bloom_result(handlers *h, peer_rec *rec, const fipsd_dp_packet *p,
+    const fipsd_crypto_job *j, bool sent)
+{
+    uint32_t ts; const uint8_t *message; size_t len;
+    if (!rec || p->session || j->operation != FIPSD_CRYPTO_SEAL ||
+        !fips_fmp_strip_inner_header(p->input, j->input_size, &ts, &message, &len) ||
+        !len || message[0] != FIPS_LINK_FilterAnnounce) return;
+    /* The planner emits at most peer_capacity SENDs. Its extra scratch slot
+     * is safe here: submission queues completion, never dispatches it inline. */
+    fips_bloom_action *a = &h->bloom_actions[h->cfg.peer_capacity];
+    memset(a, 0, sizeof *a);
+    a->kind = FIPS_BLOOM_SEND; a->peer = rec->addr;
+    fips_reader rd; fips_reader_init(&rd, message + 1, len - 1);
+    if (fips_filter_announce_decode(&rd, &a->announce, NULL) == FIPS_OK)
+        hs_bloom_complete(h, rec, a, sent, p->tag, j->counter);
+}
 bool fipsd_dp_result(handlers *h, const fipsd_crypto_job *j)
 {
     FIPSD_PERF_BEGIN(perf_start);
@@ -81,15 +97,18 @@ bool fipsd_dp_result(handlers *h, const fipsd_crypto_job *j)
     if (p->worker_sent) {
         /* Sent from the worker on its submit-time pair under an unmoved gate
          * (fipsd_dp_gate): the send the completion below would have made. */
+        bloom_result(h, rec, p, j, p->send_rc == 0);
         if (p->send_rc == 0) link_sent(h, rec, h->running ? m : NULL, p, j, p->body + j->output_size);
         else { fipsd_dp_reject_frame(h, FIPSD_DP_SEND); ++h->counters.send_failed; }
         FIPSD_PERF_RETURN(perf_start, LINK_DISPATCH, true);
     }
     if (!h->running || (!p->farewell && (!m || !generation_matches(m, p)))) {
+        bloom_result(h, rec, p, j, false);
         ++h->dataplane->stats.stale; FIPSD_PERF_RETURN(perf_start, LINK_DISPATCH, true);
     }
     if (j->result != FIPS_NOISE_OK) {
         if (j->operation == FIPSD_CRYPTO_OPEN && p->session && fipsd_dp_open_retry(h, p)) FIPSD_PERF_RETURN(perf_start, LINK_DISPATCH, true);
+        bloom_result(h, rec, p, j, false);
         ++h->dataplane->stats.authentication_failed;
         fipsd_dp_reject_frame(h, j->operation == FIPSD_CRYPTO_OPEN ? FIPSD_DP_AUTH : FIPSD_DP_SEND);
         FIPSD_PERF_RETURN(perf_start, LINK_DISPATCH, true);
@@ -126,11 +145,13 @@ bool fipsd_dp_result(handlers *h, const fipsd_crypto_job *j)
                 uint16_t mtu = p->path_message && t ? t->ops->mtu(t, &p->endpoint) :
                     fipsd_dp_link_mtu(h, rec, p->transport, &p->endpoint);
                 if (len > mtu) {
+                    bloom_result(h, rec, p, j, false);
                     fipsd_dp_reject_frame(h, FIPSD_DP_MTU); FIPSD_PERF_RETURN(perf_start, LINK_DISPATCH, true);
                 }
             }
             ok = t && fipsd_transport_send_lane(t, p->path_message ? FIPSD_TRANSPORT_LANE_CONTROL :
                 FIPSD_TRANSPORT_LANE_DATA, &p->endpoint, p->output, len) == 0;
+            bloom_result(h, rec, p, j, ok);
             if (ok) link_sent(h, rec, m, p, j, len);
         }
         if (!ok) { fipsd_dp_reject_frame(h, FIPSD_DP_SEND); ++h->counters.send_failed; }

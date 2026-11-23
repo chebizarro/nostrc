@@ -29,6 +29,13 @@
 #ifndef MARMOT_TEST_HAVE_SQLITE3_HEADER
 #  define MARMOT_TEST_HAVE_SQLITE3_HEADER 0
 #endif
+/* Set by CMake when nostrdb and LMDB are built: the backend must run. */
+#ifndef MARMOT_TEST_HAVE_NOSTRDB
+#  define MARMOT_TEST_HAVE_NOSTRDB 0
+#endif
+#if MARMOT_TEST_HAVE_NOSTRDB
+#  include <lmdb.h>
+#endif
 
 #define TEST(fn, backend_name, storage) do { \
     printf("  [%-8s] %-45s", backend_name, #fn); \
@@ -139,6 +146,15 @@ test_group_save_and_find_by_mls_id(MarmotStorage *s)
     assert(strcmp(found->name, "Alpha") == 0);
     assert(found->epoch == 7);
     assert(found->state == MARMOT_GROUP_STATE_ACTIVE);
+    assert(found->group_data_version == 0);
+    marmot_group_free(found);
+
+    /* nostrc-x215: the MIP-01 version round-trips (v1 image_key is a key). */
+    g->group_data_version = 1;
+    assert(s->save_group(s->ctx, g) == MARMOT_OK);
+    found = NULL;
+    assert(s->find_group_by_mls_id(s->ctx, &g->mls_group_id, &found) == MARMOT_OK);
+    assert(found != NULL && found->group_data_version == 1);
     marmot_group_free(found);
     marmot_group_free(g);
 }
@@ -1060,8 +1076,207 @@ run_contract_tests(const char *backend_name, MarmotStorage *s,
  * main — instantiate and test each available backend
  * ──────────────────────────────────────────────────────────────────────── */
 
+#if MARMOT_TEST_HAVE_SQLITE3_HEADER
+/* nostrc-x215: a database made before 0.12.0 (groups without
+ * group_data_version) opens, its groups read with the version unknown, and
+ * new records keep theirs. */
+static void
+test_sqlite_upgrades_groups_table(MarmotStorage *unused)
+{
+    (void)unused;
+    char db_path[512];
+    snprintf(db_path, sizeof(db_path), "%s/pre_0_12.db", tmp_dir);
+    sqlite3 *db = NULL;
+    assert(sqlite3_open(db_path, &db) == SQLITE_OK);
+    assert(sqlite3_exec(db,
+        "CREATE TABLE groups (mls_group_id BLOB PRIMARY KEY, nostr_group_id BLOB NOT NULL,"
+        " name TEXT, description TEXT, image_hash BLOB, image_key BLOB, image_nonce BLOB,"
+        " admin_pubkeys BLOB, admin_count INTEGER DEFAULT 0, last_message_id TEXT,"
+        " last_message_at INTEGER DEFAULT 0, last_message_processed_at INTEGER DEFAULT 0,"
+        " epoch INTEGER DEFAULT 0, state INTEGER DEFAULT 0);"
+        "INSERT INTO groups (mls_group_id, nostr_group_id, name, epoch, state)"
+        " VALUES (x'0102', zeroblob(32), 'Old', 4, 0);", NULL, NULL, NULL) == SQLITE_OK);
+    sqlite3_close(db);
+
+    MarmotStorage *s = marmot_storage_sqlite_new(db_path, NULL);
+    assert(s != NULL);
+    MarmotGroupId gid = marmot_group_id_new((const uint8_t *)"\x01\x02", 2);
+    MarmotGroup *g = NULL;
+    assert(s->find_group_by_mls_id(s->ctx, &gid, &g) == MARMOT_OK);
+    assert(g && strcmp(g->name, "Old") == 0 && g->epoch == 4 && g->group_data_version == 0);
+    g->group_data_version = 1;
+    assert(s->save_group(s->ctx, g) == MARMOT_OK);
+    marmot_group_free(g);
+    g = NULL;
+    assert(s->find_group_by_mls_id(s->ctx, &gid, &g) == MARMOT_OK);
+    assert(g && g->group_data_version == 1);
+    marmot_group_free(g);
+    marmot_group_id_free(&gid);
+    marmot_storage_free(s);
+}
+#endif
+
+#if MARMOT_TEST_HAVE_NOSTRDB
+/* Overwrite with `with` the byte `offset` bytes before every copy of
+ * `marker` in the file (LMDB may keep older copies in freed pages). */
+static void
+patch_before_marker(const char *path, const uint8_t *marker, size_t marker_len,
+                    size_t offset, uint8_t with)
+{
+    FILE *f = fopen(path, "r+b");
+    assert(f != NULL);
+    assert(fseek(f, 0, SEEK_END) == 0);
+    long size = ftell(f);
+    assert(size > 0);
+    uint8_t *buf = malloc((size_t)size);
+    assert(buf != NULL);
+    rewind(f);
+    assert(fread(buf, 1, (size_t)size, f) == (size_t)size);
+    size_t hits = 0;
+    for (size_t i = offset; i + marker_len <= (size_t)size; i++) {
+        if (memcmp(buf + i, marker, marker_len) != 0) continue;
+        assert(fseek(f, (long)(i - offset), SEEK_SET) == 0);
+        assert(fputc(with, f) == with);
+        hits++;
+    }
+    assert(hits > 0);
+    free(buf);
+    assert(fclose(f) == 0);
+}
+
+/* Review M1 of nostrc-d1oq: before d1oq the nostrdb backend stored a
+ * Welcome as its NUL-terminated event JSON only, and recorded the outcome
+ * only in the "wproc" marker save_processed_welcome() writes under the
+ * Welcome's id.  Such records, written as the old build wrote them, keep
+ * their outcome after the upgrade: accepted and declined ones are not
+ * pending again. */
+static void
+test_nostrdb_legacy_welcomes_keep_their_outcome(MarmotStorage *unused)
+{
+    (void)unused;
+    char path[512];
+    snprintf(path, sizeof(path), "%s/legacy_welcomes.lmdb", tmp_dir);
+    uint8_t id_a[32], id_b[32], id_c[32], wrap_a[32], wrap_b[32];
+    memset(id_a, 0xA1, 32); memset(id_b, 0xB2, 32); memset(id_c, 0xC3, 32);
+    memset(wrap_a, 0x1A, 32); memset(wrap_b, 0x2B, 32);
+    static const char json_a[] = "{\"kind\":444,\"content\":\"accepted\"}";
+    static const char json_b[] = "{\"kind\":444,\"content\":\"declined\"}";
+    static const char json_c[] = "{\"kind\":444,\"content\":\"pending\"}";
+
+    /* The markers: their format is unchanged since before d1oq. */
+    MarmotStorage *s = marmot_storage_nostrdb_new(NULL, path);
+    assert(s != NULL);
+    assert(s->save_processed_welcome(s->ctx, wrap_a, id_a, 1700000000,
+                                     MARMOT_WELCOME_STATE_ACCEPTED, NULL) == MARMOT_OK);
+    assert(s->save_processed_welcome(s->ctx, wrap_b, id_b, 1700000001,
+                                     MARMOT_WELCOME_STATE_DECLINED, NULL) == MARMOT_OK);
+    marmot_storage_free(s);
+
+    /* The records, as the old ndb_save_welcome() wrote them. */
+    MDB_env *env = NULL;
+    MDB_txn *txn = NULL;
+    MDB_dbi dbi;
+    assert(mdb_env_create(&env) == 0);
+    assert(mdb_env_set_maxdbs(env, 8) == 0);
+    assert(mdb_env_set_mapsize(env, 256ULL * 1024 * 1024) == 0);
+    assert(mdb_env_open(env, path, MDB_NOSUBDIR, 0644) == 0);
+    assert(mdb_txn_begin(env, NULL, 0, &txn) == 0);
+    assert(mdb_dbi_open(txn, "marmot_welcomes", MDB_CREATE, &dbi) == 0);
+    const uint8_t *ids[3] = { id_a, id_b, id_c };
+    const char *jsons[3] = { json_a, json_b, json_c };
+    for (int i = 0; i < 3; i++) {
+        MDB_val k = { .mv_size = 32, .mv_data = (void *)ids[i] };
+        MDB_val v = { .mv_size = strlen(jsons[i]) + 1, .mv_data = (void *)jsons[i] };
+        assert(mdb_put(txn, dbi, &k, &v, 0) == 0);
+    }
+    assert(mdb_txn_commit(txn) == 0);
+    mdb_env_close(env);
+
+    s = marmot_storage_nostrdb_new(NULL, path);
+    assert(s != NULL);
+    const MarmotWelcomeState want[3] = { MARMOT_WELCOME_STATE_ACCEPTED,
+                                         MARMOT_WELCOME_STATE_DECLINED,
+                                         MARMOT_WELCOME_STATE_PENDING };
+    for (int i = 0; i < 3; i++) {
+        MarmotWelcome *w = NULL;
+        assert(s->find_welcome_by_event_id(s->ctx, ids[i], &w) == MARMOT_OK && w);
+        assert(w->state == want[i]);
+        assert(w->event_json && strcmp(w->event_json, jsons[i]) == 0);
+        marmot_welcome_free(w);
+    }
+    MarmotPagination pg = marmot_pagination_default();
+    MarmotWelcome **pending = NULL;
+    size_t count = 0;
+    assert(s->pending_welcomes(s->ctx, &pg, &pending, &count) == MARMOT_OK);
+    assert(count == 1 && memcmp(pending[0]->id, id_c, 32) == 0);
+    for (size_t i = 0; i < count; i++) marmot_welcome_free(pending[i]);
+    free(pending);
+    marmot_storage_free(s);
+}
+
+/* nostrc-d1oq (nostrc-w285, review W24 L1): a stored record that does not
+ * decode is MARMOT_ERR_STORAGE, never "not found" -- callers act on absence
+ * for good, e.g. refusing an invitation.  LMDB does not checksum pages, so
+ * the corruption reaches the backend's decoder. */
+static void
+test_nostrdb_read_errors_are_not_absence(MarmotStorage *unused)
+{
+    (void)unused;
+    char path[512];
+    snprintf(path, sizeof(path), "%s/read_errors.lmdb", tmp_dir);
+    MarmotStorage *s = marmot_storage_nostrdb_new(NULL, path);
+    assert(s != NULL);
+
+    /* Group blob: [version][u32 len=32][nostr_group_id]...;
+     * Welcome blob: [version][u32 json_len][event_json]... */
+    uint8_t group_marker[32];
+    for (size_t i = 0; i < sizeof(group_marker); i++)
+        group_marker[i] = (uint8_t)(0xD1 ^ (i * 0x1F));
+    static const char welcome_json[] = "{\"d1oq\":\"corrupt-me-welcome-marker\"}";
+
+    MarmotGroupId gid = marmot_group_id_new((const uint8_t *)"rd_err_grp", 10);
+    MarmotGroup *g = make_test_group(gid.data, gid.len, "Read Error Group", 3);
+    memcpy(g->nostr_group_id, group_marker, 32);
+    assert(s->save_group(s->ctx, g) == MARMOT_OK);
+    marmot_group_free(g);
+
+    MarmotWelcome *w = make_test_welcome(&gid, 0x70);
+    free(w->event_json);
+    w->event_json = strdup(welcome_json);
+    assert(w->event_json != NULL);
+    assert(s->save_welcome(s->ctx, w) == MARMOT_OK);
+    uint8_t welcome_id[32];
+    memcpy(welcome_id, w->id, 32);
+    marmot_welcome_free(w);
+    marmot_storage_free(s);
+
+    patch_before_marker(path, group_marker, 32, 5, 0x7F);
+    patch_before_marker(path, (const uint8_t *)welcome_json, strlen(welcome_json), 5, 0x7F);
+
+    s = marmot_storage_nostrdb_new(NULL, path);
+    assert(s != NULL);
+    MarmotGroup *found = (MarmotGroup *)(uintptr_t)1;
+    assert(s->find_group_by_mls_id(s->ctx, &gid, &found) == MARMOT_ERR_STORAGE);
+    assert(found == NULL);
+    found = (MarmotGroup *)(uintptr_t)1;
+    assert(s->find_group_by_nostr_id(s->ctx, group_marker, &found) == MARMOT_ERR_STORAGE);
+    assert(found == NULL);
+
+    /* 0x7F is not a Welcome record version and not legacy JSON either. */
+    MarmotWelcome *fw = (MarmotWelcome *)(uintptr_t)1;
+    MarmotError werr = s->find_welcome_by_event_id(s->ctx, welcome_id, &fw);
+    assert(werr == MARMOT_ERR_STORAGE);
+    assert(fw == NULL);
+
+    marmot_group_id_free(&gid);
+    marmot_storage_free(s);
+}
+#endif
+
 int main(int argc, char **argv)
 {
+    /* Unbuffered, so a crash's log shows the test it died in. */
+    setvbuf(stdout, NULL, _IONBF, 0);
     int total_backends = 0;
     make_tmp_dir();
     if (argc == 2 && strcmp(argv[1], "--nostrdb-epochs") == 0) {
@@ -1101,6 +1316,7 @@ int main(int argc, char **argv)
             TEST(test_sqlite_secure_delete, "sqlite", NULL);
 #if MARMOT_TEST_HAVE_SQLITE3_HEADER
             TEST(test_sqlite_read_errors_are_not_absence, "sqlite", NULL);
+            TEST(test_sqlite_upgrades_groups_table, "sqlite", NULL);
 #endif
             total_backends++;
         } else {
@@ -1110,16 +1326,25 @@ int main(int argc, char **argv)
 
     /* ── 3. nostrdb backend (if compiled with nostrdb) ────────────────── */
     {
-        char ndb_dir[512];
-        snprintf(ndb_dir, sizeof(ndb_dir), "%s/ndb_mls_state", tmp_dir);
-        mkdir(ndb_dir, 0755);
+        /* The MLS state layer opens LMDB with MDB_NOSUBDIR: a file path, not
+         * a directory (nostrc-d1oq: a directory made it skip silently). */
+        char ndb_path[512];
+        snprintf(ndb_path, sizeof(ndb_path), "%s/ndb_mls_state.lmdb", tmp_dir);
 
         /* Pass NULL for ndb_handle — still tests the LMDB MLS state layer */
-        MarmotStorage *s = marmot_storage_nostrdb_new(NULL, ndb_dir);
+        MarmotStorage *s = marmot_storage_nostrdb_new(NULL, ndb_path);
+#if MARMOT_TEST_HAVE_NOSTRDB
+        /* Built with nostrdb and LMDB: the backend must run, never skip. */
+        assert(s != NULL);
+#endif
         if (s != NULL) {
             assert(s->messages_in_epochs != NULL);
             run_contract_tests("nostrdb", s, true);
             marmot_storage_free(s);
+#if MARMOT_TEST_HAVE_NOSTRDB
+            TEST(test_nostrdb_read_errors_are_not_absence, "nostrdb", NULL);
+            TEST(test_nostrdb_legacy_welcomes_keep_their_outcome, "nostrdb", NULL);
+#endif
             total_backends++;
         } else {
             printf("\n── nostrdb backend ── SKIPPED (not available)\n");

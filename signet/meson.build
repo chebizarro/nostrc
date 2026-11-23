@@ -273,6 +273,7 @@ signet_core_sources = files(
   'src/relay_pool.c',
   'src/nip46_server.c',
   'src/mgmt_protocol.c',
+  'src/secret_json.c',
   'src/health_server.c',
   'src/store_tokens.c',
   'src/store_secrets.c',

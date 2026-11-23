@@ -349,7 +349,8 @@ static gboolean
 record_answer_locked(GhStore *store, Marmot *marmot, MarmotStorage *storage,
                      const GhMlsCommitPublish *publish, const MarmotGroupId *gid,
                      const gchar *relay_url, gboolean accepted, const gchar *relay_message,
-                     GhMlsCommitState *out_state, GError **error)
+                     GhMlsCommitState *out_state, MarmotMessageResult **out_results,
+                     size_t *out_count, GError **error)
 {
   GhStoreTargetOutcome outcome = {
     .relay_url = relay_url,
@@ -408,7 +409,7 @@ record_answer_locked(GhStore *store, Marmot *marmot, MarmotStorage *storage,
     }
   } else if (n_accepted == 0 && n_unanswered == 0) {
     /* Every relay refused it: nobody can have it. */
-    err = marmot_clear_pending_commit(marmot, gid);
+    err = marmot_clear_pending_commit_with_results(marmot, gid, out_results, out_count);
     if (err != MARMOT_OK)
       return marmot_fail(storage, err, "Clearing the Commit", error);
     state = GH_MLS_COMMIT_CLEARED;
@@ -438,13 +439,17 @@ record_answer_locked(GhStore *store, Marmot *marmot, MarmotStorage *storage,
 }
 
 gboolean
-gh_mls_commit_record_answer(GhStore *store, Marmot *marmot, MarmotStorage *storage,
+gh_mls_commit_record_answer_with_results(GhStore *store, Marmot *marmot, MarmotStorage *storage,
                             const GhMlsCommitPublish *publish, const gchar *relay_url,
                             gboolean accepted, const gchar *relay_message,
-                            GhMlsCommitState *out_state, GError **error)
+                            GhMlsCommitState *out_state, MarmotMessageResult **out_results,
+                            size_t *out_count, GError **error)
 {
   g_return_val_if_fail(store && marmot && storage && publish && relay_url, FALSE);
   g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
+  g_return_val_if_fail(out_results && out_count, FALSE);
+  *out_results = NULL;
+  *out_count = 0;
   drop_stale_error(storage);
 
   gsize gid_len = 0;
@@ -471,16 +476,37 @@ gh_mls_commit_record_answer(GhStore *store, Marmot *marmot, MarmotStorage *stora
   if (!gh_store_begin(store, error))
     return FALSE;
   GhMlsCommitState state = GH_MLS_COMMIT_PENDING;
+  MarmotMessageResult *results = NULL;
+  size_t count = 0;
   if (!record_answer_locked(store, marmot, storage, publish, &gid, relay_url, accepted,
-                            relay_message, &state, error)) {
+                            relay_message, &state, &results, &count, error)) {
+    marmot_message_results_free(results, count);
     gh_store_rollback(store);
     return FALSE;
   }
-  if (!gh_store_commit(store, error))
+  if (!gh_store_commit(store, error)) {
+    marmot_message_results_free(results, count);
     return FALSE;
+  }
+  *out_results = results;
+  *out_count = count;
   if (out_state)
     *out_state = state;
   return TRUE;
+}
+
+gboolean
+gh_mls_commit_record_answer(GhStore *store, Marmot *marmot, MarmotStorage *storage,
+                            const GhMlsCommitPublish *publish, const gchar *relay_url,
+                            gboolean accepted, const gchar *relay_message,
+                            GhMlsCommitState *out_state, GError **error)
+{
+  MarmotMessageResult *results = NULL;
+  size_t count = 0;
+  gboolean ok = gh_mls_commit_record_answer_with_results(store, marmot, storage, publish,
+    relay_url, accepted, relay_message, out_state, &results, &count, error);
+  marmot_message_results_free(results, count);
+  return ok;
 }
 
 /* ---- Restart --------------------------------------------------------------------------- */

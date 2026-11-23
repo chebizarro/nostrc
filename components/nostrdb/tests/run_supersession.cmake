@@ -1,0 +1,8 @@
+if(EXISTS "${TEST_DIRECTORY}")
+  message(FATAL_ERROR "Refusing to overwrite ${TEST_DIRECTORY}")
+endif()
+execute_process(COMMAND "${TEST_PROGRAM}" "${TEST_DIRECTORY}" "${TEST_CASE}" RESULT_VARIABLE result)
+file(REMOVE_RECURSE "${TEST_DIRECTORY}")
+if(NOT "${result}" STREQUAL "0")
+  message(FATAL_ERROR "supersession ${TEST_CASE}: ${result}")
+endif()

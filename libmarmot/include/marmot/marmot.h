@@ -856,6 +856,32 @@ MARMOT_API MarmotError marmot_clear_pending_commit(Marmot *m,
                                          const MarmotGroupId *mls_group_id);
 
 /**
+ * marmot_clear_pending_commit_with_results:
+ * @m: Marmot instance
+ * @mls_group_id: the group
+ * @out_results: (out) (transfer full) (array length=out_count): the result
+ *   of each deferred Commit this applied (type MARMOT_RESULT_COMMIT), in
+ *   the order applied, or NULL when none applied; free with
+ *   marmot_message_results_free()
+ * @out_count: (out): the number of results
+ *
+ * marmot_clear_pending_commit(), reporting the Commits it processes as
+ * marmot_process_message() would have when they arrived: their committer
+ * (commit.committer_pubkey_hex, commit.committer_leaf), departures, the
+ * updated group, any convergence change, and commit_roster (the member
+ * identities immediately after that Commit, not the final batch roster;
+ * nostrc-8gbp). Deferred Commits
+ * that do not apply (refused, stale) are not reported.
+ *
+ * Returns: as marmot_clear_pending_commit(); nothing is returned on error.
+ * Since 0.14.1.
+ */
+MARMOT_API MarmotError marmot_clear_pending_commit_with_results(Marmot *m,
+                                         const MarmotGroupId *mls_group_id,
+                                         MarmotMessageResult **out_results,
+                                         size_t *out_count);
+
+/**
  * marmot_get_pending_commit:
  * @m: Marmot instance
  * @mls_group_id: the group
@@ -1674,6 +1700,26 @@ MARMOT_API MarmotError marmot_save_created_message(Marmot *m,
 MARMOT_API MarmotError marmot_process_message(Marmot *m,
                                     const char *group_event_json,
                                     MarmotMessageResult *result);
+
+/** Scheduling metadata, not sender authentication or message admission. */
+typedef struct {
+    uint64_t epoch;
+    uint8_t state_tag[32];
+    uint32_t sender_leaf;
+    uint32_t generation;
+} MarmotMessageOrder;
+
+/**
+ * Inspect application sender data using current/retained group secrets, without
+ * consuming keys, marking processed events, writing storage or changing state.
+ * Useful for ordering equal-second backfill before marmot_process_message().
+ * This does NOT authenticate the sender or envelope; every event must still go
+ * through normal processing. An unavailable epoch or non-application message
+ * returns an error and must remain eligible for normal processing/retry.
+ */
+MARMOT_API MarmotError marmot_inspect_message_order(Marmot *m, const MarmotGroupId *gid,
+                                                   const char *event_json,
+                                                   MarmotMessageOrder *out);
 
 /**
  * marmot_process_rumor_message:

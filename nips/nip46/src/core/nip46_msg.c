@@ -1,5 +1,6 @@
 #include "nostr/nip46/nip46_msg.h"
 #include <jansson.h>
+#include <secure_buf.h>
 #include <openssl/rand.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,6 +9,35 @@
 #define ID_MAX 256u
 #define METHOD_MAX 128u
 #define PARAM_MAX 64u
+
+/* Wipe values while their owning allocator still owns the tree; decref must
+ * remain Jansson's, including when an embedding application sets allocators.
+ * Only use at final use, not when dropping a temporary shared reference. */
+static void wipe_json(json_t *value) {
+    if (json_is_string(value)) {
+        secure_wipe((void *)json_string_value(value), json_string_length(value));
+    } else if (json_is_array(value)) {
+        size_t i; json_t *item;
+        json_array_foreach(value, i, item) wipe_json(item);
+    } else if (json_is_object(value)) {
+        /* Final-use teardown can remove each wiped member. Avoid the exported
+         * json_object_iter_next name shared by Jansson and JSON-GLib. */
+        void *iter;
+        while ((iter = json_object_iter(value)) != NULL) {
+            const char *key = json_object_iter_key(iter);
+            wipe_json(json_object_iter_value(iter));
+            json_object_del(value, key);
+        }
+    }
+}
+static void secure_json_decref(json_t *value) {
+    wipe_json(value);
+    json_decref(value);
+}
+static void wipe_free(char *text) {
+    if (text) secure_wipe(text, strlen(text));
+    free(text);
+}
 
 /* Jansson strings may contain a decoded U+0000 even though this API returns
  * C strings. Never let strdup/strlen silently turn an authenticated request
@@ -25,18 +55,24 @@ static json_t *load_object(const char *text) {
     json_error_t error;
     json_t *root = json_loads(text, JSON_REJECT_DUPLICATES, &error);
     if (!root || !json_is_object(root)) {
-        json_decref(root);
+        secure_json_decref(root);
         return NULL;
     }
     return root;
 }
 
 static char *dump_compact(json_t *value) {
-    char *text = json_dumps(value, JSON_COMPACT | JSON_ENSURE_ASCII | JSON_ENCODE_ANY);
-    if (text && strlen(text) > MESSAGE_MAX) {
-        free(text);
-        return NULL;
-    }
+    char *encoded = json_dumps(value, JSON_COMPACT | JSON_ENSURE_ASCII | JSON_ENCODE_ANY);
+    if (!encoded) return NULL;
+    size_t len = strlen(encoded);
+    char *text = len <= MESSAGE_MAX ? malloc(len + 1) : NULL;
+    if (text) memcpy(text, encoded, len + 1);
+    /* The public API owns malloc strings. Jansson's temporary dump may come
+     * from a custom allocator, so wipe and release it with that allocator. */
+    json_free_t release;
+    json_get_alloc_funcs(NULL, &release);
+    secure_wipe(encoded, len);
+    release(encoded);
     return text;
 }
 
@@ -69,14 +105,14 @@ char *nostr_nip46_request_build(const char *id, const char *method,
             json_array_append_new(array, json_string(params[i]))) goto fail;
     }
     if (json_object_set(root, "params", array)) goto fail;
-    json_decref(array);
+    json_decref(array); /* root retains the live array until serialization */
     array = NULL;
     char *text = dump_compact(root);
-    json_decref(root);
+    secure_json_decref(root);
     return text;
 fail:
-    json_decref(array);
-    json_decref(root);
+    secure_json_decref(array);
+    secure_json_decref(root);
     return NULL;
 }
 
@@ -107,19 +143,20 @@ int nostr_nip46_request_parse(const char *text, NostrNip46Request *out) {
             ? strdup(json_string_value(item)) : dump_compact(item);
         if (!out->params[i]) goto fail;
     }
-    json_decref(root);
+    secure_json_decref(root);
     return 0;
 fail:
-    json_decref(root);
+    secure_json_decref(root);
     nostr_nip46_request_free(out);
     return -1;
 }
 
 void nostr_nip46_request_free(NostrNip46Request *req) {
     if (!req) return;
-    free(req->id); free(req->method);
+    wipe_free(req->id); wipe_free(req->method);
     if (req->params)
-        for (size_t i = 0; i < req->n_params; i++) free(req->params[i]);
+        for (size_t i = 0; i < req->n_params; i++) wipe_free(req->params[i]);
+    if (req->params) secure_wipe(req->params, req->n_params * sizeof(*req->params));
     free(req->params);
     memset(req, 0, sizeof(*req));
 }
@@ -132,11 +169,11 @@ char *nostr_nip46_response_build_ok(const char *id, const char *result_json) {
     json_t *root = json_object();
     if (!result || !root || json_object_set_new(root, "id", json_string(id)) ||
         json_object_set(root, "result", result)) {
-        json_decref(result); json_decref(root); return NULL;
+        secure_json_decref(result); secure_json_decref(root); return NULL;
     }
-    json_decref(result);
+    json_decref(result); /* root retains the live result until serialization */
     char *text = dump_compact(root);
-    json_decref(root);
+    secure_json_decref(root);
     return text;
 }
 
@@ -146,10 +183,10 @@ char *nostr_nip46_response_build_err(const char *id, const char *error_msg) {
     json_t *root = json_object();
     if (!root || json_object_set_new(root, "id", json_string(id)) ||
         json_object_set_new(root, "error", json_string(error_msg))) {
-        json_decref(root); return NULL;
+        secure_json_decref(root); return NULL;
     }
     char *text = dump_compact(root);
-    json_decref(root);
+    secure_json_decref(root);
     return text;
 }
 
@@ -169,17 +206,17 @@ int nostr_nip46_response_parse(const char *text, NostrNip46Response *out) {
         ? strdup(json_string_value(result)) : dump_compact(result);
     if (error) out->error = strdup(json_string_value(error));
     if (!out->id || (result && !out->result) || (error && !out->error)) goto fail;
-    json_decref(root);
+    secure_json_decref(root);
     return 0;
 fail:
-    json_decref(root);
+    secure_json_decref(root);
     nostr_nip46_response_free(out);
     return -1;
 }
 
 void nostr_nip46_response_free(NostrNip46Response *res) {
     if (!res) return;
-    free(res->id); free(res->result); free(res->error);
+    wipe_free(res->id); wipe_free(res->result); wipe_free(res->error);
     memset(res, 0, sizeof(*res));
 }
 

@@ -39,7 +39,15 @@ NOSTR_GOBJECT_API G_DECLARE_FINAL_TYPE(GNostrSubscription, gnostr_subscription, 
  * 2. Fire: gnostr_subscription_fire() → state = ACTIVE, monitor starts
  * 3. Receive: "event" signals emitted as events arrive
  * 4. EOSE: "eose" signal emitted, state = EOSE_RECEIVED
- * 5. Close: gnostr_subscription_close() → state = CLOSED, monitor stops
+ * 5. Close: gnostr_subscription_close() requests cancellation; queued delivery
+ *    finishes, then "closed" is emitted and state becomes CLOSED.
+ *
+ * EVENT, EOSE and CLOSED use one ordered main-context queue. Every admitted
+ * event precedes its terminal marker; CLOSED is emitted exactly once. A relay
+ * CLOSED reason already queued when a consumer closes is preserved. With a
+ * backlog overflow, events beyond the configured ceiling are not admitted;
+ * the queued relay reason, if available, takes precedence over the local
+ * overflow reason.
  *
  * ## Signals
  *
@@ -102,8 +110,10 @@ NOSTR_GOBJECT_API gboolean gnostr_subscription_fire(GNostrSubscription *self, GE
  * gnostr_subscription_close:
  * @self: a #GNostrSubscription
  *
- * Closes the subscription, sends CLOSE to the relay, and stops the
- * monitor thread. Transitions to CLOSED state and emits the "closed" signal.
+ * Requests cancellation and sends CLOSE once. The monitor preserves any queued
+ * relay CLOSED reason, drains admitted EVENT/EOSE items and queues the terminal
+ * marker. CLOSED state and the "closed" signal occur asynchronously on the main
+ * context after those items, not synchronously in this call.
  *
  * Safe to call multiple times; subsequent calls are no-ops.
  *

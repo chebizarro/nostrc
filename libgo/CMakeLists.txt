@@ -318,6 +318,12 @@ add_executable(string_array_test tests/string_array_test.c)
 add_executable(long_adder_stress_test tests/long_adder_stress_test.c)
 add_executable(go_select_closed_test tests/go_select_closed_test.c)
 add_executable(go_select_cancel_test tests/go_select_cancel_test.c)
+add_executable(go_channel_wakeup_test tests/go_channel_wakeup_test.c)
+target_link_libraries(go_channel_wakeup_test PRIVATE libgo ${NSYNC_LIB} pthread)
+apply_sanitizers(go_channel_wakeup_test)
+apply_warnings(go_channel_wakeup_test)
+add_test(NAME GoChannelWakeupTest COMMAND go_channel_wakeup_test)
+set_tests_properties(GoChannelWakeupTest PROPERTIES TIMEOUT 20)
 add_executable(go_channel_mpmc_slot_test tests/go_channel_mpmc_slot_test.c)
 
 # Link the context library to each test
@@ -455,15 +461,38 @@ endif()
 # `libgo.pc -> libnostrgo.pc` is installed alongside it so consumers on the
 # old spelling keep working during the transition.
 set(LIBNOSTRGO_PKGCONF "${CMAKE_CURRENT_BINARY_DIR}/libnostrgo.pc")
-# Libs.private:
-#   * system nsync -> "-lnsync -lpthread"  (consumers must link nsync)
-#   * vendored nsync -> "-lpthread"        (nsync is folded into libnostrgo.so
-#                                            via --whole-archive; downstream
-#                                            gets nsync symbols transitively)
+# Shared libnostrgo folds in vendored nsync; a static archive does not.
+set(LIBNOSTRGO_PC_NSYNC_CFLAGS "")
 if(NOSTRC_NSYNC_VENDORED)
-  set(LIBNOSTRGO_PC_NSYNC_LIB "")
+  file(GLOB _libgo_nsync_public_headers "${NSYNC_INCLUDE_DIR}/nsync*.h")
+  install(FILES ${_libgo_nsync_public_headers}
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT Development)
+  if(_nostrgo_type STREQUAL "STATIC_LIBRARY")
+    install(FILES "$<TARGET_FILE:nsync>"
+      DESTINATION ${CMAKE_INSTALL_LIBDIR}
+      RENAME "${CMAKE_STATIC_LIBRARY_PREFIX}nostr-nsync-private${CMAKE_STATIC_LIBRARY_SUFFIX}")
+    set(LIBNOSTRGO_PC_NSYNC_LIB "-lnostr-nsync-private ")
+  else()
+    set(LIBNOSTRGO_PC_NSYNC_LIB "")
+  endif()
 else()
-  set(LIBNOSTRGO_PC_NSYNC_LIB "-lnsync ")
+  get_filename_component(_libgo_nsync_libdir "${NSYNC_LIB}" DIRECTORY)
+  set(LIBNOSTRGO_PC_NSYNC_LIB "-L${_libgo_nsync_libdir} -lnsync ")
+  # channel/context/select public headers include nsync.h.
+  set(LIBNOSTRGO_PC_NSYNC_CFLAGS "-I${NSYNC_INCLUDE_DIR}")
+endif()
+if(WIN32)
+  string(APPEND LIBNOSTRGO_PC_NSYNC_LIB "-lstdc++ ")
+endif()
+file(RELATIVE_PATH LIBNOSTRGO_PC_PREFIX_RELATIVE
+  "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig" "${CMAKE_INSTALL_PREFIX}")
+set(LIBNOSTRGO_PC_LIBDIR "${CMAKE_INSTALL_LIBDIR}")
+if(NOT IS_ABSOLUTE "${LIBNOSTRGO_PC_LIBDIR}")
+  set(LIBNOSTRGO_PC_LIBDIR "\${exec_prefix}/${LIBNOSTRGO_PC_LIBDIR}")
+endif()
+set(LIBNOSTRGO_PC_INCLUDEDIR "${CMAKE_INSTALL_INCLUDEDIR}")
+if(NOT IS_ABSOLUTE "${LIBNOSTRGO_PC_INCLUDEDIR}")
+  set(LIBNOSTRGO_PC_INCLUDEDIR "\${prefix}/${LIBNOSTRGO_PC_INCLUDEDIR}")
 endif()
 configure_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/libnostrgo.pc.in"

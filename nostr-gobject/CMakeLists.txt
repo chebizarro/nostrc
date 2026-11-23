@@ -400,10 +400,18 @@ endif()
 
 if(BUILD_TESTING)
   foreach(_test list_service mute_list_compat)
+    if(_test STREQUAL "mute_list_compat")
+      pkg_check_modules(LIST_TEST_SOUP QUIET IMPORTED_TARGET libsoup-3.0)
+      if(NOT TARGET PkgConfig::LIST_TEST_SOUP)
+        add_test(NAME test_nostr_gobject_${_test}
+          COMMAND "${CMAKE_COMMAND}" -E echo "SKIP: libsoup-3.0 is required for the mute-list fixture")
+        set_tests_properties(test_nostr_gobject_${_test} PROPERTIES SKIP_REGULAR_EXPRESSION "SKIP: libsoup-3.0")
+        continue()
+      endif()
+    endif()
     add_executable(test_nostr_gobject_${_test} tests/test_${_test}.c)
     target_link_libraries(test_nostr_gobject_${_test} PRIVATE nostrc::gobject_executable)
     if(_test STREQUAL "mute_list_compat")
-      pkg_check_modules(LIST_TEST_SOUP REQUIRED IMPORTED_TARGET libsoup-3.0)
       target_link_libraries(test_nostr_gobject_${_test} PRIVATE PkgConfig::LIST_TEST_SOUP)
     endif()
     apply_sanitizers(test_nostr_gobject_${_test})
@@ -631,12 +639,18 @@ if(BUILD_TESTING)
   set_tests_properties(test_nostr_gobject_vault PROPERTIES
     TIMEOUT 30 LABELS "nostr-gobject;libvault;unit"
     ENVIRONMENT "G_DEBUG=fatal-warnings,gc-friendly;G_SLICE=always-malloc")
-  pkg_check_modules(BLOSSOM_TEST_SOUP REQUIRED IMPORTED_TARGET libsoup-3.0)
-  add_executable(test_nostr_gobject_blossom tests/test_blossom_client.c)
-  target_link_libraries(test_nostr_gobject_blossom PRIVATE nostr_gobject nostrc::bud02 PkgConfig::BLOSSOM_TEST_SOUP)
-  apply_sanitizers(test_nostr_gobject_blossom)
-  add_test(NAME test_nostr_gobject_blossom COMMAND test_nostr_gobject_blossom)
-  set_tests_properties(test_nostr_gobject_blossom PROPERTIES TIMEOUT 30 LABELS "nostr-gobject;integration")
+  pkg_check_modules(BLOSSOM_TEST_SOUP QUIET IMPORTED_TARGET libsoup-3.0)
+  if(TARGET PkgConfig::BLOSSOM_TEST_SOUP)
+    add_executable(test_nostr_gobject_blossom tests/test_blossom_client.c)
+    target_link_libraries(test_nostr_gobject_blossom PRIVATE nostr_gobject nostrc::bud02 PkgConfig::BLOSSOM_TEST_SOUP)
+    apply_sanitizers(test_nostr_gobject_blossom)
+    add_test(NAME test_nostr_gobject_blossom COMMAND test_nostr_gobject_blossom)
+    set_tests_properties(test_nostr_gobject_blossom PROPERTIES TIMEOUT 30 LABELS "nostr-gobject;integration")
+  else()
+    add_test(NAME test_nostr_gobject_blossom
+      COMMAND "${CMAKE_COMMAND}" -E echo "SKIP: libsoup-3.0 is required for the Blossom fixture")
+    set_tests_properties(test_nostr_gobject_blossom PROPERTIES SKIP_REGULAR_EXPRESSION "SKIP: libsoup-3.0")
+  endif()
 endif()
 if(BUILD_TESTING)
   include(${CMAKE_SOURCE_DIR}/cmake/GnTest.cmake)
@@ -698,6 +712,12 @@ if(BUILD_TESTING)
     # nostrc-dha5: GNOSTR_TESTING seam in src/nostr_subscription_test_hooks.h
     target_include_directories(test_nostr_gobject_subscription_eose_order PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  else()
+    message(STATUS "Subscription EOSE-order test unavailable: libsoup-3.0 not found")
+    add_test(NAME test_nostr_gobject_subscription_eose_order
+      COMMAND "${CMAKE_COMMAND}" -E echo "SKIP: libsoup-3.0 is required for the EOSE-order fixture")
+    set_tests_properties(test_nostr_gobject_subscription_eose_order PROPERTIES
+      SKIP_REGULAR_EXPRESSION "SKIP: libsoup-3.0")
   endif()
 
   # ── New tests (require testkit) ──────────────────────────────────

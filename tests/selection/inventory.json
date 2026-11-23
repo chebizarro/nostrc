@@ -20,6 +20,33 @@
     ]
   },
   "checks": {
+    "signet.backup_upload": {
+      "nodes": [
+        "signet"
+      ],
+      "profiles": [
+        "core.linux",
+        "groundhog.mdk08"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "core.linux": [
+          "backup_upload"
+        ],
+        "groundhog.mdk08": [
+          "backup_upload"
+        ]
+      },
+      "requires": [],
+      "runtime_inputs": [
+        "signet/tests/test_backup_upload.py",
+        "signet/deploy/ops.py"
+      ],
+      "build_targets": []
+    },
     "gnome.shell_extension": {
       "nodes": [
         "gnome.nostr_shell_extension"
@@ -912,6 +939,85 @@
       "requirement": "blocking",
       "runtime_inputs": []
     },
+    "nostrdb.supersession": {
+      "build_targets": [
+        "test_nostrdb_supersession"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "nostrdb_supersession_crowded",
+          "nostrdb_supersession_increasing",
+          "nostrdb_supersession_missing-d"
+        ],
+        "core.linux.asan": [
+          "nostrdb_supersession_crowded",
+          "nostrdb_supersession_increasing",
+          "nostrdb_supersession_missing-d"
+        ],
+        "core.linux": [
+          "nostrdb_supersession_crowded",
+          "nostrdb_supersession_increasing",
+          "nostrdb_supersession_missing-d"
+        ],
+        "grotto.linux": [
+          "nostrdb_supersession_crowded",
+          "nostrdb_supersession_increasing",
+          "nostrdb_supersession_missing-d"
+        ],
+        "grotto.linux.asan_ubsan": [
+          "nostrdb_supersession_crowded",
+          "nostrdb_supersession_increasing",
+          "nostrdb_supersession_missing-d"
+        ],
+        "groundhog.linux": [
+          "nostrdb_supersession_crowded",
+          "nostrdb_supersession_increasing",
+          "nostrdb_supersession_missing-d"
+        ],
+        "groundhog.mdk08": [
+          "nostrdb_supersession_crowded",
+          "nostrdb_supersession_increasing",
+          "nostrdb_supersession_missing-d"
+        ],
+        "groundhog.mdk011": [
+          "nostrdb_supersession_crowded",
+          "nostrdb_supersession_increasing",
+          "nostrdb_supersession_missing-d"
+        ],
+        "groundhog.linux.sanitizers": [
+          "nostrdb_supersession_crowded",
+          "nostrdb_supersession_increasing",
+          "nostrdb_supersession_missing-d"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.core",
+        "execution.grotto",
+        "execution.groundhog",
+        "libjson",
+        "libnostr",
+        "nostrdb",
+        "vendor.nostrdb"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan",
+        "core.linux",
+        "grotto.linux",
+        "grotto.linux.asan_ubsan",
+        "groundhog.linux",
+        "groundhog.mdk08",
+        "groundhog.mdk011",
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "{source}/components/nostrdb/tests/run_supersession.cmake"
+      ]
+    },
     "root.asan.libnostr": {
       "build_targets": [],
       "cost": "ordinary",
@@ -930,6 +1036,7 @@
           "libnostr_relay_write_unsent",
           "libnostr_store_txn_audit",
           "libnostr_subscription_dispatch",
+          "libnostr_subscription_enqueue",
           "test_relay_teardown_leaks"
         ],
         "core.linux.asan": [
@@ -946,6 +1053,7 @@
           "libnostr_relay_write_unsent",
           "libnostr_store_txn_audit",
           "libnostr_subscription_dispatch",
+          "libnostr_subscription_enqueue",
           "test_relay_teardown_leaks"
         ]
       },
@@ -2399,6 +2507,7 @@
           "GoChannelIncremental",
           "concurrency_channels",
           "concurrency_subscription_shutdown",
+          "concurrency_subscription_shutdown_asan",
           "glib_async_integration",
           "profile_fetch_simulation",
           "profile_fetch_stress",
@@ -2415,6 +2524,7 @@
           "test_filters_move_semantics",
           "test_fuzz_envelope_roundtrip",
           "test_fuzz_filter_parse",
+          "test_json_envelope",
           "test_json_event",
           "test_json_event_fuzzlite",
           "test_json_filter",
@@ -2440,6 +2550,7 @@
           "GoChannelIncremental",
           "concurrency_channels",
           "concurrency_subscription_shutdown",
+          "concurrency_subscription_shutdown_asan",
           "glib_async_integration",
           "profile_fetch_simulation",
           "profile_fetch_stress",
@@ -2456,6 +2567,7 @@
           "test_filters_move_semantics",
           "test_fuzz_envelope_roundtrip",
           "test_fuzz_filter_parse",
+          "test_json_envelope",
           "test_json_event",
           "test_json_event_fuzzlite",
           "test_json_filter",
@@ -2501,6 +2613,7 @@
         "core.macos.asan": [
           "MockRelayIntegration",
           "MockRelayServerBasic",
+          "MockRelayUnit",
           "Nip46MockRelay",
           "Nip46QRSocket",
           "TestHarnessExample"
@@ -2508,6 +2621,7 @@
         "core.linux.asan": [
           "MockRelayIntegration",
           "MockRelayServerBasic",
+          "MockRelayUnit",
           "Nip46MockRelay",
           "Nip46QRSocket",
           "TestHarnessExample"
@@ -6023,11 +6137,13 @@
     },
     "sanitizer.test_relay_teardown_leaks": {
       "build_targets": [
-        "test_relay_teardown_leaks"
+        "test_relay_teardown_leaks",
+        "test_subscription_enqueue"
       ],
       "cost": "ordinary",
       "ctest_tests": {
         "groundhog.linux.sanitizers": [
+          "libnostr_subscription_enqueue",
           "test_relay_teardown_leaks"
         ]
       },
@@ -13913,6 +14029,7 @@
           "libnostr_relay_write_unsent",
           "libnostr_store_txn_audit",
           "libnostr_subscription_dispatch",
+          "libnostr_subscription_enqueue",
           "test_relay_teardown_leaks"
         ],
         "grotto.linux": [
@@ -13929,6 +14046,7 @@
           "libnostr_relay_write_unsent",
           "libnostr_store_txn_audit",
           "libnostr_subscription_dispatch",
+          "libnostr_subscription_enqueue",
           "test_relay_teardown_leaks"
         ],
         "core.linux": [
@@ -13945,6 +14063,7 @@
           "libnostr_relay_write_unsent",
           "libnostr_store_txn_audit",
           "libnostr_subscription_dispatch",
+          "libnostr_subscription_enqueue",
           "test_relay_teardown_leaks"
         ],
         "grotto.linux.asan_ubsan": [
@@ -13961,6 +14080,7 @@
           "libnostr_relay_write_unsent",
           "libnostr_store_txn_audit",
           "libnostr_subscription_dispatch",
+          "libnostr_subscription_enqueue",
           "test_relay_teardown_leaks"
         ],
         "groundhog.mdk08": [
@@ -13977,6 +14097,7 @@
           "libnostr_relay_write_unsent",
           "libnostr_store_txn_audit",
           "libnostr_subscription_dispatch",
+          "libnostr_subscription_enqueue",
           "test_relay_teardown_leaks"
         ],
         "groundhog.mdk011": [
@@ -13993,6 +14114,7 @@
           "libnostr_relay_write_unsent",
           "libnostr_store_txn_audit",
           "libnostr_subscription_dispatch",
+          "libnostr_subscription_enqueue",
           "test_relay_teardown_leaks"
         ]
       },
@@ -14010,7 +14132,8 @@
         "test_relay_teardown_leaks",
         "test_relay_write_unsent",
         "test_store_txn_audit",
-        "test_subscription_dispatch"
+        "test_subscription_dispatch",
+        "test_subscription_enqueue"
       ],
       "runtime_inputs": []
     },
@@ -22332,7 +22455,7 @@
     },
     {
       "id": "root_asan_execution_contract",
-      "reason": "Exact Linux/macOS configure and primary memberships are authored; hosted 8a configure audits exposed missing linked-source/test-input edges now repaired per-check from retained evidence. The three legacy exclusions remain not_executed, generic exclusion admission and separate audit/fuzz phases are pending. Fresh exact-source postbuild headers/runtime audits and execution remain required, without new latency exclusions or threshold changes.",
+      "reason": "Exact Linux/macOS configure and primary memberships are authored; hosted 8a configure audits exposed missing linked-source/test-input edges now repaired per-check from retained evidence. The primary ASan commands have no legacy exclusions. Generic exclusion admission and separate audit/fuzz phases are pending. Fresh exact-source postbuild headers/runtime audits and execution remain required, without new latency exclusions or threshold changes.",
       "tracking": "nostrc-0cfsg.9"
     },
     {
@@ -30831,11 +30954,9 @@
           "--test-dir",
           "{build}",
           "--output-on-failure",
-          "-j2",
-          "-E",
-          "test_json_envelope|concurrency_subscription_shutdown_asan|MockRelayUnit"
+          "-j2"
         ],
-        "ctest_exclude": "test_json_envelope|concurrency_subscription_shutdown_asan|MockRelayUnit",
+        "ctest_exclude": "",
         "fuzz_commands": [
           [
             "{build}/tests/fuzz_event_deserialize",
@@ -30968,11 +31089,9 @@
           "--test-dir",
           "{build}",
           "--output-on-failure",
-          "-j2",
-          "-E",
-          "test_json_envelope|concurrency_subscription_shutdown_asan|MockRelayUnit"
+          "-j2"
         ],
-        "ctest_exclude": "test_json_envelope|concurrency_subscription_shutdown_asan|MockRelayUnit",
+        "ctest_exclude": "",
         "fuzz_commands": [],
         "fuzz_environment": {},
         "prerequisite_environment": "Literal effective defaults from the existing workflow; nonempty inherited Homebrew flag/path suffixes remain an execution/setup gap, not normalized away."
@@ -32720,7 +32839,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "0caa9deb5e88c90839e5fcbcbb8444c9f129cf29f8b3139aed8e847d906969ce",
       "unsupported_reason": "Ordinary and live MDK011 registrations are separate diagnostic profiles. Ordinary selection does not claim live Docker lifecycle coverage; the dedicated live lane preserves docker/display/private_bus and visibly refuses without guarded custody. Full legacy job union, runtime/header audits and original image custody remain unaccepted.",
-      "workflow_sha256": "b0013682a5070e19fbc7ac925c7427a5f26d8092f9532f4e00e6d9073702e51c"
+      "workflow_sha256": "e773ca543319d87de6437587590f206c57cf58e46698220615bea5420ac11c49"
     },
     ".github/workflows/groundhog-ci.yml:groundhog-sanitizers": {
       "matrix_source": "",
@@ -32728,9 +32847,9 @@
         "groundhog.linux.sanitizers"
       ],
       "coverage_gap": "groundhog_sanitizer_execution_contract",
-      "source_sha256": "3fa9b415771582070c10a114dd9e0fbfefa6dbf0fe85cf6ad1765f360c35e956",
+      "source_sha256": "f4926c3378988c8a0269cf77bafdcd8162ca4db0e1c1eecac22593078c45cccd",
       "unsupported_reason": "Ordinary Groundhog suite/MDK011 application configuration is authored but full registration/runtime/header closure and Docker image custody remain unaccepted.",
-      "workflow_sha256": "b0013682a5070e19fbc7ac925c7427a5f26d8092f9532f4e00e6d9073702e51c"
+      "workflow_sha256": "e773ca543319d87de6437587590f206c57cf58e46698220615bea5420ac11c49"
     },
     ".github/workflows/groundhog-release.yml:identity": {
       "matrix_source": "",
@@ -32902,9 +33021,9 @@
         "core.macos.asan"
       ],
       "coverage_gap": "root_asan_execution_contract",
-      "source_sha256": "2e2cd3f6c38b54838e8859877171753bce1c3c9b6366015841fa812d8054be61",
+      "source_sha256": "573d787306b1960dff9ae6ec584e1d49ff87f0bb8047420341324814a8d166d4",
       "unsupported_reason": "Root Linux/macOS ASan profiles exist; three original exclusions, separate audit/fuzz invocations, ambient setup suffixes and complete postbuild/runtime union remain gaps.",
-      "workflow_sha256": "c805d65bec3e4639eef1685778edd260361dada72c1affdc916043b3832e13a8"
+      "workflow_sha256": "1aa10a57fe0f517998c5d7722585910980fc340bbe93af212f353e1c688ab4e2"
     },
     ".github/workflows/release-validation.yml:identity": {
       "matrix_source": "",
@@ -33046,9 +33165,9 @@
       "matrix_source": "matrix:\n        passkeys: [ 'OFF', 'ON' ]\n        sqlcipher: [ 'OFF', 'ON' ]\n        build_type: [ 'Debug' ]\n        include:\n          # Exercise binding-race and forced-secret regressions in one test\n          # build; the Release configuration below keeps hooks disabled.\n          - passkeys: 'ON'\n            sqlcipher: 'OFF'\n            build_type: 'Debug'\n            test_hooks: 'ON'\n          # fp-52iq: assurance comes from running tests the way the project is\n          # shipped. Release optimizes signet_core and defines NDEBUG, so cover\n          # the shipped configuration too instead of testing Debug only.\n          - passkeys: 'ON'\n            sqlcipher: 'ON'\n            build_type: 'Release'",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "e2515017b9400efb668f38e35fc1c9dd28d705690c4c14aa3db70c1f09a66ab2",
+      "source_sha256": "af1d4f637739f6d2760a30d80d03c22cefb66b28ed0606ed1cbd74f576e78aee",
       "unsupported_reason": "Five passkeys/sqlcipher/hooks/build-type Meson variants and daemon/control smoke lack distinct exact profile/membership/runtime contracts.",
-      "workflow_sha256": "67d4aabd8fd30f11785c99c857374503910486eaafad5e13d390470dfb2eea89"
+      "workflow_sha256": "c9a604dcaca0b881479d0f4c5937116296d51ff1599b2a19ebb0ee8355700209"
     },
     ".github/workflows/static-checks.yml:static-checks": {
       "matrix_source": "",
@@ -33312,7 +33431,7 @@
       "unsupported_reason": "The selected sanitizer runner executes affected checks; it is not unrestricted legacy sanitizer union or native attested profile acceptance.",
       "matrix_source": "",
       "source_sha256": "a63f12a9b4123906e2c1e458af3b84b23d3c1c8c5ea2ca003670f20e3fb5bbcc",
-      "workflow_sha256": "b0013682a5070e19fbc7ac925c7427a5f26d8092f9532f4e00e6d9073702e51c"
+      "workflow_sha256": "e773ca543319d87de6437587590f206c57cf58e46698220615bea5420ac11c49"
     },
     ".github/workflows/groundhog-release.yml:manual-broad": {
       "profiles": [],

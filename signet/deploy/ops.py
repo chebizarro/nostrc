@@ -19,6 +19,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 import urllib.request
 
@@ -281,8 +282,10 @@ def backup(p, m, upload=True):
         for dest, src in files.items():
             require(src.is_file() and not src.is_symlink(), f'missing/unsafe backup input: {src}')
             out.add(src, arcname=dest, recursive=False)
-    sums = {f.name: hashlib.file_digest(f.open('rb'), 'sha256').hexdigest()
-            for f in (target / 'store.db', target / 'config.tar.gz')}
+    sums = {}
+    for f in (target / 'store.db', target / 'config.tar.gz'):
+        with f.open('rb') as source:
+            sums[f.name] = hashlib.file_digest(source, 'sha256').hexdigest()
     atomic_json(target / 'checksums.json', sums)
     reference = str(target)
     if upload:
@@ -291,10 +294,25 @@ def backup(p, m, upload=True):
         require(re.fullmatch(r'[a-z0-9][a-z0-9.-]+', s['SPACES_BUCKET']), 'invalid Spaces bucket')
         owned(HOME / 'secrets/spaces.credentials', 0, 0o400)
         reference = f"s3://{s['SPACES_BUCKET']}/{s.get('SPACES_PREFIX', 'signet')}/{name}/"
-        for f in ('store.db', 'config.tar.gz', 'checksums.json'):
-            run(['env', 'AWS_SHARED_CREDENTIALS_FILE=/opt/signet/secrets/spaces.credentials',
-                 'AWS_EC2_METADATA_DISABLED=true', 'aws', '--endpoint-url', s['SPACES_ENDPOINT'],
-                 's3', 'cp', target / f, reference + f, '--only-show-errors'])
+        aws = ['env', 'AWS_SHARED_CREDENTIALS_FILE=/opt/signet/secrets/spaces.credentials',
+               'AWS_EC2_METADATA_DISABLED=true', 'aws', '--endpoint-url', s['SPACES_ENDPOINT'],
+               's3', 'cp']
+        # ETags are not reliably content hashes (multipart uploads/encryption).
+        # Verify the bytes retrieved through the real object-store read path,
+        # including the checksum manifest, before publishing a success receipt.
+        with tempfile.TemporaryDirectory(prefix='.readback-', dir=target) as readback:
+            for f in ('store.db', 'config.tar.gz', 'checksums.json'):
+                local = target / f
+                size = local.stat().st_size
+                with local.open('rb') as source:
+                    digest = hashlib.file_digest(source, 'sha256').hexdigest()
+                run([*aws, local, reference + f, '--only-show-errors'])
+                retrieved = Path(readback) / f
+                run([*aws, reference + f, retrieved, '--only-show-errors'])
+                require(retrieved.stat().st_size == size, f'Spaces read-back size mismatch: {f}')
+                with retrieved.open('rb') as source:
+                    require(hashlib.file_digest(source, 'sha256').hexdigest() == digest,
+                            f'Spaces read-back checksum mismatch: {f}')
     m['last_successful_backup'] = {'reference': reference, 'local_path': str(target), 'checksums': sums, 'off_host': upload}
     atomic_json(p / 'manifest.json', m)
     return str(target)

@@ -7,6 +7,7 @@
 #include "gn-group-message-model.h"
 #include <marmot-gobject-1.0/marmot-gobject.h>
 #include <json-glib/json-glib.h>
+#include <nostr-kinds.h>
 
 #define MESSAGES_PAGE_SIZE 50
 
@@ -94,9 +95,14 @@ on_message_received(GnMarmotService *service,
 
   JsonObject *obj = json_node_get_object(root);
 
+  JsonNode *kind_node = json_object_get_member(obj, "kind");
+  if (!kind_node || !JSON_NODE_HOLDS_VALUE(kind_node) ||
+      json_node_get_value_type(kind_node) != G_TYPE_INT64 ||
+      json_node_get_int(kind_node) != NOSTR_KIND_SIMPLE_GROUP_CHAT_MESSAGE)
+    return;
+  gint64 kind = json_node_get_int(kind_node);
   const gchar *pubkey  = json_object_get_string_member_with_default(obj, "pubkey", NULL);
   const gchar *content = json_object_get_string_member_with_default(obj, "content", NULL);
-  gint64 kind          = json_object_get_int_member_with_default(obj, "kind", 9);
   gint64 created_at    = json_object_get_int_member_with_default(obj, "created_at", 0);
   const gchar *event_id = json_object_get_string_member_with_default(obj, "id", NULL);
 
@@ -194,8 +200,11 @@ gn_group_message_model_new(GnMarmotService *service,
       if (initial != NULL)
         {
           for (guint i = 0; i < initial->len; i++)
-            g_ptr_array_add(self->messages,
-                            g_object_ref(g_ptr_array_index(initial, i)));
+            {
+              MarmotGobjectMessage *msg = g_ptr_array_index(initial, i);
+              if (marmot_gobject_message_get_kind(msg) == NOSTR_KIND_SIMPLE_GROUP_CHAT_MESSAGE)
+                g_ptr_array_add(self->messages, g_object_ref(msg));
+            }
 
           self->offset  = initial->len;
           self->has_more = (initial->len >= MESSAGES_PAGE_SIZE);
@@ -236,15 +245,19 @@ gn_group_message_model_load_more(GnGroupMessageModel *self)
     }
 
   /* Prepend older messages at position 0 */
-  guint insert_count = page->len;
+  guint insert_count = 0;
   for (guint i = 0; i < page->len; i++)
-    g_ptr_array_insert(self->messages, i,
-                       g_object_ref(g_ptr_array_index(page, i)));
+    {
+      MarmotGobjectMessage *msg = g_ptr_array_index(page, i);
+      if (marmot_gobject_message_get_kind(msg) == NOSTR_KIND_SIMPLE_GROUP_CHAT_MESSAGE)
+        g_ptr_array_insert(self->messages, insert_count++, g_object_ref(msg));
+    }
 
   self->offset  += page->len;
   self->has_more = (page->len >= MESSAGES_PAGE_SIZE);
 
-  g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, insert_count);
+  if (insert_count > 0)
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, 0, insert_count);
 }
 
 const gchar *

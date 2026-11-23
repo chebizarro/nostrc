@@ -94,6 +94,7 @@ struct _WireRelay {
   guint served;              /* EVENT frames sent to subscriptions */
   GhTestHeldPort *held;      /* relay_init_held(): the port it serves on */
   GHashTable *withheld;      /* ids kept but served to nobody until released */
+  gboolean same_second_insertion_order; /* adversarial equal-second backfill order */
   gboolean withhold_new;     /* every event kept from now on is withheld */
   guint max_limit;           /* serve: a REQ's stored answer per filter, at most; 0: none */
   gint late_kind;            /* serve: a REQ asking for this kind (0: none) is answered */
@@ -348,12 +349,19 @@ wire_send_event(SoupWebsocketConnection *connection, const gchar *sub_id, WireSt
 
 /* Newest first (created_at, then id), as NIP-01 asks of a REQ's answer. */
 static G_GNUC_UNUSED gint
-wire_newest_first(gconstpointer a, gconstpointer b)
+wire_newest_first(gconstpointer a, gconstpointer b, gpointer data)
 {
   WireStored *x = *(WireStored *const *)a, *y = *(WireStored *const *)b;
   gint64 tx = nostr_event_get_created_at(x->event), ty = nostr_event_get_created_at(y->event);
   if (tx != ty)
     return tx > ty ? -1 : 1;
+  WireRelay *relay = data;
+  if (relay->same_second_insertion_order) {
+    guint ix, iy;
+    g_assert_true(g_ptr_array_find(relay->stored, x, &ix));
+    g_assert_true(g_ptr_array_find(relay->stored, y, &iy));
+    return ix < iy ? -1 : ix > iy;
+  }
   return g_strcmp0(x->id, y->id);
 }
 
@@ -365,7 +373,7 @@ wire_answer_req(WireRelay *relay, SoupWebsocketConnection *connection, const gch
   g_autoptr(GPtrArray) order = g_ptr_array_sized_new(relay->stored->len);
   for (guint i = 0; i < relay->stored->len; i++)
     g_ptr_array_add(order, g_ptr_array_index(relay->stored, i));
-  g_ptr_array_sort(order, wire_newest_first);
+  g_ptr_array_sort_with_data(order, wire_newest_first, relay);
   g_autofree guint *sent = g_new0(guint, filters->count + 1);
   for (guint e = 0; e < order->len; e++) {
     WireStored *stored = g_ptr_array_index(order, e);

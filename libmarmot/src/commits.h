@@ -339,7 +339,11 @@ MARMOT_TEST_API MarmotError marmot_commit_merge_pending(Marmot *m, MarmotGroup *
  * when there is nothing pending; an already applied Commit is kept (its
  * Welcomes go to the outbox).
  */
-MARMOT_TEST_API MarmotError marmot_commit_clear_pending(Marmot *m, MarmotGroup *group);
+/* `out_results` (optional, with `out_count`): the result of each deferred
+ * Commit applied, in the order applied (nostrc-8gbp). */
+MARMOT_TEST_API MarmotError marmot_commit_clear_pending(Marmot *m, MarmotGroup *group,
+                                                        MarmotMessageResult **out_results,
+                                                        size_t *out_count);
 
 /** The unsent-Welcome outbox (Welcomes of merged Adds; append-only,
  *  entries removed by id once sent). */

@@ -39,7 +39,9 @@ G_BEGIN_DECLS
  *  - any other signer failure (outage, approval timeout, no approval agent)
  *    is not remembered, but also fails the requests waiting behind it rather
  *    than asking again at once; a cancelled request lets the next one ask.
- * "relay-changed" (url) is emitted whenever a relay's state changes.
+ * "relay-changed" (url) is emitted when a relay's state changes or a caller
+ * joins its approval queue. created_at is refreshed when each queued request
+ * reaches the signer; relay freshness verification remains unchanged.
  * Main context only.
  */
 
@@ -63,6 +65,11 @@ GhAccountAuthRelayState gh_account_auth_get_relay_state(GhAccountAuth *self,
 /* Nothing is signed any more: the signer is revoked, requests in flight are
  * cancelled and waiting ones fail. Idempotent; also run by dispose. */
 void gh_account_auth_revoke(GhAccountAuth *self);
+
+#ifdef GH_ACCOUNT_AUTH_TEST_HOOKS
+/* Model a long queue without waiting: age only the next queued template. */
+void gh_account_auth_test_age_next_queued(guint seconds);
+#endif
 
 G_END_DECLS
 #endif

@@ -348,6 +348,87 @@ static int build_ndb_filters(const NostrFilter *filters, size_t nfilters,
   *out_filters = arr;
   return 0;
 }
+static void id_to_hex(const unsigned char *id, char hex[65]) {
+  static const char digits[] = "0123456789abcdef";
+  for (int i = 0; i < 32; i++) {
+    hex[2*i] = digits[id[i] >> 4]; hex[2*i+1] = digits[id[i] & 15];
+  }
+  hex[64] = 0;
+}
+
+static const char *note_d(struct ndb_note *note, char packed[65]) {
+  struct ndb_iterator tags;
+  ndb_tags_iterate_start(note, &tags);
+  while (ndb_tags_iterate_next(&tags)) {
+    if (ndb_tag_count(tags.tag) < 2) continue;
+    struct ndb_str key = ndb_iter_tag_str(&tags, 0);
+    if (key.flag == NDB_PACKED_ID || strcmp(key.str, "d") != 0) continue;
+    struct ndb_str value = ndb_iter_tag_str(&tags, 1);
+    if (value.flag == NDB_PACKED_ID) { id_to_hex(value.id, packed); return packed; }
+    return value.str;
+  }
+  return ""; /* NIP-01: an absent d tag is the empty identifier */
+}
+
+/* The predicate runs before the result limit, so a one-slot query proves
+ * existence rather than truncating a list of possible coordinate matches. */
+static bool note_supersedes(void *ctx, struct ndb_note *other) {
+  struct ndb_note *note = ctx;
+  uint32_t kind = ndb_note_kind(note);
+  if (kind >= 30000 && kind < 40000) {
+    char packed[65], other_packed[65];
+    if (strcmp(note_d(note, packed), note_d(other, other_packed)) != 0) return false;
+  }
+  uint64_t time = ndb_note_created_at(note), other_time = ndb_note_created_at(other);
+  return other_time > time ||
+    (other_time == time && memcmp(ndb_note_id(other), ndb_note_id(note), 32) < 0);
+}
+
+/* Resolve replacements inside the iterator's existing read transaction; LMDB
+ * does not support a nested ndb_begin_query on the same thread. */
+static int note_is_current(struct ndb_txn *txn, struct ndb_note *note) {
+  uint32_t kind = ndb_note_kind(note);
+  bool addressable = kind >= 30000 && kind < 40000;
+  if (!(kind == 0 || kind == 3 || (kind >= 10000 && kind < 20000) || addressable)) return 1;
+  struct ndb_filter filter;
+  if (!ndb_filter_init(&filter)) return -ENOMEM;
+  int ok = ndb_filter_start_field(&filter, NDB_FILTER_AUTHORS) &&
+           ndb_filter_add_id_element(&filter, ndb_note_pubkey(note));
+  if (ok) ndb_filter_end_field(&filter);
+  ok = ok && ndb_filter_start_field(&filter, NDB_FILTER_KINDS) &&
+       ndb_filter_add_int_element(&filter, kind);
+  if (ok) ndb_filter_end_field(&filter);
+  ok = ok && ndb_filter_start_field(&filter, NDB_FILTER_SINCE) &&
+       ndb_filter_add_int_element(&filter, ndb_note_created_at(note));
+  if (ok) ndb_filter_end_field(&filter);
+  char packed[65];
+  const char *d = addressable ? note_d(note, packed) : NULL;
+  if (d && *d) {
+    ok = ok && ndb_filter_start_tag_field(&filter, 'd') &&
+         ndb_filter_add_str_element(&filter, d);
+    if (ok) ndb_filter_end_field(&filter);
+  }
+  /* A #d:[""] index lookup cannot find notes with no physical d tag.
+   * The predicate normalizes missing/empty d to the same coordinate and
+   * excludes every nonempty identifier, including on an author-wide scan. */
+  ok = ok && ndb_filter_start_field(&filter, NDB_FILTER_CUSTOM) &&
+       ndb_filter_add_custom_filter_element(&filter, note_supersedes, note);
+  if (ok) ndb_filter_end_field(&filter);
+  ok = ok && ndb_filter_start_field(&filter, NDB_FILTER_LIMIT) &&
+       ndb_filter_add_int_element(&filter, 1);
+  if (ok) ndb_filter_end_field(&filter);
+  ok = ok && ndb_filter_end(&filter);
+  struct ndb_query_result newer;
+  int count = 0;
+  int queried = ok ? ndb_query(txn, &filter, 1, &newer, 1, &count) : 0;
+  ndb_filter_destroy(&filter);
+  if (!ok) return -ENOMEM;
+  if (!queried) return -EIO;
+  /* A full result slot is the answer: skip the superseded note, never fail
+   * the enclosing REQ/COUNT because more replacements might exist. */
+  return count == 0;
+}
+
 static void* ndb_query_storage(NostrStorage *st, const NostrFilter *filters, size_t nfilters,
                        size_t limit, uint64_t since, uint64_t until, int *err) {
   (void)since; (void)until;
@@ -389,8 +470,15 @@ static int ndb_query_next(NostrStorage *st, void *itp, NostrEvent *out, size_t *
   (void)st;
   if (!itp || !out || !n || *n == 0) return -EINVAL;
   NDBIter *it = (NDBIter*)itp;
-  if (it->index >= it->count) { *n = 0; return 0; }
-  struct ndb_query_result *qr = &it->results[it->index++];
+  struct ndb_query_result *qr = NULL;
+  while (it->index < it->count) {
+    qr = &it->results[it->index++];
+    int current = note_is_current(&it->txn, qr->note);
+    if (current < 0) { *n = 0; return current; }
+    if (current) break;
+    qr = NULL;
+  }
+  if (!qr) { *n = 0; return 0; }
   /* Convert ndb_note to JSON then to NostrEvent. Escaping can make the JSON
    * larger than the stored note; grow until it fits (bounded). */
   size_t buflen = (size_t)(qr->note_size ? qr->note_size * 2 : 2048);
@@ -431,6 +519,13 @@ static int ndb_count(NostrStorage *st, const NostrFilter *filters, size_t nfilte
   struct ndb_query_result *res = (struct ndb_query_result*)calloc(NDB_COUNT_CAP, sizeof(*res));
   int count = 0;
   rc = res ? ndb_query(&txn, arr, (int)nfilters, res, NDB_COUNT_CAP, &count) : 0;
+  int visible = 0;
+  if (rc) for (int i = 0; i < count; i++) {
+    int current = note_is_current(&txn, res[i].note);
+    if (current < 0) { rc = 0; break; }
+    visible += current;
+  }
+  count = visible;
   free(res);
   for (size_t i = 0; i < nfilters; i++) ndb_filter_destroy(&arr[i]);
   free(arr);

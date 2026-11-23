@@ -505,10 +505,16 @@ typedef enum {
     MPMC_BUSY = 1,   /* the slot is claimed by a peer that has not finished */
 } MpmcResult;
 
+/* Compile-time test barrier after the occupancy snapshot, before the CAS. */
+#ifndef NOSTR_MPMC_SNAPSHOT_HOOK
+#define NOSTR_MPMC_SNAPSHOT_HOOK(chan, sending) ((void)0)
+#endif
+
 static inline MpmcResult mpmc_push(GoChannel *chan, void *data, size_t *occ_before) {
     for (;;) {
         size_t head = atomic_load_explicit(&chan->in, memory_order_acquire);
         size_t tail = atomic_load_explicit(&chan->out, memory_order_acquire);
+        NOSTR_MPMC_SNAPSHOT_HOOK(chan, true);
         if ((intptr_t)(head - tail) >= (intptr_t)chan->capacity)
             return MPMC_NONE;
         size_t idx = head & chan->mask;
@@ -538,6 +544,7 @@ static inline MpmcResult mpmc_pop(GoChannel *chan, void **data, size_t *occ_befo
     for (;;) {
         size_t tail = atomic_load_explicit(&chan->out, memory_order_acquire);
         size_t head = atomic_load_explicit(&chan->in, memory_order_acquire);
+        NOSTR_MPMC_SNAPSHOT_HOOK(chan, false);
         size_t idx = tail & chan->mask;
         size_t seq = atomic_load_explicit(&chan->slot_seq[idx], memory_order_acquire);
         intptr_t diff = (intptr_t)(seq - (tail + 1));
@@ -666,7 +673,7 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
 #if NOSTR_REFINED_SIGNALING
         CV_SIGNAL_EMPTY(chan);
 #else
-        if (was_empty) {
+        if (NOSTR_CHANNEL_MPMC_SLOTS || was_empty) {
             CV_BROADCAST_EMPTY(chan);
         }
 #endif
@@ -750,7 +757,7 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
 #if NOSTR_REFINED_SIGNALING
         CV_SIGNAL_EMPTY(chan);
 #else
-        if (was_empty) {
+        if (NOSTR_CHANNEL_MPMC_SLOTS || was_empty) {
             CV_BROADCAST_EMPTY(chan);
         }
 #endif
@@ -835,7 +842,7 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
 #if NOSTR_REFINED_SIGNALING
         CV_SIGNAL_FULL(chan);
 #else
-        if (was_full) {
+        if (NOSTR_CHANNEL_MPMC_SLOTS || was_full) {
             CV_BROADCAST_FULL(chan);
         }
 #endif
@@ -927,7 +934,7 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
 #if NOSTR_REFINED_SIGNALING
         CV_SIGNAL_FULL(chan);
 #else
-        if (was_full) {
+        if (NOSTR_CHANNEL_MPMC_SLOTS || was_full) {
             CV_BROADCAST_FULL(chan);
         }
 #endif
@@ -1346,7 +1353,7 @@ send_again: /* BUSY/NONE retry (mpmc_push/mpmc_pop below) */
 #if NOSTR_REFINED_SIGNALING
     CV_SIGNAL_EMPTY(chan);
 #else
-    if (was_empty) {
+    if (NOSTR_CHANNEL_MPMC_SLOTS || was_empty) {
         CV_BROADCAST_EMPTY(chan);
     }
 #endif
@@ -1565,7 +1572,7 @@ recv_again: /* BUSY/NONE retry (mpmc_push/mpmc_pop below) */
     CV_SIGNAL_FULL(chan);
 #else
     // Broadcast only needed when transitioning from full
-    if (was_full) {
+    if (NOSTR_CHANNEL_MPMC_SLOTS || was_full) {
         CV_BROADCAST_FULL(chan);
     }
 #endif
@@ -1746,7 +1753,7 @@ send_ctx_again: /* BUSY/NONE retry (mpmc_push/mpmc_pop below) */
 #if NOSTR_REFINED_SIGNALING
     CV_SIGNAL_EMPTY(chan);
 #else
-    if (was_empty2) {
+    if (NOSTR_CHANNEL_MPMC_SLOTS || was_empty2) {
         CV_BROADCAST_EMPTY(chan);
     }
 #endif
@@ -1963,7 +1970,7 @@ recv_ctx_again: /* BUSY/NONE retry (mpmc_push/mpmc_pop below) */
     CV_SIGNAL_FULL(chan);
 #else
     // Broadcast only needed when transitioning from full
-    if (was_full2) {
+    if (NOSTR_CHANNEL_MPMC_SLOTS || was_full2) {
         CV_BROADCAST_FULL(chan);
     }
 #endif

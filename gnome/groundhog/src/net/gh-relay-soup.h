@@ -27,7 +27,7 @@ G_BEGIN_DECLS
  *
  * Scope handles keep one live REQ (fresh subscription id per REQ) and
  * reconnect after a lost connection with a jittered backoff (1 s doubling to
- * 30 s, times U(0.5, 1.5), reset only by a matching EOSE; charter S5); a failed dial is reported as
+ * 30 s, times U(0.5, 1.5), reset by a matching EVENT or EOSE; charter S5); a failed dial is reported as
  * GH_RELAY_NOTICE_ERROR, a lost connection as GH_RELAY_NOTICE_DISCONNECTED.
  * Publish handles make one attempt: the EVENT is sent once the WebSocket is
  * open, and a failed dial or a connection lost before the relay's OK is
@@ -44,8 +44,10 @@ typedef void (*GhRelaySoupStatusFunc)(gpointer data, gboolean connected);
 gpointer gh_relay_soup_scope_open(GhRelayScope *scope, const gchar *url,
                                   const NostrFilters *filters, GProxyResolver *resolver,
                                   GhRelaySoupStatusFunc status, gpointer status_data,
-                                  GError **error);
+                                  gboolean public_only, GError **error);
 void gh_relay_soup_scope_close(gpointer handle);
+/* Current base of the reconnect ladder (seconds), for diagnostics. Owner context only. */
+guint gh_relay_soup_scope_get_retry_seconds(gpointer handle);
 gboolean gh_relay_soup_scope_send_auth(gpointer handle, const gchar *signed_event_json,
                                        GError **error);
 void gh_relay_soup_scope_resubscribe(gpointer handle);
@@ -56,7 +58,7 @@ gboolean gh_relay_soup_scope_send_event(gpointer handle, const gchar *signed_eve
 gpointer gh_relay_soup_publish_open(GhRelayPublish *publish, const gchar *url,
                                     const gchar *event_json, GProxyResolver *resolver,
                                     GhRelaySoupStatusFunc status, gpointer status_data,
-                                    GError **error);
+                                    gboolean public_only, GError **error);
 void gh_relay_soup_publish_close(gpointer handle);
 gboolean gh_relay_soup_publish_send_auth(gpointer handle, const gchar *signed_event_json,
                                          GError **error);

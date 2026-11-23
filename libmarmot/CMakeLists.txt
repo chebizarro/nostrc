@@ -102,6 +102,7 @@ set(MARMOT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/commits.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/convergence.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/proposals.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/send_guard.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/members.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/groups.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/welcome.c
@@ -418,6 +419,7 @@ if(BUILD_TESTING)
   target_include_directories(test_storage_contract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   add_test(NAME marmot_test_storage_contract COMMAND test_storage_contract)
   if(TARGET nostrdb AND LMDB_FOUND)
+    target_compile_definitions(test_storage_contract PRIVATE MARMOT_TEST_HAVE_NOSTRDB=1)
     add_test(NAME marmot_test_nostrdb_epochs COMMAND test_storage_contract --nostrdb-epochs)
   endif()
 

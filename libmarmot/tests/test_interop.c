@@ -1406,6 +1406,47 @@ test_group_data_extension_version_1(void)
     free(v);
 }
 
+/* nostrc-x215: a group record says which MIP-01 version its image_key
+ * belongs to (v1: the image key itself; v2: a seed), and a Commit's
+ * GroupData refreshes the image fields with it. */
+static void
+test_group_record_carries_group_data_version(void)
+{
+    size_t len = 0;
+    uint8_t *v = hex_dup(MDK_GDE_ONE_ADMIN_EMPTY, &len);
+    v[1] = 1;
+    uint8_t *img = malloc(len - 4 + 3 + 32 + 32 + 12);
+    assert(img);
+    memcpy(img, v, len - 4);
+    size_t n = len - 4;
+    img[n++] = 32; memset(img + n, 0x11, 32); n += 32;
+    img[n++] = 32; memset(img + n, 0x22, 32); n += 32;
+    img[n++] = 12; memset(img + n, 0x33, 12); n += 12;
+    MarmotGroupDataExtension *v1 = marmot_group_data_extension_deserialize(img, n);
+    assert(v1 && v1->version == 1 && v1->image_key);
+
+    MarmotGroup *g = marmot_group_new();
+    assert(g);
+    assert(marmot_group_apply_group_data(g, v1) == MARMOT_OK);
+    assert(g->group_data_version == 1);
+    assert(g->image_key && memcmp(g->image_key, v1->image_key, 32) == 0);
+    assert(g->image_hash && g->image_nonce);
+
+    /* A later epoch's version 2 GroupData without an image. */
+    v[1] = 2;
+    MarmotGroupDataExtension *v2 = marmot_group_data_extension_deserialize(v, len);
+    assert(v2 && v2->version == 2 && !v2->image_key);
+    assert(marmot_group_apply_group_data(g, v2) == MARMOT_OK);
+    assert(g->group_data_version == 2);
+    assert(!g->image_key && !g->image_hash && !g->image_nonce);
+
+    marmot_group_free(g);
+    marmot_group_data_extension_free(v1);
+    marmot_group_data_extension_free(v2);
+    free(img);
+    free(v);
+}
+
 /* ── 3c. kind:445 content as MDK 0.8 encrypts it (MIP-03, nostrc-7gx7) ──
  *
  * An MDK v0.8.0 kind:445 content and its epoch's MLS-Exporter("marmot",
@@ -3316,6 +3357,7 @@ int main(void)
     TEST(test_group_data_extension_libmarmot_0_10_layout);
     TEST(test_group_data_extension_later_version);
     TEST(test_group_data_extension_version_1);
+    TEST(test_group_record_carries_group_data_version);
     TEST(test_group_event_mdk_vector);
 
     printf("\n─ Key Derivation Consistency ─\n");

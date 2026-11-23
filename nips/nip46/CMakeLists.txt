@@ -45,6 +45,12 @@ if (NOSTR_WITH_GLIB AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/nip46_client
   target_link_libraries(nostr_nip46_glib PUBLIC nostr_nip46_core ${GIO_LIBRARIES})
 endif()
 
+# Deallocation-boundary checks compile the production message implementation
+# with allocator observers, so no freed-memory reads or public hooks are needed.
+add_executable(test_nip46_msg_wipe tests/test_msg_wipe.c)
+target_link_libraries(test_nip46_msg_wipe PRIVATE nostr_nip46_core)
+add_test(NAME test_nip46_msg_wipe COMMAND test_nip46_msg_wipe)
+
 # Caller ownership and GLib lifetime regressions.
 add_executable(test_nip46_pending_lifetime tests/test_pending_lifetime.c)
 target_link_libraries(test_nip46_pending_lifetime PRIVATE nostr_nip46_core)

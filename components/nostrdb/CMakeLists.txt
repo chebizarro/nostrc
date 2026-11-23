@@ -76,3 +76,23 @@ endif()
 
 target_include_directories(nostrdb_storage PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(nostrdb_storage PRIVATE ${CMAKE_SOURCE_DIR}/apps/relayd/include)
+
+if(BUILD_TESTING AND NOT ALLOW_STUB_NOSTRDB)
+  enable_testing()
+  add_executable(test_nostrdb_supersession tests/test_supersession.c)
+  target_link_libraries(test_nostrdb_supersession PRIVATE nostrdb_storage nostr_json)
+  foreach(_case crowded increasing missing-d)
+    add_test(NAME nostrdb_supersession_${_case}
+      COMMAND ${CMAKE_COMMAND}
+        -DTEST_PROGRAM=$<TARGET_FILE:test_nostrdb_supersession>
+        -DTEST_CASE=${_case}
+        -DTEST_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/supersession-${_case}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_supersession.cmake)
+    set_tests_properties(nostrdb_supersession_${_case} PROPERTIES TIMEOUT 60)
+    if(COMMAND nostrc_describe_test)
+      nostrc_describe_test(nostrdb_supersession_${_case}
+        OWNER nostrdb TARGETS test_nostrdb_supersession
+        INPUTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_supersession.cmake)
+    endif()
+  endforeach()
+endif()

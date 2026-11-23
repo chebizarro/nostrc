@@ -523,7 +523,7 @@ jobs:
           # groundhog itself: groundhog-background and groundhog-store-sqlite run it.
           targets=(groundhog)
           for test in $GROUNDHOG_SANITIZER_TESTS; do
-            case "$test" in groundhog-launch) targets+=(groundhog) ;; groundhog-*-gui) targets+=("test-${test%-gui}") ;; groundhog-*) targets+=("test-$test") ;; *) targets+=("$test") ;; esac
+            case "$test" in groundhog-launch) targets+=(groundhog) ;; groundhog-call-media-two-process) targets+=(test-groundhog-call-media) ;; groundhog-*-gui) targets+=("test-${test%-gui}") ;; groundhog-*) targets+=("test-$test") ;; *) targets+=("$test") ;; esac
           done
           cmake --build build-asan --parallel 2 --target "${targets[@]}"
 

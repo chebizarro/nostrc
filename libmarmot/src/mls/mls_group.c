@@ -219,6 +219,9 @@ group_derive_epoch(MlsGroup *group,
  *     common ancestor a Welcome hands to each joiner (RFC 9420 §12.4.3.1,
  *     nostrc-il4i)
  */
+/* leaf_node_validate(): nonzero is a failure; this one means only the
+ * LeafNodeTBS signature failed. */
+#define LEAF_SIGNATURE_ONLY (-2)
 static int leaf_node_validate(const MlsGroup *group, const MlsLeafNode *leaf,
                                uint8_t expected_source, uint32_t leaf_index,
                                const MlsLeafNode *replaced,
@@ -1628,8 +1631,8 @@ static bool leaf_occupied(const MlsGroup *group, uint32_t leaf);
 /* The limit receivers apply to Adds per Commit (process_commit_impl). */
 #define MLS_MAX_ADDS_PER_COMMIT 64
 
-static int key_package_supports_group(const MlsKeyPackage *kp, const uint8_t *exts,
-                                      size_t exts_len);
+static int key_package_supports_group(const MlsKeyPackage *kp, const MlsRatchetTree *tree,
+                                      const uint8_t *exts, size_t exts_len);
 
 #ifdef MARMOT_TEST_HOOKS
 bool mls_test_allow_unsupported_adds = false;
@@ -1704,7 +1707,7 @@ add_members_staged(MlsGroup *group,
          * -- this Commit's GroupContextExtensions when it has them. */
         rc = ALLOW_UNSUPPORTED_ADDS
                  ? 0
-                 : key_package_supports_group(kps[i],
+                 : key_package_supports_group(kps[i], &group->tree,
                                               gce_extensions ? gce_extensions
                                                              : group->extensions_data,
                                               gce_extensions ? gce_len : group->extensions_len);
@@ -3247,15 +3250,34 @@ group_extension_supported(uint16_t type, const uint8_t *data, size_t len,
     return 0;
 }
 
-/* nostrc-zbmb (RFC 9420 §12.1.1, §7.2): a KeyPackage's leaf supports every
- * extension of `exts` (a GroupContext's list) and whatever its
- * required_capabilities demand. */
+/* The group-dependent RFC 9420 §7.3 checks of an Add (§12.1.1), beyond
+ * mls_key_package_validate()'s self-consistency:
+ *   step 3 (nostrc-zbmb, §7.2): the leaf supports every extension of `exts`
+ *     (the GroupContext the joiner enters) and whatever its
+ *     required_capabilities demand;
+ *   step 4 (nostrc-wafb): every member of `tree` supports the joiner's
+ *     credential type, and the joiner supports every member's;
+ *   step 6 (nostrc-wafb): the leaf's own extensions are in its capabilities.
+ * MARMOT_ERR_KEY_PACKAGE_CAPABILITIES when one fails. */
 static int
-key_package_supports_group(const MlsKeyPackage *kp, const uint8_t *exts, size_t exts_len)
+key_package_supports_group(const MlsKeyPackage *kp, const MlsRatchetTree *tree,
+                           const uint8_t *exts, size_t exts_len)
 {
-    return extensions_foreach(exts, exts_len, group_extension_supported, &kp->leaf_node) == 0
-               ? 0
-               : MARMOT_ERR_KEY_PACKAGE_CAPABILITIES;
+    const MlsLeafNode *leaf = &kp->leaf_node;
+    if (extensions_foreach(exts, exts_len, group_extension_supported, leaf) != 0 ||
+        extensions_foreach(leaf->extensions_data, leaf->extensions_len,
+                           leaf_extension_supported, leaf) != 0)
+        return MARMOT_ERR_KEY_PACKAGE_CAPABILITIES;
+    for (uint32_t i = 0; tree && i < tree->n_leaves; i++) {
+        const MlsNode *n = &tree->nodes[mls_tree_leaf_to_node(i)];
+        if (n->type != MLS_NODE_LEAF) continue;
+        if (!u16_list_contains(n->leaf.cap_credentials, n->leaf.cap_credential_count,
+                               leaf->credential_type) ||
+            !u16_list_contains(leaf->cap_credentials, leaf->cap_credential_count,
+                               n->leaf.credential_type))
+            return MARMOT_ERR_KEY_PACKAGE_CAPABILITIES;
+    }
+    return 0;
 }
 
 static int
@@ -3369,10 +3391,11 @@ leaf_node_validate(const MlsGroup *group, const MlsLeafNode *leaf,
         return -1;
 
     /* Step 2: signature over LeafNodeTBS, which for the update and commit
-     * sources binds this group_id and leaf_index (§7.2). */
+     * sources binds this group_id and leaf_index (§7.2).  Checked last:
+     * LEAF_SIGNATURE_ONLY says every other check passed. */
     if (mls_leaf_node_verify_signature(leaf, group->group_id, group->group_id_len,
                                        leaf_index) != 0)
-        return -1;
+        return LEAF_SIGNATURE_ONLY;
     return 0;
 }
 
@@ -3430,6 +3453,33 @@ leaf_keys_unique(const MlsRatchetTree *tree, uint32_t leaf_index)
         }
     }
     return 0;
+}
+
+int
+mls_group_validate_imported_leaves(const MlsGroup *g)
+{
+    if (!g) return MARMOT_ERR_WELCOME_INVALID;
+    bool legacy = false;
+    for (uint32_t i = 0; i < g->tree.n_leaves; i++) {
+        const MlsNode *n = &g->tree.nodes[mls_tree_leaf_to_node(i)];
+        if (n->type != MLS_NODE_LEAF) continue;
+        if (leaf_keys_unique(&g->tree, i) != 0) return MARMOT_ERR_WELCOME_INVALID;
+        /* The leaf is its own predecessor: there is no earlier state of an
+         * imported member to be a successor of. */
+        int rc = leaf_node_validate(g, &n->leaf, n->leaf.leaf_node_source, i, &n->leaf,
+                                    g->extensions_data, g->extensions_len);
+        if (rc == 0) continue;
+        /* Review m3: a commit leaf valid in every other respect, signed as
+         * libmarmot <= 0.3.6 signed it, is a group needing an update, not a
+         * forgery -- if nothing else in the tree is wrong. */
+        if (rc == LEAF_SIGNATURE_ONLY &&
+            mls_leaf_node_verify_legacy_commit_signature(&n->leaf) == 0) {
+            legacy = true;
+            continue;
+        }
+        return MARMOT_ERR_WELCOME_INVALID;
+    }
+    return legacy ? MARMOT_ERR_WELCOME_LEGACY_TREE : 0;
 }
 
 /**
@@ -3676,11 +3726,11 @@ mls_group_handshake_sender(const MlsGroup *group, const uint8_t *msg, size_t msg
 }
 
 int
-mls_private_message_sender_leaf(const uint8_t sender_data_secret[32], const uint8_t *group_id,
+mls_private_message_sender_generation(const uint8_t sender_data_secret[32], const uint8_t *group_id,
                                 size_t group_id_len, uint64_t epoch, const uint8_t *msg,
-                                size_t msg_len, uint32_t *out_leaf)
+                                size_t msg_len, uint32_t *out_leaf, uint32_t *out_generation)
 {
-    if (!sender_data_secret || !group_id || !msg || !out_leaf) return MARMOT_ERR_INVALID_ARG;
+    if (!sender_data_secret || !group_id || !msg || !out_leaf || !out_generation) return MARMOT_ERR_INVALID_ARG;
     MlsMLSMessage wire;
     MlsTlsReader reader;
     mls_tls_reader_init(&reader, msg, msg_len);
@@ -3701,12 +3751,23 @@ mls_private_message_sender_leaf(const uint8_t sender_data_secret[32], const uint
                                     pm->encrypted_sender_data, pm->encrypted_sender_data_len,
                                     &sd) == 0) {
             *out_leaf = sd.leaf_index;
+            *out_generation = sd.generation;
             rc = 0;
         }
         sodium_memzero(&sd, sizeof(sd));
     }
     mls_message_clear(&wire);
     return rc;
+}
+
+int
+mls_private_message_sender_leaf(const uint8_t sender_data_secret[32], const uint8_t *group_id,
+                                size_t group_id_len, uint64_t epoch, const uint8_t *msg,
+                                size_t msg_len, uint32_t *out_leaf)
+{
+    uint32_t generation;
+    return mls_private_message_sender_generation(sender_data_secret, group_id, group_id_len,
+                                                  epoch, msg, msg_len, out_leaf, &generation);
 }
 
 /* The authenticated part of processing a Commit (RFC 9420 sections 6.1-6.3):
@@ -4342,8 +4403,8 @@ process_commit_impl(MlsGroup *group,
             }
             /* nostrc-zbmb: so is every joiner's leaf (RFC 9420 §12.1.1). */
             if (commit.proposals[i].type == MLS_PROPOSAL_ADD &&
-                key_package_supports_group(&commit.proposals[i].add.key_package, next_ext,
-                                           next_ext_len) != 0) {
+                key_package_supports_group(&commit.proposals[i].add.key_package,
+                                           &group->tree, next_ext, next_ext_len) != 0) {
                 mls_commit_clear(&commit);
                 staged_rc = MARMOT_ERR_KEY_PACKAGE_CAPABILITIES;
                 goto staged_fail;

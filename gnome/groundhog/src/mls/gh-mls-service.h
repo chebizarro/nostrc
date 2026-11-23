@@ -686,6 +686,12 @@ G_DECLARE_FINAL_TYPE(GhMlsService, gh_mls_service, GH, MLS_SERVICE, GObject)
  * dismissed here, or an accept attempt used it up). */
 GhMlsService *gh_mls_service_new(const GhMlsServiceConfig *config, GError **error);
 #ifdef GH_MLS_TEST_HOOKS
+/* Exercise the production report with an ordered batch of real clear results;
+ * borrowed for this call. The wire regression covers the callback handoff. */
+void gh_mls_service_test_report_cleared(GhMlsGroup *group, MarmotMessageResult *applied,
+                                      size_t count);
+/* One launch attempt: 1 invalid event, 2 invalid URLs, 3 lost start precondition. */
+void gh_mls_service_test_fail_round_once(guint boundary);
 /* Deliver an already-unwrapped Welcome through the inbox callback. */
 gboolean gh_mls_service_test_receive_welcome(GhMlsService *self,
   const GhNip17Message *welcome, GError **error);
@@ -902,7 +908,8 @@ gboolean gh_mls_service_get_components(GhMlsService *self, GhMlsGroup *group,
  * (copied, wiped after); NULL or !present removes the picture. One admin
  * Commit, published then merged, as update_metadata (finish:
  * gh_mls_service_change_finish()); GH_MLS_SERVICE_ERROR_UNSUPPORTED for a
- * legacy group, which libmarmot gives no picture. */
+ * legacy group (MIP-01 picture editing is not supported; its pictures are
+ * read through the version-aware media path). */
 void gh_mls_service_set_image_async(GhMlsService *self, GhMlsGroup *group,
                                     const MarmotGroupBlossomImage *image,
                                     GCancellable *cancellable, GAsyncReadyCallback callback,

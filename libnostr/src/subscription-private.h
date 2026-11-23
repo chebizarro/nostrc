@@ -116,6 +116,7 @@ typedef struct _SubscriptionPrivate {
     LongAdder *stored_event_counter;
 
     nsync_mu sub_mutex;
+    nsync_mu fire_mutex; /* REQ ordering only; never acquired by dispatch/retirement */
     // Wait for lifecycle thread to exit before freeing
     GoWaitGroup wg;
 

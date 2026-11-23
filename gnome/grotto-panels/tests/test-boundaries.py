@@ -150,6 +150,9 @@ imports.update('''adw_combo_row_get_model gtk_list_view_get_model gtk_list_view_
 # Newer GLib headers use sized deallocation for typed object cleanup.
 imports.add('g_free_sized')
 
+# Optimized/sanitized GLib allocation macros may call these instead of g_malloc0_n.
+imports.update({'g_malloc', 'g_malloc0'})
+
 # W3 Identity widget/template/model/clipboard and translation imports only.
 # Still no bus, network, filesystem, generic dispatch or secret-store imports.
 imports.update('''__cxa_atexit adw_action_row_add_prefix adw_action_row_add_suffix adw_action_row_set_subtitle_lines

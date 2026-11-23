@@ -379,6 +379,13 @@ template $GhOnboardingView: Adw.Bin {
         [top]
         Adw.HeaderBar {}
 
+        [top]
+        Adw.Banner inbox_tor_banner {
+          revealed: false;
+          title: _("Can’t reach Tor — Groundhog won’t connect without it");
+          button-label: _("Network Settings");
+        }
+
         content: ScrolledWindow {
           hscrollbar-policy: never;
 
@@ -705,6 +712,13 @@ template $GhOnboardingView: Adw.Bin {
       child: Adw.ToolbarView {
         [top]
         Adw.HeaderBar {}
+
+        [top]
+        Adw.Banner publish_tor_banner {
+          revealed: false;
+          title: _("Can’t reach Tor — Groundhog won’t connect without it");
+          button-label: _("Network Settings");
+        }
 
         content: ScrolledWindow {
           hscrollbar-policy: never;

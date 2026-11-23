@@ -7,6 +7,7 @@
  */
 
 #include "signet/nostr_auth.h"
+#include "nostr_auth_private.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -24,7 +25,10 @@
 
 struct SignetChallengeStore {
   GHashTable *challenges;  /* challenge_hex → SignetChallenge* */
+  GQueue issuance_order; /* borrowed records, oldest first, including same-second issues */
   GMutex mu;
+  GSource *cleanup_source;
+  gint refs; /* caller + source callback; destruction waits for active dispatch */
 };
 
 static void signet_challenge_free(gpointer p) {
@@ -35,31 +39,84 @@ static void signet_challenge_free(gpointer p) {
   g_free(c);
 }
 
+/* Caller holds cs->mu. Clock rollback also invalidates outstanding proofs. */
+static void signet_challenge_cleanup_locked(SignetChallengeStore *cs, int64_t now) {
+  for (GList *it = cs->issuance_order.head; it;) {
+    GList *next = it->next;
+    SignetChallenge *ch = it->data;
+    if (ch->consumed || now < ch->issued_at || now - ch->issued_at >= SIGNET_CHALLENGE_TTL_S) {
+      g_hash_table_remove(cs->challenges, ch->challenge_hex);
+      g_queue_delete_link(&cs->issuance_order, it);
+    }
+    it = next;
+  }
+}
+
+static void signet_challenge_store_unref(gpointer data) {
+  SignetChallengeStore *cs = data;
+  if (!g_atomic_int_dec_and_test(&cs->refs)) return;
+  g_queue_clear(&cs->issuance_order);
+  g_hash_table_destroy(cs->challenges);
+  g_mutex_clear(&cs->mu);
+  g_free(cs);
+}
+
+static gboolean signet_challenge_cleanup_tick(gpointer data) {
+  signet_challenge_store_cleanup(data, (int64_t)time(NULL));
+  return G_SOURCE_CONTINUE;
+}
+
 SignetChallengeStore *signet_challenge_store_new(void) {
   SignetChallengeStore *cs = g_new0(SignetChallengeStore, 1);
   if (!cs) return NULL;
   g_mutex_init(&cs->mu);
   cs->challenges = g_hash_table_new_full(g_str_hash, g_str_equal,
                                           g_free, signet_challenge_free);
+  /* The daemon dispatches the default GLib context even without HTTP enabled. */
+  cs->refs = 2;
+  cs->cleanup_source = g_timeout_source_new_seconds(5);
+  g_source_set_callback(cs->cleanup_source, signet_challenge_cleanup_tick, cs,
+                        signet_challenge_store_unref);
+  g_source_attach(cs->cleanup_source, NULL);
   return cs;
 }
 
 void signet_challenge_store_free(SignetChallengeStore *cs) {
   if (!cs) return;
-  g_mutex_lock(&cs->mu);
-  if (cs->challenges) {
-    g_hash_table_destroy(cs->challenges);
-    cs->challenges = NULL;
-  }
-  g_mutex_unlock(&cs->mu);
-  g_mutex_clear(&cs->mu);
-  g_free(cs);
+  g_source_destroy(cs->cleanup_source);
+  g_source_unref(cs->cleanup_source);
+  /* GLib retains callback data during dispatch. Its destroy notifier releases
+   * the source's reference only after any concurrently running tick returns. */
+  signet_challenge_store_unref(cs);
 }
 
 char *signet_challenge_issue(SignetChallengeStore *cs,
                               const char *agent_id,
                               int64_t now) {
-  if (!cs || !agent_id) return NULL;
+  if (!cs || !agent_id || !agent_id[0] || now < 0 ||
+      strnlen(agent_id, SIGNET_AUTH_AGENT_ID_MAX + 1) > SIGNET_AUTH_AGENT_ID_MAX)
+    return NULL;
+
+  g_mutex_lock(&cs->mu);
+  signet_challenge_cleanup_locked(cs, now);
+  unsigned int per_agent = 0;
+  SignetChallenge *oldest_for_agent = NULL;
+  for (GList *it = cs->issuance_order.head; it; it = it->next) {
+    SignetChallenge *ch = it->data;
+    if (strcmp(ch->agent_id, agent_id) == 0) {
+      if (!oldest_for_agent) oldest_for_agent = ch;
+      per_agent++;
+    }
+  }
+  SignetChallenge *evict = NULL;
+  if (per_agent >= SIGNET_CHALLENGE_MAX_PER_AGENT)
+    evict = oldest_for_agent;
+  else if (g_hash_table_size(cs->challenges) >= SIGNET_CHALLENGE_MAX_TOTAL)
+    evict = g_queue_peek_head(&cs->issuance_order);
+  if (evict) {
+    g_queue_remove(&cs->issuance_order, evict);
+    g_hash_table_remove(cs->challenges, evict->challenge_hex);
+  }
 
   /* Generate 32 random bytes → 64-char hex. */
   uint8_t raw[32];
@@ -78,8 +135,8 @@ char *signet_challenge_issue(SignetChallengeStore *cs,
   ch->issued_at = now;
   ch->consumed = false;
 
-  g_mutex_lock(&cs->mu);
   g_hash_table_replace(cs->challenges, g_strdup(hex), ch);
+  g_queue_push_tail(&cs->issuance_order, ch);
   g_mutex_unlock(&cs->mu);
 
   return hex;
@@ -109,10 +166,14 @@ static const char *signet_event_get_tag_value(NostrEvent *evt, const char *tag_n
 
 /* ----------------------------- verification ------------------------------ */
 
-SignetAuthResult signet_auth_verify(SignetChallengeStore *cs,
+static SignetAuthResult signet_auth_verify_bound(SignetChallengeStore *cs,
                                     const SignetFleetRegistry *fleet,
                                     const char *auth_event_json,
                                     int64_t now,
+                                    const char *expected_purpose,
+                                    const char *expected_agent,
+                                    const char *expected_pubkey,
+                                    const char *expected_token_hash,
                                     char **out_agent_id,
                                     char **out_pubkey_hex) {
   if (out_agent_id) *out_agent_id = NULL;
@@ -165,9 +226,25 @@ SignetAuthResult signet_auth_verify(SignetChallengeStore *cs,
     nostr_event_free(evt);
     return SIGNET_AUTH_ERR_MISSING_PURPOSE;
   }
-  if (strcmp(purpose, "signet-auth") != 0) {
+  if (strcmp(purpose, expected_purpose) != 0) {
     nostr_event_free(evt);
     return SIGNET_AUTH_ERR_WRONG_PURPOSE;
+  }
+
+  if (expected_agent && strcmp(agent_id, expected_agent) != 0) {
+    nostr_event_free(evt);
+    return SIGNET_AUTH_ERR_CHALLENGE_MISMATCH;
+  }
+  if (expected_pubkey && (!pubkey || g_ascii_strcasecmp(pubkey, expected_pubkey) != 0)) {
+    nostr_event_free(evt);
+    return SIGNET_AUTH_ERR_PUBKEY_MISMATCH;
+  }
+  if (expected_token_hash) {
+    const char *token_hash = signet_event_get_tag_value(evt, "token");
+    if (!token_hash || strcmp(token_hash, expected_token_hash) != 0) {
+      nostr_event_free(evt);
+      return SIGNET_AUTH_ERR_INVALID_EVENT;
+    }
   }
 
   /* 5. Challenge lookup and validation. */
@@ -180,7 +257,7 @@ SignetAuthResult signet_auth_verify(SignetChallengeStore *cs,
     result = SIGNET_AUTH_ERR_CHALLENGE_MISMATCH;
   } else if (ch->consumed) {
     result = SIGNET_AUTH_ERR_CHALLENGE_REPLAYED;
-  } else if (now - ch->issued_at > SIGNET_CHALLENGE_TTL_S) {
+  } else if (now < ch->issued_at || now - ch->issued_at >= SIGNET_CHALLENGE_TTL_S) {
     result = SIGNET_AUTH_ERR_CHALLENGE_EXPIRED;
   } else if (strcmp(ch->agent_id, agent_id) != 0) {
     result = SIGNET_AUTH_ERR_CHALLENGE_MISMATCH;
@@ -238,21 +315,28 @@ SignetAuthResult signet_auth_verify(SignetChallengeStore *cs,
   return SIGNET_AUTH_OK;
 }
 
+SignetAuthResult signet_auth_verify(SignetChallengeStore *cs,
+    const SignetFleetRegistry *fleet, const char *auth_event_json, int64_t now,
+    char **out_agent_id, char **out_pubkey_hex) {
+  return signet_auth_verify_bound(cs, fleet, auth_event_json, now, "signet-auth",
+      NULL, NULL, NULL, out_agent_id, out_pubkey_hex);
+}
+
+SignetAuthResult signet_bootstrap_auth_verify(SignetChallengeStore *cs,
+    const char *auth_event_json, int64_t now, const char *agent_id,
+    const char *bootstrap_pubkey, const char *token_hash) {
+  if (!agent_id || !agent_id[0] || !bootstrap_pubkey || !bootstrap_pubkey[0] ||
+      !token_hash || !token_hash[0]) return SIGNET_AUTH_ERR_INVALID_EVENT;
+  return signet_auth_verify_bound(cs, NULL, auth_event_json, now,
+      "signet-bootstrap", agent_id, bootstrap_pubkey, token_hash, NULL, NULL);
+}
+
 void signet_challenge_store_cleanup(SignetChallengeStore *cs, int64_t now) {
   if (!cs) return;
 
   g_mutex_lock(&cs->mu);
 
-  GHashTableIter iter;
-  gpointer key, value;
-  g_hash_table_iter_init(&iter, cs->challenges);
-  while (g_hash_table_iter_next(&iter, &key, &value)) {
-    SignetChallenge *ch = (SignetChallenge *)value;
-    if (now - ch->issued_at > SIGNET_CHALLENGE_TTL_S * 2) {
-      /* Remove challenges that are well past expiry. */
-      g_hash_table_iter_remove(&iter);
-    }
-  }
+  signet_challenge_cleanup_locked(cs, now);
 
   g_mutex_unlock(&cs->mu);
 }

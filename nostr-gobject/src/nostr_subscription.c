@@ -20,6 +20,7 @@
 #include "json.h"                 /* nostr_event_serialize */
 #include "context.h"              /* GoContext */
 #include "channel.h"              /* GoChannel, go_channel_try_receive */
+#include "nostr_pool_channel_wait.h"
 #include "select.h"               /* go_select_timeout */
 #include "error.h"                /* Error, free_error */
 
@@ -113,7 +114,10 @@ struct _GNostrSubscription {
     guint max_backlog_events;
     guint64 max_backlog_bytes;
     guint64 queued_bytes;                 /* JSON bytes of the queued events */
+    gboolean terminal_queued;             /* exactly one terminal queue admission */
+    gchar *relay_closed_reason;           /* core-owned reason claimed before draining */
     gboolean overflowed;                  /* the ceiling ended it; nothing more is queued */
+    gint close_requested;                /* atomic: terminal delivery requested */
     gint core_close_sent;                 /* atomic: CLOSE sent to the relay */
 };
 
@@ -262,6 +266,18 @@ send_core_close(GNostrSubscription *self, NostrSubscription *sub)
         nostr_subscription_close(sub, NULL);
 }
 
+/* Only the monitor consumes the core CLOSED channel. Claim its reason before
+ * publishing any local terminal marker, never by rewriting an emitted marker. */
+static void
+capture_closed_reason_locked(GNostrSubscription *self)
+{
+    if (self->relay_closed_reason || !self->subscription) return;
+    void *reason = NULL;
+    GoChannel *closed = nostr_subscription_get_closed_channel(self->subscription);
+    if (closed && go_channel_try_receive(closed, &reason) == 0)
+        self->relay_closed_reason = reason ? reason : g_strdup("");
+}
+
 /* Appends @item to the ordered queue (monitor thread).  Returns FALSE once
  * the backlog ceiling has ended the subscription (nostrc-5rfp): @item was
  * not queued (it is freed), and the monitor must stop reading. */
@@ -272,7 +288,7 @@ queue_item_for_main(GNostrSubscription *self, SubItem *item)
 
     /* After an overflow the queued CLOSED is the last item: whatever the
      * relay sent later is covered by it. */
-    if (self->overflowed) {
+    if (self->terminal_queued) {
         g_mutex_unlock(&self->event_queue_mutex);
         sub_item_free(item);
         return FALSE;
@@ -299,7 +315,9 @@ queue_item_for_main(GNostrSubscription *self, SubItem *item)
             sub_item_free(item);
             item = g_new0(SubItem, 1);
             item->kind = SUB_ITEM_CLOSED;
-            item->text = g_strdup(GNOSTR_SUBSCRIPTION_OVERFLOW_REASON);
+            capture_closed_reason_locked(self);
+            item->text = g_strdup(self->relay_closed_reason ? self->relay_closed_reason
+                                                            : GNOSTR_SUBSCRIPTION_OVERFLOW_REASON);
         }
     }
 
@@ -330,6 +348,7 @@ queue_item_for_main(GNostrSubscription *self, SubItem *item)
     }
 
     gboolean overflowed = self->overflowed;
+    if (item->kind == SUB_ITEM_CLOSED) self->terminal_queued = TRUE;
     g_ptr_array_add(self->event_queue, item);
     if (!self->event_idle_scheduled) {
         self->event_idle_scheduled = TRUE;
@@ -398,6 +417,15 @@ static void
 queue_closed_for_main(GNostrSubscription *self, GoChannel *ch_events,
                       GoChannel *ch_eose, char *reason)
 {
+    g_mutex_lock(&self->event_queue_mutex);
+    if (reason && !self->relay_closed_reason) {
+        self->relay_closed_reason = reason;
+        reason = NULL;
+    }
+    capture_closed_reason_locked(self);
+    char *terminal_reason = g_strdup(self->relay_closed_reason);
+    g_mutex_unlock(&self->event_queue_mutex);
+    free(reason);
     gboolean open = TRUE;
     while (open && ch_eose && go_channel_try_receive(ch_eose, NULL) == 0)
         open = queue_eose_for_main(self, ch_events);
@@ -405,8 +433,7 @@ queue_closed_for_main(GNostrSubscription *self, GoChannel *ch_events,
         open = queue_pending_events(self, ch_events);
     SubItem *item = g_new0(SubItem, 1);
     item->kind = SUB_ITEM_CLOSED;
-    item->text = reason ? g_strdup(reason) : NULL;
-    free(reason); /* strdup'd by nostr_subscription_dispatch_closed */
+    item->text = terminal_reason;
     if (open)
         queue_item_for_main(self, item);
     else
@@ -415,15 +442,14 @@ queue_closed_for_main(GNostrSubscription *self, GoChannel *ch_events,
 
 /* --- Monitor thread --- */
 
-/* go_select_timeout now performs a fast pre-registration check and a
- * post-registration double-check, which fixes the historical missed-wakeup
- * race that forced this monitor to poll every 1ms.  Use a blocking select
- * with a bounded timeout so cancellation via monitor_running is still seen
- * promptly even if a channel close is delayed.
- *
- * go_select picks randomly among ready cases, so the case chosen says
- * nothing about arrival order; queue_eose_for_main() and
- * queue_closed_for_main() restore it (nostrc-qp24.10.6). */
+/* Readiness does not consume a frame: the monitor first reserves any queued
+ * relay CLOSED reason, then drains EVENT/EOSE before publishing the terminal. */
+#ifdef GNOSTR_TESTING
+static _Atomic(GNostrSubscriptionMonitorHook) monitor_test_hook;
+void gnostr_subscription_test_set_monitor_hook(GNostrSubscriptionMonitorHook hook) {
+    atomic_store(&monitor_test_hook, hook);
+}
+#endif
 static gpointer
 subscription_monitor_thread(gpointer data)
 {
@@ -434,72 +460,42 @@ subscription_monitor_thread(gpointer data)
     GoChannel *ch_eose = nostr_subscription_get_eose_channel(sub);
     GoChannel *ch_closed = nostr_subscription_get_closed_channel(sub);
 
+#ifdef GNOSTR_TESTING
+    GNostrSubscriptionMonitorHook hook = atomic_load(&monitor_test_hook);
+    if (hook) hook(sub, FALSE);
+#endif
     while (__atomic_load_n(&self->monitor_running, __ATOMIC_SEQ_CST)) {
-        void *selected_event = NULL;
-        void *selected_reason = NULL;
-        GoSelectCase cases[3];
-        enum { CASE_EVENTS, CASE_EOSE, CASE_CLOSED } case_kinds[3];
+        GoSelectCase cases[4];
         size_t n_cases = 0;
+        if (ch_events) cases[n_cases++] = (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = ch_events };
+        if (ch_eose) cases[n_cases++] = (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = ch_eose };
+        if (ch_closed) cases[n_cases++] = (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = ch_closed };
+        GoChannel *done = go_context_done(sub->context);
+        if (done) cases[n_cases++] = (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = done };
+        if (!n_cases) break;
+        pool_wait_channels(cases, n_cases, 250);
+        if (!__atomic_load_n(&self->monitor_running, __ATOMIC_SEQ_CST)) break;
 
-        if (ch_events) {
-            case_kinds[n_cases] = CASE_EVENTS;
-            cases[n_cases++] = (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = ch_events,
-                                                .recv_buf = &selected_event };
-        }
-        if (ch_eose) {
-            case_kinds[n_cases] = CASE_EOSE;
-            cases[n_cases++] = (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = ch_eose,
-                                                .recv_buf = NULL };
-        }
-        if (ch_closed) {
-            case_kinds[n_cases] = CASE_CLOSED;
-            cases[n_cases++] = (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = ch_closed,
-                                                .recv_buf = &selected_reason };
-        }
-
-        if (n_cases == 0)
+        g_mutex_lock(&self->event_queue_mutex);
+        capture_closed_reason_locked(self);
+        gboolean relay_closed = self->relay_closed_reason != NULL;
+        g_mutex_unlock(&self->event_queue_mutex);
+        if (relay_closed || g_atomic_int_get(&self->close_requested)) {
+            queue_closed_for_main(self, ch_events, ch_eose, NULL);
             break;
-
-        GoSelectResult sel = go_select_timeout(cases, n_cases, 250);
-        if (sel.selected_case < 0)
-            continue; /* timeout: re-check monitor_running */
-
-        gboolean open = TRUE;
-        switch (case_kinds[sel.selected_case]) {
-        case CASE_EVENTS:
-            open = queue_event_for_main(self, (NostrEvent *)selected_event);
-            break;
-        case CASE_EOSE:
-            open = queue_eose_for_main(self, ch_events);
-            break;
-        case CASE_CLOSED:
-            queue_closed_for_main(self, ch_events, ch_eose, (char *)selected_reason);
-            goto monitor_done;
         }
-
-        /* Drain any burst that arrived with the selected item. */
-        if (open)
-            open = queue_pending_events(self, ch_events);
-
+        gboolean open = queue_pending_events(self, ch_events);
         while (open && ch_eose && go_channel_try_receive(ch_eose, NULL) == 0)
             open = queue_eose_for_main(self, ch_events);
-
         if (!open) {
-            /* nostrc-5rfp: the backlog ceiling ended the subscription. Stop
-             * reading (libnostr's channel is bounded and drops what no one
-             * reads) and ask the relay to stop sending. */
             send_core_close(self, sub);
-            break;
-        }
-
-        void *reason = NULL;
-        if (ch_closed && go_channel_try_receive(ch_closed, &reason) == 0) {
-            queue_closed_for_main(self, ch_events, ch_eose, (char *)reason);
             break;
         }
     }
 
-monitor_done:
+#ifdef GNOSTR_TESTING
+    if (hook) hook(sub, TRUE);
+#endif
     g_object_unref(self); /* Release monitor thread's ref */
     return NULL;
 }
@@ -687,6 +683,7 @@ gnostr_subscription_finalize(GObject *object)
     }
     g_mutex_unlock(&self->event_queue_mutex);
     g_mutex_clear(&self->event_queue_mutex);
+    g_free(self->relay_closed_reason);
 
     /* Release relay reference */
     g_clear_object(&self->relay);
@@ -941,7 +938,7 @@ gnostr_subscription_fire(GNostrSubscription *self, GError **error)
 {
     g_return_val_if_fail(GNOSTR_IS_SUBSCRIPTION(self), FALSE);
 
-    if (self->state != GNOSTR_SUBSCRIPTION_STATE_PENDING) {
+    if (self->state != GNOSTR_SUBSCRIPTION_STATE_PENDING || g_atomic_int_get(&self->close_requested)) {
         g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
                             "subscription is not in PENDING state");
         return FALSE;
@@ -1018,17 +1015,20 @@ gnostr_subscription_close(GNostrSubscription *self)
 {
     g_return_if_fail(GNOSTR_IS_SUBSCRIPTION(self));
 
-    if (self->state == GNOSTR_SUBSCRIPTION_STATE_CLOSED)
+    if (self->state == GNOSTR_SUBSCRIPTION_STATE_CLOSED ||
+        !g_atomic_int_compare_and_exchange(&self->close_requested, 0, 1))
         return;
 
-    /* Stop monitor thread */
-    stop_monitor(self);
-
-    /* Close core subscription */
+    /* Cancellation wakes the monitor through context.done. It remains the sole
+     * consumer long enough to preserve any already queued relay CLOSED reason
+     * and deliver admitted EVENT/EOSE items before the one terminal signal. */
     send_core_close(self, self->subscription);
-
-    gnostr_subscription_set_state_internal(self, GNOSTR_SUBSCRIPTION_STATE_CLOSED);
-    g_signal_emit(self, sub_signals[GNOSTR_SUBSCRIPTION_SIGNAL_CLOSED], 0, NULL);
+    if (self->subscription) nostr_subscription_unsubscribe(self->subscription);
+    if (!self->monitor_thread) {
+        GoChannel *events = self->subscription ? nostr_subscription_get_events_channel(self->subscription) : NULL;
+        GoChannel *eose = self->subscription ? nostr_subscription_get_eose_channel(self->subscription) : NULL;
+        queue_closed_for_main(self, events, eose, NULL);
+    }
 
     g_debug("Closed subscription %s",
             self->subscription ? nostr_subscription_get_id_const(self->subscription) : "(null)");

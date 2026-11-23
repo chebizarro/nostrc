@@ -1,5 +1,6 @@
 #include "gh-relay-soup.h"
 #include "gh-net-tls.h"
+#include "gh-net-http.h"
 #include "gh-relay-gnostr-write.h"
 
 #include <libsoup/soup.h>
@@ -34,11 +35,19 @@ typedef struct {
   NostrFilters *filters;
   gchar *sub_id;               /* the live REQ's id, NULL when none */
   guint sub_serial;
+  gboolean caught_up;          /* matching EOSE for this REQ, not an older connection */
   GSource *retry;
   guint retry_seconds;
   /* publish */
   gchar *event_frame;          /* ["EVENT",<event>] */
 } SoupHandle;
+
+guint
+gh_relay_soup_scope_get_retry_seconds(gpointer data)
+{
+  const SoupHandle *handle = data;
+  return handle->retry_seconds;
+}
 
 static SoupHandle *
 handle_ref(SoupHandle *handle)
@@ -101,7 +110,7 @@ handle_unref(gpointer data)
 
 static SoupHandle *
 handle_new(const gchar *url, GProxyResolver *resolver, GhRelaySoupStatusFunc status,
-           gpointer status_data)
+           gpointer status_data, gboolean public_only)
 {
   SoupHandle *handle = g_new0(SoupHandle, 1);
   handle->refs = 1; /* the scope's or publish's, dropped by close */
@@ -117,9 +126,15 @@ handle_new(const gchar *url, GProxyResolver *resolver, GhRelaySoupStatusFunc sta
    * SoupSession: gh-net-tls.h). No cookie jar, cache or HSTS is added; no
    * User-Agent or Accept-Language is sent. No I/O timeout: an open WebSocket
    * may be quiet for long; only the dial has a deadline. */
+  g_autoptr(GUri) parsed = g_uri_parse(url, G_URI_FLAGS_NONE, NULL);
+  gboolean secure = g_strcmp0(g_uri_get_scheme(parsed), "wss") == 0;
+  gint port = g_uri_get_port(parsed);
+  g_autoptr(GSocketConnectable) remote = public_only
+    ? gh_net_public_address_new(g_uri_get_host(parsed), port > 0 ? port : secure ? 443 : 80,
+                                  secure ? "https" : "http") : NULL;
   handle->session = soup_session_new_with_options(
     "proxy-resolver", handle->resolver, "user-agent", NULL, "accept-language-auto", FALSE,
-    "timeout", 0, "idle-timeout", 0, NULL);
+    "timeout", 0, "idle-timeout", 0, "remote-connectable", remote, NULL);
   soup_session_remove_feature_by_type(handle->session, SOUP_TYPE_CONTENT_SNIFFER);
   handle->retry_seconds = 1;
   return handle;
@@ -151,6 +166,7 @@ ws_open(SoupHandle *handle)
 static void
 send_req(SoupHandle *handle)
 {
+  handle->caught_up = FALSE;
   g_free(handle->sub_id);
   handle->sub_id = g_strdup_printf("gh%08x%u", g_random_int(), ++handle->sub_serial);
   /* ["REQ",<id>,<filter>...] */
@@ -205,15 +221,20 @@ scope_message(SoupHandle *handle, NostrEnvelope *envelope)
     if (!event->event || g_strcmp0(event->subscription_id, handle->sub_id) != 0)
       return;
     char *json = nostr_event_serialize_compact(event->event);
-    if (json)
+    if (json) {
+      /* Stored replay before EOSE is not evidence of a healthy live
+       * connection: a relay may replay and immediately kick us each time. */
+      if (handle->caught_up)
+        handle->retry_seconds = 1;
       gh_relay_scope_event(handle->scope, handle->url, json);
+    }
     free(json);
     return;
   }
   case NOSTR_ENVELOPE_EOSE: {
     const gchar *sub_id = nostr_eose_envelope_get_message((NostrEOSEEnvelope *)envelope);
     if (handle->sub_id && g_strcmp0(sub_id, handle->sub_id) == 0) {
-      handle->retry_seconds = 1;
+      handle->caught_up = TRUE;
       gh_relay_scope_eose(handle->scope, handle->url);
     }
     return;
@@ -464,7 +485,7 @@ send_event_frame(SoupHandle *handle, const gchar *signed_event_json, GError **er
 gpointer
 gh_relay_soup_scope_open(GhRelayScope *scope, const gchar *url, const NostrFilters *filters,
                          GProxyResolver *resolver, GhRelaySoupStatusFunc status,
-                         gpointer status_data, GError **error)
+                         gpointer status_data, gboolean public_only, GError **error)
 {
   g_return_val_if_fail(scope != NULL && url != NULL && filters != NULL, NULL);
   if (!url_usable(url, error))
@@ -485,7 +506,7 @@ gh_relay_soup_scope_open(GhRelayScope *scope, const gchar *url, const NostrFilte
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "filter copy failed");
     return NULL;
   }
-  SoupHandle *handle = handle_new(url, resolver, status, status_data);
+  SoupHandle *handle = handle_new(url, resolver, status, status_data, public_only);
   handle->scope = scope;
   handle->filters = copy;
   dial(handle);
@@ -522,7 +543,7 @@ gh_relay_soup_scope_resubscribe(gpointer data)
 gpointer
 gh_relay_soup_publish_open(GhRelayPublish *publish, const gchar *url, const gchar *event_json,
                            GProxyResolver *resolver, GhRelaySoupStatusFunc status,
-                           gpointer status_data, GError **error)
+                           gpointer status_data, gboolean public_only, GError **error)
 {
   g_return_val_if_fail(publish != NULL && url != NULL, NULL);
   if (!url_usable(url, error))
@@ -532,7 +553,7 @@ gh_relay_soup_publish_open(GhRelayPublish *publish, const gchar *url, const gcha
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "event parse failed");
     return NULL;
   }
-  SoupHandle *handle = handle_new(url, resolver, status, status_data);
+  SoupHandle *handle = handle_new(url, resolver, status, status_data, public_only);
   handle->publish_side = TRUE;
   handle->publish = publish;
   handle->event_frame = frame;
@@ -571,7 +592,7 @@ static gpointer
 vt_scope_open(GhRelayScope *scope, const gchar *url, const NostrFilters *filters,
               gpointer data, GError **error)
 {
-  return gh_relay_soup_scope_open(scope, url, filters, data, NULL, NULL, error);
+  return gh_relay_soup_scope_open(scope, url, filters, data, NULL, NULL, FALSE, error);
 }
 
 static void
@@ -606,7 +627,7 @@ static gpointer
 vt_publish_open(GhRelayPublish *publish, const gchar *url, const gchar *event_json,
                 gpointer data, GError **error)
 {
-  return gh_relay_soup_publish_open(publish, url, event_json, data, NULL, NULL, error);
+  return gh_relay_soup_publish_open(publish, url, event_json, data, NULL, NULL, FALSE, error);
 }
 
 static void

@@ -40,7 +40,7 @@ Depends: ${shlibs:Depends},
          ${misc:Depends},
          libgtk-4-1 (>= 4.14),
          libadwaita-1-0 (>= 1.5),
-         libgrotto-panels-0-0 (>= 0.1.2),
+         libgrotto-panels-0-0 (= ${grotto:Panels-Version}),
          dbus-user-session,
          gstreamer1.0-plugins-base,
          gstreamer1.0-plugins-good

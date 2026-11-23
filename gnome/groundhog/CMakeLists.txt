@@ -220,6 +220,9 @@ target_link_libraries(groundhog-diagnostics PUBLIC PkgConfig::GROUNDHOG_DEPS)
 target_compile_options(groundhog-diagnostics PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(groundhog PRIVATE groundhog-diagnostics)
 
+# Each executable test owns its accessibility runtime, even in an omnibus.
+set(NOSTRC_TEST_PRIVATE_SESSION ON)
+
 if (BUILD_TESTING)
   add_executable(test-groundhog-diagnostics tests/app/test_diagnostics.c)
   target_link_libraries(test-groundhog-diagnostics PRIVATE groundhog-diagnostics)
@@ -434,6 +437,9 @@ if (TARGET groundhog-account AND TARGET groundhog-relay)
   target_include_directories(groundhog-auth-policy PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
   target_link_libraries(groundhog-auth-policy PUBLIC groundhog-account groundhog-relay)
   target_compile_options(groundhog-auth-policy PRIVATE -Wall -Wextra -Werror)
+  if (BUILD_TESTING)
+    target_compile_definitions(groundhog-auth-policy PUBLIC GH_ACCOUNT_AUTH_TEST_HOOKS)
+  endif()
 endif()
 
 # Account-bound relay-list discovery: one URL-scoped live REQ per active
@@ -1831,6 +1837,9 @@ if (TARGET groundhog-store AND TARGET groundhog-conversations)
   target_link_libraries(groundhog-notifier PUBLIC groundhog-ui groundhog-conversations
     groundhog-store)
   target_compile_options(groundhog-notifier PRIVATE -Wall -Wextra -Werror)
+  if (TARGET test-groundhog-account-store)
+    target_link_libraries(test-groundhog-account-store PRIVATE groundhog-notifier)
+  endif()
   if (TARGET groundhog-account-store)
     target_link_libraries(groundhog PRIVATE groundhog-notifier)
     target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_NOTIFIER=1)
@@ -2054,6 +2063,10 @@ if (TARGET groundhog-recipient AND TARGET PkgConfig::GROUNDHOG_NET_DEPS)
   target_include_directories(groundhog-net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/net)
   target_link_libraries(groundhog-net PUBLIC groundhog-recipient PkgConfig::GROUNDHOG_NET_DEPS)
   target_compile_options(groundhog-net PRIVATE -Wall -Wextra -Werror)
+  if (TARGET groundhog-onboarding)
+    target_link_libraries(groundhog-onboarding PUBLIC groundhog-net)
+    target_compile_definitions(groundhog-onboarding PUBLIC GROUNDHOG_HAVE_NET_SESSION=1)
+  endif()
 else()
   message(STATUS "Groundhog NIP-05 lookup: disabled (needs libsoup-3.0 and json-glib-1.0)")
 endif()
@@ -2235,6 +2248,10 @@ if (TARGET groundhog-nip29 AND TARGET groundhog-store AND TARGET groundhog-auth-
   if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES)
     target_link_libraries(groundhog PRIVATE groundhog-nip29-service)
     target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_NIP29=1)
+    if (TARGET test-groundhog-account-store)
+      target_link_libraries(test-groundhog-account-store PRIVATE groundhog-nip29-service)
+      target_compile_definitions(test-groundhog-account-store PRIVATE GROUNDHOG_HAVE_NIP29=1)
+    endif()
   endif()
   if (BUILD_TESTING AND TARGET groundhog-test-schemas AND
       TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
@@ -2327,6 +2344,10 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
   if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES)
     target_link_libraries(groundhog PRIVATE groundhog-mls-service)
     target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_MLS=1)
+    if (TARGET test-groundhog-account-store)
+      target_link_libraries(test-groundhog-account-store PRIVATE groundhog-mls-service)
+      target_compile_definitions(test-groundhog-account-store PRIVATE GROUNDHOG_HAVE_MLS=1)
+    endif()
     # Preferences shows "Let people using older Marmot apps invite me" only
     # when the older format is a choice (gh-features.h, review N4).
     if (MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER)
@@ -2799,6 +2820,9 @@ endif()
 if (TARGET groundhog-net AND TARGET groundhog-relay AND NOT GROUNDHOG_WITHOUT_TOR)
   message(STATUS "Groundhog network modes and Tor: enabled")
   add_library(groundhog-net-relay STATIC src/net/gh-relay-soup.c src/net/gh-relay-net.c)
+  if (BUILD_TESTING)
+    target_compile_definitions(groundhog-net-relay PRIVATE GH_RELAY_NET_TEST_HOOKS=1)
+  endif()
   target_link_libraries(groundhog-net-relay PUBLIC groundhog-net groundhog-relay)
   target_compile_options(groundhog-net-relay PRIVATE -Wall -Wextra -Werror)
   target_link_libraries(groundhog PRIVATE groundhog-net-relay)
@@ -2819,6 +2843,20 @@ if (TARGET groundhog-net AND TARGET groundhog-relay AND NOT GROUNDHOG_WITHOUT_TO
     add_test(NAME groundhog-net COMMAND test-groundhog-net)
     set_tests_properties(groundhog-net PROPERTIES TIMEOUT 120
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    # Compile the real dispatcher again without its fixture hook. Linking it
+    # directly prevents the testing archive's dispatcher from being selected.
+    add_executable(test-groundhog-net-production tests/net/test_relay_soup.c
+      tests/net/socks5-fixture.c src/net/gh-relay-net.c)
+    target_compile_definitions(test-groundhog-net-production PRIVATE GH_NET_PRODUCTION_TESTS=1)
+    target_include_directories(test-groundhog-net-production PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/net ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay)
+    target_link_libraries(test-groundhog-net-production PRIVATE groundhog-nip46-session groundhog-net-relay)
+    target_compile_options(test-groundhog-net-production PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(test-groundhog-net-production groundhog-test-schemas)
+    add_test(NAME groundhog-net-production COMMAND test-groundhog-net-production
+      -p /groundhog/net/direct-untrusted-socket-filter)
+    set_tests_properties(groundhog-net-production PROPERTIES TIMEOUT 20
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals;NOSTRC_TEST_ISOLATION=1")
     # W16 review B1 (PD-6): no Groundhog TLS connection offers to resume a
     # session (src/net/gh-net-tls.h). A plain program, not a GTest one:
     # glib-networking disables resumption in any process that called

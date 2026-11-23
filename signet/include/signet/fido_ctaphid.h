@@ -4,7 +4,7 @@
  *
  * The CTAP-HID framing and CTAP2 adapter are compiled on every platform for
  * unit coverage. The actual /dev/uhid lifecycle is Linux-only; non-Linux builds
- * return a clean unsupported/no-op result from start().
+ * return an unsupported error from start() when enabled.
  */
 #ifndef SIGNET_FIDO_CTAPHID_H
 #define SIGNET_FIDO_CTAPHID_H
@@ -52,6 +52,19 @@ typedef struct SignetFidoCtapHid SignetFidoCtapHid;
  */
 #define SIGNET_CTAPHID_BROADCAST_CID 0xffffffffu
 
+/* Explicit per-ceremony consent/policy decision. UHID supplies no caller
+ * credentials: owner_group, RP and clientDataHash are NOT proof of caller
+ * identity. A backend must obtain trusted out-of-band authorization/consent
+ * for this exact operation (including the complete request CBOR); never approve
+ * solely from these request fields.
+ * Returning false (including unavailable consent) denies without vault access.
+ * The callback runs synchronously and its data must outlive the device. */
+typedef bool (*SignetCtapAuthorize)(void *data, const char *owner_group,
+                                    const char *agent_id, bool make_credential,
+                                    const char *rp_id,
+                                    const uint8_t client_data_hash[SIGNET_FIDO_CLIENT_DATA_HASH_LEN],
+                                    const uint8_t *request_cbor, size_t request_cbor_len);
+
 /**
  * SignetFidoCtapHidConfig:
  * @enabled: whether the service is enabled.
@@ -63,6 +76,9 @@ typedef struct SignetFidoCtapHid SignetFidoCtapHid;
  * @version: record version.
  * @aaguid: optional 16-byte AAGUID for CTAP2 getInfo.
  * @max_msg_size: 0 => SIGNET_CTAPHID_MAX_MSG_SIZE.
+ * @owner_group: explicit local owner trust domain; never inferred from the daemon.
+ * @authorize: mandatory per-operation authorization/consent backend.
+ * @authorize_data: borrowed callback data.
  *
  * Configuration for the virtual CTAP-HID device.
  *
@@ -78,6 +94,9 @@ typedef struct {
   uint16_t version;
   const uint8_t *aaguid; /* optional 16-byte AAGUID for CTAP2 getInfo */
   size_t max_msg_size;  /* 0 => SIGNET_CTAPHID_MAX_MSG_SIZE */
+  const char *owner_group;
+  SignetCtapAuthorize authorize;
+  void *authorize_data;
 } SignetFidoCtapHidConfig;
 
 /**
@@ -95,7 +114,10 @@ SignetFidoCtapHid *signet_fido_ctaphid_new(const SignetFidoCtapHidConfig *cfg);
  * signet_fido_ctaphid_start:
  * @dev: (not nullable): a #SignetFidoCtapHid
  *
- * signet fido ctaphid start.
+ * Refuses an enabled device without an explicit owner group and consent backend.
+ * Operators must restrict the generated hidraw node to that group (root-owned,
+ * mode 0660, no additional ACL grants), not merely restrict /dev/uhid access.
+ * The daemon currently installs no consent backend: its CTAP profile is refused.
  *
  * Returns: operation-specific status or value as documented by the function
  *
@@ -120,6 +142,13 @@ void signet_fido_ctaphid_stop(SignetFidoCtapHid *dev);
  * Since: 1.0
  */
 void signet_fido_ctaphid_free(SignetFidoCtapHid *dev);
+
+/* Process host reports using this device's authorization backend. The response
+ * is malloc-owned. Returns 0 for a response, 1 for incomplete input, -1 on error.
+ * This does not establish caller identity; the consent backend remains required. */
+int signet_fido_ctaphid_process_frames(SignetFidoCtapHid *dev,
+                                      const uint8_t *frames, size_t frames_len,
+                                      uint8_t **out_frames, size_t *out_frames_len);
 
 /* Test/diagnostic helper: feed one or more 64-byte CTAP-HID host frames and
  * collect authenticator response frames. The returned buffer is malloc-owned and

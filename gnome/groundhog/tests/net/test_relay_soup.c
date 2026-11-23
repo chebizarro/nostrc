@@ -256,6 +256,7 @@ is_hex(const gchar *text, gsize length)
 
 typedef struct {
   guint errors;
+  guint events;
   guint eoses;
   guint disconnected;
   gchar *last_error;
@@ -266,7 +267,9 @@ on_scope(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
 {
   (void)scope;
   ScopeSeen *seen = data;
-  if (update->notice == GH_RELAY_NOTICE_ERROR) {
+  if (update->notice == GH_RELAY_NOTICE_EVENT) {
+    seen->events++;
+  } else if (update->notice == GH_RELAY_NOTICE_ERROR) {
     seen->errors++;
     g_free(seen->last_error);
     seen->last_error = g_strdup(update->detail);
@@ -1072,6 +1075,101 @@ username_at(Socks5Fixture *socks, guint index)
   return ((Socks5Request *)g_ptr_array_index(socks5_fixture_requests(socks), index))->username;
 }
 
+static gpointer
+capture_soup_open(GhRelayScope *scope, const gchar *url, const NostrFilters *filters,
+                    gpointer data, GError **error)
+{
+  gpointer *handle = data;
+  *handle = gh_relay_soup_scope_open(scope, url, filters, NULL, NULL, NULL, FALSE, error);
+  return *handle;
+}
+
+static void
+capture_soup_close(gpointer handle, gpointer data)
+{
+  *(gpointer *)data = NULL;
+  gh_relay_soup_scope_close(handle);
+}
+
+static void
+test_replayed_history_preserves_backoff(void)
+{
+  WireRelay relay = { .serve = TRUE, .no_eose = TRUE, .close_on_connect = TRUE };
+  relay_init(&relay);
+  g_autofree gchar *json = signed_json("stored history replay");
+  wire_relay_inject(&relay, json);
+  ScopeSeen seen = { 0 };
+  gpointer handle = NULL;
+  const GhRelayTransport transport = { .open = capture_soup_open, .close = capture_soup_close };
+  GhRelayScope *scope = gh_relay_scope_new_with_transport(1, any_filters(), &transport,
+                                                         &handle, on_scope, &seen);
+  g_assert_true(gh_relay_scope_add_url(scope, relay.url, NULL));
+  gh_relay_scope_start(scope);
+  wait_at_least(&seen.disconnected, 2);
+  g_assert_cmpuint(gh_relay_soup_scope_get_retry_seconds(handle), >=, 4);
+  relay.close_on_connect = FALSE;
+  wait_at_least(&seen.events, 1);
+  g_assert_cmpuint(seen.eoses, ==, 0);
+  g_assert_cmpuint(gh_relay_soup_scope_get_retry_seconds(handle), >=, 4);
+  /* Replaying the same stored EVENT on the next connection must not turn
+   * repeated pre-catch-up disconnects into a one-second retry loop. */
+  relay.no_eose = FALSE;
+  soup_websocket_connection_close(g_ptr_array_index(relay.connections,
+    relay.connections->len - 1), SOUP_WEBSOCKET_CLOSE_GOING_AWAY, NULL);
+  wait_at_least(&seen.disconnected, 3);
+  wait_at_least(&seen.eoses, 1);
+  g_assert_cmpuint(gh_relay_soup_scope_get_retry_seconds(handle), >=, 8);
+  g_autofree gchar *live = signed_json("new event after catch-up");
+  wire_relay_inject(&relay, live);
+  wait_at_least(&seen.events, 2);
+  g_assert_cmpuint(gh_relay_soup_scope_get_retry_seconds(handle), ==, 1);
+  gh_relay_scope_cancel(scope);
+  gh_relay_scope_unref(scope);
+  g_assert_null(handle);
+  g_free(seen.last_error);
+  relay_clear(&relay);
+}
+
+static void
+test_direct_untrusted_socket_filter(void)
+{
+  GhNetSession *session = install_session(GH_NET_MODE_NONE, NULL);
+  Tripwire trip = { 0 };
+  tripwire_init(&trip);
+  const gchar *hosts[] = { "127.0.0.1", REBIND_HOST };
+#ifdef GH_NET_PRODUCTION_TESTS
+  g_assert_cmpstr(g_getenv("NOSTRC_TEST_ISOLATION"), ==, "1");
+  const gchar *schemes[] = { "ws", "wss" };
+#else
+  const gchar *schemes[] = { "wss" };
+#endif
+  for (guint scheme = 0; scheme < G_N_ELEMENTS(schemes); scheme++) {
+    for (guint i = 0; i < G_N_ELEMENTS(hosts); i++) {
+      g_autofree gchar *url = g_strdup_printf("%s://%s:%u/relay", schemes[scheme], hosts[i], trip.port);
+      ScopeSeen seen = { 0 };
+      GhRelayScope *scope = open_scope(1, url, &seen);
+      wait_at_least(&seen.errors, 1);
+      g_assert_cmpuint(trip.accepted, ==, 0);
+      gh_relay_scope_cancel(scope);
+      gh_relay_scope_unref(scope);
+      PublishSeen sent = { 0 };
+      GhRelayPublish *publish = start_publish(url, "must never reach a private socket", &sent);
+      wait_at_least(&sent.done, 1);
+      g_assert_cmpuint(trip.accepted, ==, 0);
+      g_assert_cmpint(sent.outcome, ==, GH_RELAY_PUBLISH_CONNECTION_FAILED);
+      gh_relay_publish_unref(publish);
+      g_free(seen.last_error);
+      g_free(sent.message);
+    }
+  }
+  gboolean resolved = FALSE;
+  for (guint i = 0; i < dns_names->len; i++)
+    resolved |= g_strcmp0(g_ptr_array_index(dns_names, i), REBIND_HOST) == 0;
+  g_assert_true(resolved); /* the rebinding answer was actually evaluated */
+  tripwire_clear(&trip);
+  uninstall_session(session);
+}
+
 static void
 test_upgrade_close_recovery(void)
 {
@@ -1174,6 +1272,38 @@ test_no_session_refuses(void)
 /* gh_net_address_is_public(), including every IPv6 form carrying an IPv4
  * address, which the embedded address decides. */
 static void
+test_special_purpose_addresses(void)
+{
+  static const gchar *const refused[] = {
+    "64:ff9b:1:abcd:c0:a801:100:1", /* nonzero NAT64 suffix hides 192.168.1.1 */
+    "64:ff9b:1::808:808",          /* local-use, even with a public embedded v4 */
+    "2001:2::1", "2001:2:ffff::1", /* benchmarking /48 */
+    "2001:10::1", "2001:1::4",    /* deprecated ORCHID /28, unassigned IETF */
+    "3fff::1", "3fff:fff:ffff::1", /* documentation /20 */
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(refused); i++) {
+    g_autoptr(GInetAddress) address = g_inet_address_new_from_string(refused[i]);
+    g_test_message("refuse %s", refused[i]);
+    g_assert_false(gh_net_address_is_public(address));
+    /* The actual connect-time enumerator must not yield a socket address. */
+    g_autoptr(GSocketConnectable) connectable = gh_net_public_address_new(refused[i], 443, "https");
+    g_autoptr(GSocketAddressEnumerator) enumerator = g_socket_connectable_enumerate(connectable);
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GSocketAddress) next = g_socket_address_enumerator_next(enumerator, NULL, &error);
+    g_assert_null(next);
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+  }
+  static const gchar *const public_ietf[] = {
+    "2001:1::1", "2001:1::2", "2001:1::3", "2001:3::1", "2001:4:112::1",
+    "2001:20::1", "2001:30::1", "3fff:1000::1",
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(public_ietf); i++) {
+    g_autoptr(GInetAddress) address = g_inet_address_new_from_string(public_ietf[i]);
+    g_assert_true(gh_net_address_is_public(address));
+  }
+}
+
+static void
 test_public_address(void)
 {
   static const gchar *const refused[] = {
@@ -1198,7 +1328,7 @@ test_public_address(void)
   };
   static const gchar *const allowed[] = {
     "8.8.8.8", "1.1.1.1", "93.184.216.34", "2606:4700:4700::1111", "2a00:1450:4001:80b::200e",
-    "::ffff:8.8.8.8", "64:ff9b::8.8.8.8", "64:ff9b:1::808:808", "2002:808:808::1",
+    "::ffff:8.8.8.8", "64:ff9b::8.8.8.8", "2002:808:808::1",
     "2001:0:4136:e378:8000:63bf:f7f7:f7f7",
   };
   g_autoptr(GString) wrong = g_string_new(NULL);
@@ -1785,8 +1915,11 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/net/mode-switch", test_mode_switch);
   g_test_add_func("/groundhog/net/isolation", test_isolation);
   g_test_add_func("/groundhog/net/upgrade-close-recovery", test_upgrade_close_recovery);
+  g_test_add_func("/groundhog/net/direct-untrusted-socket-filter", test_direct_untrusted_socket_filter);
+  g_test_add_func("/groundhog/net/replayed-history-preserves-backoff", test_replayed_history_preserves_backoff);
   g_test_add_func("/groundhog/net/no-session-refuses", test_no_session_refuses);
   g_test_add_func("/groundhog/net/allow-local-network", test_allow_local_network);
+  g_test_add_func("/groundhog/net/special-purpose-addresses", test_special_purpose_addresses);
   g_test_add_func("/groundhog/net/public-address", test_public_address);
   g_test_add_func("/groundhog/net/public-only", test_public_only);
   g_test_add_func("/groundhog/net/public-enumerator", test_public_enumerator);

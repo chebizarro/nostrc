@@ -46,6 +46,7 @@
 #include "relay_pool_private.h"
 #include <nostr-keys.h>
 #include <secure_buf.h>
+#include "secret_json.h"
 
 /* NIP modules */
 #include <nostr/nip04.h>
@@ -73,7 +74,7 @@ static char *signet_json_quote_string(const char *s) {
 
   JsonGenerator *g = json_generator_new();
   if (!g) {
-    g_object_unref(b);
+    signet_secret_json_builder_unref(b);
     return NULL;
   }
 
@@ -82,20 +83,20 @@ static char *signet_json_quote_string(const char *s) {
   json_generator_set_pretty(g, FALSE);
   char *array_json = json_generator_to_data(g, NULL);
 
-  json_node_free(root);
-  g_object_unref(g);
-  g_object_unref(b);
+  signet_secret_json_node_unref(root);
+  signet_secret_json_generator_unref(g);
+  signet_secret_json_builder_unref(b);
 
   if (!array_json) return NULL;
 
   size_t len = strlen(array_json);
   if (len < 4) {
-    g_free(array_json);
+    signet_secret_gfree(array_json);
     return NULL;
   }
 
   char *quoted = g_strndup(array_json + 1, len - 2);
-  g_free(array_json);
+  signet_secret_gfree(array_json);
   return quoted;
 }
 
@@ -177,16 +178,16 @@ static void signet_audit_nip46(SignetAuditLogger *audit,
   json_builder_end_object(b);
 
   JsonGenerator *g = json_generator_new();
-  if (!g) { g_object_unref(b); return; }
+  if (!g) { signet_secret_json_builder_unref(b); return; }
 
   JsonNode *root = json_builder_get_root(b);
   json_generator_set_root(g, root);
   json_generator_set_pretty(g, FALSE);
   char *json = json_generator_to_data(g, NULL);
 
-  json_node_free(root);
-  g_object_unref(g);
-  g_object_unref(b);
+  signet_secret_json_node_unref(root);
+  signet_secret_json_generator_unref(g);
+  signet_secret_json_builder_unref(b);
 
   if (json) {
     (void)signet_audit_log_json(audit, SIGNET_AUDIT_EVENT_SIGN_REQUEST, json);
@@ -474,6 +475,41 @@ static int signet_nip46_fido_bound_call(void *data) {
 }
 #endif
 
+typedef struct {
+  SignetNip46Server *server;
+  const char *client;
+  int64_t now;
+  SignetPolicyResult *policy;
+  bool *policy_ok;
+  const char **code;
+  char **error;
+} SignetConnectAdmission;
+
+/* The backend supplies the resolved identity, without spending its secret.
+ * Never re-enter the key store here: its pairing lock is held. */
+static bool signet_nip46_admit_connect(const char *agent_id,
+                                       const char *agent_pubkey, void *data) {
+  SignetConnectAdmission *w = data;
+  if (!agent_pubkey || strlen(agent_pubkey) != 64) {
+    *w->code = "auth_failed";
+    *w->error = g_strdup("agent identity unavailable");
+    return false;
+  }
+  if (w->server->deny && signet_deny_list_contains(w->server->deny, agent_pubkey)) {
+    *w->code = "deny_listed";
+    *w->error = g_strdup("agent identity is deny-listed");
+    return false;
+  }
+  *w->policy_ok = w->server->policy && signet_policy_engine_eval(
+      w->server->policy, agent_id, w->client, "connect", -1, w->now, w->policy);
+  if (!*w->policy_ok || w->policy->decision != SIGNET_POLICY_DECISION_ALLOW) {
+    *w->code = !*w->policy_ok ? "policy_error" : "policy_denied";
+    *w->error = g_strdup(w->policy->reason_code ? w->policy->reason_code : "denied");
+    return false;
+  }
+  return true;
+}
+
 /* ----------------------------- handle_event ------------------------------- */
 
 bool signet_nip46_server_handle_event(SignetNip46Server *s,
@@ -488,14 +524,19 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   if (!remote_signer_pubkey_hex || !remote_signer_secret_key_hex ||
       !client_pubkey_hex || !ciphertext) return false;
 
-  SignetReplayResult rr = SIGNET_REPLAY_OK;
+  /* The signed outer author owns the quota even for junk ciphertext. Check
+   * before crypto so a repeated bad envelope cannot amplify work or replies. */
+  SignetReplayResult rr = s->replay
+    ? signet_replay_check_and_mark_scoped(s->replay, client_pubkey_hex,
+                                          event_id_hex, created_at, now)
+    : SIGNET_REPLAY_OK;
 
   /* 2) Decrypt request content (NIP-44 v2) */
   char *plain = NULL;
   size_t plain_len = 0;
   char *dec_err = NULL;
   bool dec_ok = false;
-  {
+  if (rr == SIGNET_REPLAY_OK) {
     uint8_t sk[32], pk[32];
     if (signet_hex_to_bytes32(remote_signer_secret_key_hex, sk) &&
         signet_hex_to_bytes32(client_pubkey_hex, pk)) {
@@ -528,13 +569,6 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
     parse_ok = (nostr_nip46_request_parse(plain, &req) == 0);
   }
 
-  /* Reject undecryptable/malformed requests without spending replay room.
-   * Charge valid requests to their signed envelope author; production uses
-   * per-client quotas and refuses full caches instead of evicting live ids. */
-  if (s->replay && dec_ok && parse_ok)
-    rr = signet_replay_check_and_mark_scoped(s->replay, client_pubkey_hex,
-                                             event_id_hex, created_at, now);
-
   const char *method = parse_ok ? req.method : NULL;
   const char *req_id = parse_ok ? req.id : NULL;
 
@@ -545,6 +579,11 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
       req.params && req.n_params >= 1) {
     event_kind_ok = signet_json_event_extract_kind(req.params[0], &event_kind);
   }
+
+  SignetPolicyResult pres = {.decision = SIGNET_POLICY_DECISION_DENY,
+                              .reason_code = "policy_engine_missing"};
+  bool policy_ok = false;
+  bool pairing_admitted = false;
 
   char *session_agent_id = NULL;
   char *binding_secret_hash = NULL;
@@ -565,19 +604,21 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
         pre_code = "wrong_signer";
         pre_err = g_strdup("connect target does not match bunker pubkey");
       } else {
-        /* PAIRING path: a provided one-time secret authorizes binding (or
-         * re-binding) this client key to its agent. Consumption and the
-         * binding commit together — in ONE store transaction, or in cache-only
-         * mode in one critical section of the key store — so the credential
-         * is never burnt without recording the pairing. */
+        /* Resolve, admit, then consume-and-bind under one backend lock.
+         * A deny/policy/storage refusal leaves all pairing authority intact. */
         bool secret_provided = (provided_secret && provided_secret[0]);
         SignetStore *st = signet_key_store_get_store(s->keys);
         if (secret_provided) {
-          int rc = st ? signet_store_consume_connect_secret_and_bind(
-                            st, provided_secret, client_pubkey_hex, now, &session_agent_id)
-                      : signet_key_store_ephemeral_pair_client(
-                            s->keys, provided_secret, client_pubkey_hex, &session_agent_id);
-          if (rc != 0) { g_free(session_agent_id); session_agent_id = NULL; }
+          SignetConnectAdmission admission = {s, client_pubkey_hex, now,
+                                               &pres, &policy_ok, &pre_code, &pre_err};
+          int rc = signet_key_store_admit_connect_client(s->keys, provided_secret,
+              client_pubkey_hex, now, signet_nip46_admit_connect, &admission,
+              &session_agent_id);
+          pairing_admitted = rc == 0;
+          if (rc < 0) {
+            pre_code = "auth_failed";
+            pre_err = g_strdup("pairing transaction failed");
+          }
         }
 
         /* RECONNECT path: falls back to the binding created at pairing time
@@ -589,7 +630,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
          * the stale value a restarted client re-sends. An arbitrary wrong
          * secret stays auth_failed so misconfiguration/probing is surfaced
          * rather than silently ignored. */
-        if (!session_agent_id) {
+        if (!session_agent_id && !pre_err) {
           char *bound = NULL;
           char *bound_hash = NULL;
           if (signet_nip46_lookup_binding(s->keys, client_pubkey_hex, now,
@@ -662,7 +703,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
      * policy engine does not consult the deny list, so without this check a
      * suspended-but-not-revoked agent with a persistent binding could keep
      * using its custody key. */
-    if (!pre_err && session_agent_id && s->deny) {
+    if (!pre_err && !pairing_admitted && session_agent_id && s->deny) {
       char agent_pk[65] = {0};
       if (signet_key_store_get_agent_pubkey(s->keys, session_agent_id,
                                             agent_pk, sizeof(agent_pk)) &&
@@ -674,13 +715,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   }
 
   /* 4) Policy check */
-  SignetPolicyResult pres;
-  memset(&pres, 0, sizeof(pres));
-  pres.decision = SIGNET_POLICY_DECISION_DENY;
-  pres.reason_code = "policy_engine_missing";
-
-  bool policy_ok = false;
-  if (!pre_err && s->policy && parse_ok && method) {
+  if (!pairing_admitted && !pre_err && s->policy && parse_ok && method) {
     policy_ok = signet_policy_engine_eval(s->policy,
                                           policy_identity,
                                           client_pubkey_hex,
@@ -692,7 +727,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
       pres.decision = SIGNET_POLICY_DECISION_DENY;
       pres.reason_code = "policy_eval_error";
     }
-  } else if (!pre_err && parse_ok && method) {
+  } else if (!pairing_admitted && !pre_err && parse_ok && method) {
     policy_ok = true;
     pres.decision = SIGNET_POLICY_DECISION_DENY;
     pres.reason_code = "policy_engine_missing";
@@ -748,8 +783,8 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
 
     /* 6) Execute method */
     if (strcmp(method, "connect") == 0) {
-      /* The pairing was already recorded atomically with the secret
-       * consumption, or resolved from an existing binding. */
+      /* Admission preceded atomic consumption/binding, or this is a
+       * reconnect through an existing binding. */
       result = g_strdup("ack");
       result_is_json = false;
       status = "ok";
@@ -923,7 +958,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   if (err_str) {
     resp_json = nostr_nip46_response_build_err(req_id ? req_id : "", err_str);
   } else {
-    g_autofree char *result_json = NULL;
+    char *result_json = NULL;
     if (result_is_json) {
       result_json = g_strdup(result ? result : "\"\"");
     } else {
@@ -931,6 +966,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
     }
     resp_json = nostr_nip46_response_build_ok(req_id ? req_id : "",
                                                result_json ? result_json : "\"\"");
+    signet_secret_gfree(result_json);
   }
 
   /* 9) Encrypt response (NIP-44 v2) */
@@ -938,7 +974,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   char *enc_err = NULL;
   bool enc_ok = false;
 
-  if (resp_json) {
+  if (resp_json && rr == SIGNET_REPLAY_OK) {
     uint8_t sk[32], pk[32];
     if (signet_hex_to_bytes32(remote_signer_secret_key_hex, sk) &&
         signet_hex_to_bytes32(client_pubkey_hex, pk)) {
