@@ -29,6 +29,12 @@ G_BEGIN_DECLS
  *   OWN_PRIVATE_SYNC_READ ACCOUNT    encrypted drafts on current own 10013 relays
  *   OWN_PRIVATE_SYNC_PUBLISH ACCOUNT encrypted drafts on current own 10013 relays
  *
+ * Address provenance (nostrc-c9wt) is separate from AUTH identity: GROUP,
+ * MLS_ROUTING, CONTACT_DIRECTORY and RECIPIENT_WRAP are public-only in
+ * direct mode. Account-owned destinations may be local. A lookup may mark
+ * a URL trusted when it is explicitly in the user's discovery-relays;
+ * third-party hints never acquire trust merely by authenticating.
+ *
  * Rules (§4.4):
  *  - R1: the account signs a kind-22242 event only for OWN_INBOX_READ,
  *    OWN_LIST_PUBLISH, SELF_WRAP, GROUP and the two OWN_PRIVATE_SYNC purposes.

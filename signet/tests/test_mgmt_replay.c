@@ -484,6 +484,8 @@ typedef struct {
   const char *url;    /* the answering relay: subscribe on its first CONNECTED */
   gint accepted;
   gint dropped;
+  gint retired_dropped;
+  char *retired_id;
   int eoses;
   bool need_live;
   bool subscribed;
@@ -529,6 +531,13 @@ static gboolean ingress_reload(void *data) {
 static void ingress_event(const SignetRelayEventView *ev, void *data) {
   IngressWire *w = data;
   int rc = signet_mgmt_handler_handle_relay_event(w->f.mgmt, ev, time(NULL));
+  if (!g_strcmp0(ev->event_id_hex, w->retired_id)) {
+    /* CLOSE may already have removed this id from libnostr. If it still
+     * drains, it must be audited as refused, never inherit the new EOSE. */
+    CHECK(rc != 0 && ev->live_since == 0);
+    CHECK(g_atomic_int_add(&w->retired_dropped, 1) == 0);
+    return;
+  }
   if (rc != 0) {
     g_atomic_int_inc(&w->dropped);
     return;
@@ -583,14 +592,15 @@ static void ingress_subscription(const char *url, const char *state,
   IngressWire *w = data;
   if (strcmp(state, "CONNECTED") == 0) {
     if (w->subscribed || strcmp(url, w->url)) return;
-    /* signetd subscribes after start, once the relay is already up: the REQ
-     * fires immediately and the CONNECTED re-subscribe installs a second
-     * REQ with the same filter right behind it. The relay answers fresh
-     * requests on the older one first. */
+    /* Like signetd, subscribe after start. Isolation explicitly replaces a
+     * draining REQ; it must be closed, never made live by the new one's EOSE. */
     w->subscribed = true;
     int kinds[] = {CAS_INTENT, NIP59_GIFT_WRAP};
     CHECK(signet_relay_pool_subscribe_scoped(w->pool, kinds, 2,
         w->f.bunker_pk_hex, time(NULL) - 49 * 3600) == 0);
+    if (w->isolate)
+      CHECK(signet_relay_pool_subscribe_scoped(w->pool, kinds, 2,
+          w->f.bunker_pk_hex, time(NULL) - 49 * 3600) == 0);
     return;
   }
   if (strcmp(state, "DISCONNECTED") == 0) w->need_live = true;
@@ -622,6 +632,10 @@ static int test_wire_ingress(const char *url, const char *fixture_path,
   char *history1 = adopt_gift(&w.f, "history1", time(NULL) + 60);
   char *history2 = adopt_gift(&w.f, "history2", time(NULL) + 60);
   char *late = adopt_gift(&w.f, "history-late", time(NULL) + 60);
+  NostrEvent *late_event = nostr_event_new(); CHECK(late_event);
+  CHECK(nostr_event_deserialize_compact(late_event, late, NULL) == 1);
+  w.retired_id = nostr_event_get_id(late_event); CHECK(w.retired_id);
+  nostr_event_free(late_event);
   char *fixtures = g_strdup_printf("[%s,%s,%s]", history1, history2, late);
   CHECK(g_file_set_contents(fixture_path, fixtures, -1, NULL));
   g_free(fixtures);
@@ -642,7 +656,7 @@ static int test_wire_ingress(const char *url, const char *fixture_path,
   g_main_loop_run(w.loop);
   int phases = (reconnect || reload) ? 2 : 1;
   int expected_accepted = phases * 2;              /* warm-up + live per phase */
-  int expected_dropped = phases * 2 + (isolate ? 1 : 0); /* history + stale, late */
+  int expected_dropped = phases * 2; /* history + stale; closed REQ late delivery is not forwarded */
   if (g_atomic_int_get(&w.accepted) == expected_accepted) g_source_remove(deadline);
   signet_relay_pool_free(w.pool);
   CHECK(w.eoses == phases && g_atomic_int_get(&w.accepted) == expected_accepted);
@@ -665,15 +679,12 @@ static int test_wire_ingress(const char *url, const char *fixture_path,
   CHECK(sqlite3_prepare_v2(signet_store_get_db(store),
       "SELECT count(*) FROM audit_log WHERE operation='mgmt_history_dropped'",
       -1, &stmt, NULL) == SQLITE_OK);
-  CHECK(sqlite3_step(stmt) == SQLITE_ROW && sqlite3_column_int(stmt, 0) == expected_dropped);
+  CHECK(sqlite3_step(stmt) == SQLITE_ROW && sqlite3_column_int(stmt, 0) == expected_dropped + g_atomic_int_get(&w.retired_dropped));
   sqlite3_finalize(stmt);
+  free(w.retired_id);
   fixture_teardown(&w.f);
   g_main_loop_unref(w.loop);
-  puts(isolate && reconnect ? "wire: draining-REQ isolation, live mutation on the older REQ, reconnect and second live mutation PASS"
-       : isolate ? "wire: draining startup REQ refused after the required EOSE PASS"
-       : reload ? "wire: live mutations on the older REQ before and after relay-set reload PASS"
-       : peer_url ? "wire: live mutation on the older REQ beside a peer relay that never reaches EOSE PASS"
-               : "wire: startup REQ pair, pre-EOSE history and old rumors audited; live mutations on the older REQ within 10s and reconnect PASS");
+  puts("wire: one active REQ, per-REQ history/EOSE admission, retired delivery refusal, reconnect/reload PASS");
   return 0;
 }
 

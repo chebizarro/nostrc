@@ -155,7 +155,9 @@ GhMlsPictureState gh_mls_attachments_get_picture(GhMlsAttachments *self, GhMlsGr
  * empty when there is none (set_picture then fails with NO_SERVER). For the
  * admin's confirmation (gh_mls_picture_upload_note()). */
 GStrv gh_mls_attachments_dup_picture_upload_hosts(GhMlsAttachments *self, GhMlsGroup *group);
-/* The user's Show Picture: fetch, check, open and keep it. */
+/* The user's Show Picture: fetch, check, open and keep it. Legacy MIP-01
+ * pictures are read from disclosed account-configured servers, using their
+ * stored version for key derivation; legacy picture editing stays unsupported. */
 void gh_mls_attachments_fetch_picture_async(GhMlsAttachments *self, GhMlsGroup *group,
                                             GCancellable *cancellable,
                                             GAsyncReadyCallback callback, gpointer user_data);

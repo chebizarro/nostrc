@@ -4612,6 +4612,109 @@ TEST(test_inbound_add_of_unsupported_key_package_refused)
 #endif
 }
 
+/* ── nostrc-wafb: Adds checked against the group (RFC 9420 §7.3) ──────── */
+
+/* A KeyPackage, valid on its own, whose leaf carries an extension of a type
+ * its capabilities do not list (§7.3 step 6). */
+static void
+key_package_with_unlisted_leaf_extension(MlsKeyPackage *kp, MlsKeyPackagePrivate *priv,
+                                         const uint8_t id[32])
+{
+    static const uint8_t ext[] = { 0xF0, 0xF0, 0x00 };   /* type 0xF0F0, empty */
+    assert(mls_key_package_create(kp, priv, id, 32, NULL, 0) == 0);
+    free(kp->leaf_node.extensions_data);
+    kp->leaf_node.extensions_data = malloc(sizeof ext);
+    assert(kp->leaf_node.extensions_data != NULL);
+    memcpy(kp->leaf_node.extensions_data, ext, sizeof ext);
+    kp->leaf_node.extensions_len = sizeof ext;
+    assert(mls_leaf_node_sign(&kp->leaf_node, priv->signature_key_private, NULL, 0, 0) == 0);
+    assert(mls_key_package_sign(kp, priv) == 0);
+    assert(mls_key_package_validate(kp) == 0);   /* the gap: self-consistent */
+}
+
+/* Alice refuses an Add whose leaf breaks §7.3 step 6, and one whose
+ * credential type a member does not support (step 4: Alice's own leaf is
+ * made to stop listing basic, which a joiner's KeyPackage cannot do and
+ * still pass mls_key_package_validate()). */
+TEST(test_add_checks_group_compatibility)
+{
+    MlsGroup a;
+    uint8_t sk[MLS_SIG_SK_LEN];
+    assert(create_alice_group(&a, sk) == 0);
+    MlsKeyPackage kp;
+    MlsKeyPackagePrivate priv;
+    key_package_with_unlisted_leaf_extension(&kp, &priv, CHARLIE_ID);
+    const MlsKeyPackage *kps[1] = { &kp };
+    MlsAddResult add;
+    memset(&add, 0, sizeof add);
+    assert(mls_group_add_members(&a, kps, 1, &add) == MARMOT_ERR_KEY_PACKAGE_CAPABILITIES);
+    assert(a.epoch == 0 && a.tree.n_leaves == 1);
+    mls_key_package_clear(&kp);
+    mls_key_package_private_clear(&priv);
+
+    assert(mls_key_package_create(&kp, &priv, CHARLIE_ID, 32, NULL, 0) == 0);
+    MlsLeafNode *own = &a.tree.nodes[mls_tree_leaf_to_node(a.own_leaf_index)].leaf;
+    assert(own->cap_credential_count >= 1);
+    uint16_t saved = own->cap_credentials[0];
+    for (size_t i = 0; i < own->cap_credential_count; i++)
+        own->cap_credentials[i] = 0xF0F0;
+    memset(&add, 0, sizeof add);
+    assert(mls_group_add_members(&a, kps, 1, &add) == MARMOT_ERR_KEY_PACKAGE_CAPABILITIES);
+    assert(a.epoch == 0 && a.tree.n_leaves == 1);
+    for (size_t i = 0; i < own->cap_credential_count; i++)
+        own->cap_credentials[i] = saved;
+    memset(&add, 0, sizeof add);
+    assert(mls_group_add_members(&a, kps, 1, &add) == 0);
+    mls_add_result_clear(&add);
+    mls_key_package_clear(&kp);
+    mls_key_package_private_clear(&priv);
+    mls_group_free(&a);
+    sodium_memzero(sk, sizeof sk);
+}
+
+/* A non-conforming member's Add of such a KeyPackage is refused on arrival
+ * and changes nothing.  Made with the test-only switch (MARMOT_TEST_HOOKS). */
+TEST(test_inbound_add_checks_group_compatibility)
+{
+#ifndef MARMOT_TEST_HOOKS
+    printf("(skipped: no MARMOT_TEST_HOOKS) ");
+    return;
+#else
+    MlsGroup alice, bob;
+    uint8_t sk[MLS_SIG_SK_LEN];
+    assert(create_alice_group(&alice, sk) == 0);
+    MlsKeyPackage bob_kp, kp;
+    MlsKeyPackagePrivate bob_priv, priv;
+    assert(mls_key_package_create(&bob_kp, &bob_priv, BOB_ID, 32, NULL, 0) == 0);
+    MlsAddResult add;
+    memset(&add, 0, sizeof add);
+    assert(mls_group_add_member(&alice, &bob_kp, &add) == 0);
+    assert(mls_welcome_process(add.welcome_data, add.welcome_len, &bob_kp, &bob_priv, NULL, 0,
+                               &bob) == 0);
+    mls_add_result_clear(&add);
+
+    key_package_with_unlisted_leaf_extension(&kp, &priv, CHARLIE_ID);
+    const MlsKeyPackage *kps[1] = { &kp };
+    mls_test_allow_unsupported_adds = true;
+    memset(&add, 0, sizeof add);
+    int rc = mls_group_add_members(&alice, kps, 1, &add);
+    mls_test_allow_unsupported_adds = false;
+    assert(rc == 0);
+    uint64_t epoch = bob.epoch;
+    assert(mls_group_process_commit(&bob, add.commit_data, add.commit_len,
+                                    alice.own_leaf_index) == MARMOT_ERR_KEY_PACKAGE_CAPABILITIES);
+    assert(bob.epoch == epoch && bob.tree.n_leaves == 2);
+    mls_add_result_clear(&add);
+    mls_key_package_clear(&kp);
+    mls_key_package_private_clear(&priv);
+    mls_key_package_clear(&bob_kp);
+    mls_key_package_private_clear(&bob_priv);
+    mls_group_free(&alice);
+    mls_group_free(&bob);
+    sodium_memzero(sk, sizeof sk);
+#endif
+}
+
 int main(void)
 {
     if (sodium_init() < 0) {
@@ -4631,6 +4734,10 @@ int main(void)
     printf(" Joiners and required capabilities (nostrc-zbmb):\n");
     RUN(test_add_refuses_unsupported_key_package);
     RUN(test_inbound_add_of_unsupported_key_package_refused);
+
+    printf(" Adds checked against the group (nostrc-wafb):\n");
+    RUN(test_add_checks_group_compatibility);
+    RUN(test_inbound_add_checks_group_compatibility);
 
     printf(" Application messages:\n");
     RUN(test_encrypt_decrypt_single_member);

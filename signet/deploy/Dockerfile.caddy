@@ -1,0 +1,8 @@
+# The optional bootstrap profile requires this module, not the stock image.
+ARG CADDY_BUILDER_IMAGE
+ARG CADDY_IMAGE
+FROM ${CADDY_BUILDER_IMAGE} AS builder
+RUN xcaddy build v2.10.2 --with github.com/mholt/caddy-ratelimit@12435ecef5dbb1b137eb68002b85d775a9d5cdb2
+FROM ${CADDY_IMAGE}
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy
+RUN caddy list-modules | grep -qx http.handlers.rate_limit

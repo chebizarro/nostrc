@@ -232,7 +232,16 @@ marmot_message_result_free(MarmotMessageResult *result)
     for (size_t i = 0; i < result->convergence.invalidated_count; i++)
         free(result->convergence.invalidated_message_ids[i]);
     free(result->convergence.invalidated_message_ids);
+    free(result->commit_roster.members);
     memset(result, 0, sizeof(*result));
+}
+
+void
+marmot_message_results_free(MarmotMessageResult *results, size_t count)
+{
+    if (!results) return;
+    for (size_t i = 0; i < count; i++) marmot_message_result_free(&results[i]);
+    free(results);
 }
 
 void

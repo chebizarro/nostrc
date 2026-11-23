@@ -273,7 +273,7 @@ def _step(steps, needle, what):
 BUILD_SHAPE = [
     r"targets=\((?P<initial>[^)]*)\)",
     r'for test in \$%s; do' % TESTS_VAR,
-    r'case "\$test" in (groundhog-launch\) targets\+=\(groundhog\) ;; )?(groundhog-\*-gui\) targets\+=\("test-\$\{test%-gui\}"\) ;; )?groundhog-\*\) targets\+=\("test-\$test"\) ;; \*\) targets\+=\("\$test"\) ;; esac',
+    r'case "\$test" in (groundhog-launch\) targets\+=\(groundhog\) ;; )?(groundhog-call-media-two-process\) targets\+=\(test-groundhog-call-media\) ;; )?(groundhog-\*-gui\) targets\+=\("test-\$\{test%-gui\}"\) ;; )?groundhog-\*\) targets\+=\("test-\$test"\) ;; \*\) targets\+=\("\$test"\) ;; esac',
     r"done",
     r'cmake --build (?P<dir>\S+) --parallel \d+ --target "\$\{targets\[@\]\}"',
 ]
@@ -379,6 +379,10 @@ def job_config(text, source_root):
     for test in tests:
         if launch_target and test == "groundhog-launch":
             targets.append("groundhog")
+        elif test == "groundhog-call-media-two-process":
+            if 'groundhog-call-media-two-process)' not in build_step["run"]:
+                raise WorkflowError("two-process call coverage requires its real media peer target mapping")
+            targets.append("test-groundhog-call-media")
         elif test.startswith("groundhog-"):
             targets.append("test-" + (test.removesuffix("-gui") if gui_targets else test))
         else:

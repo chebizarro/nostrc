@@ -22,8 +22,10 @@ G_BEGIN_DECLS
  *    resolver whose credentials come from the scope's or publish's isolation
  *    label and account generation (NT-6). There is no code path from Tor mode
  *    to the GNostrRelay transport or to any direct connection;
- *  - in System and No Proxy modes, opens the GNostrRelay transport, as before
- *    G09 (libwebsockets cannot use a proxy; see gh-net-session.h).
+ *  - in System and No Proxy modes, untrusted destinations use the libsoup
+ *    transport with the public-only connect-time address enumerator. Explicit
+ *    account-owned destinations and isolated ws:// loopback fixtures retain
+ *    GNostrRelay. AUTH identity never grants address trust by itself.
  *
  * When the session's mode or Tor address changes, every connection opened in
  * the old one is closed at once (on its own context) before anything else

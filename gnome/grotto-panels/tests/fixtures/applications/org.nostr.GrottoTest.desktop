@@ -1,5 +1,5 @@
 [Desktop Entry]
 Type=Application
 Name=Friendly Test App
-Exec=true
+Exec=nostrc-grotto-panel-fixture-first
 Icon=grotto-test-app

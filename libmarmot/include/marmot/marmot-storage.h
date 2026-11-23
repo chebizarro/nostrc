@@ -195,7 +195,16 @@ typedef struct MarmotStorage {
 
     /* ── Snapshot operations (for commit race resolution) ─────────────── */
 
-    /** Create a named snapshot of a group's state. */
+    /**
+     * Create a named snapshot of a group's state.
+     *
+     * Scope (nostrc-ow0c): a snapshot covers the group's record and its
+     * group-scoped MLS state labels ("mls_group", "mls_group_parent", ...)
+     * and must never cover the "mls_send_hwm" label (the generations our
+     * sender ratchets handed out) or the processed-message markers: those
+     * are what keep a rolled-back state from reusing a sender generation or
+     * reading a message again.
+     */
     MarmotError (*create_snapshot)(void *ctx,
                                     const MarmotGroupId *group_id,
                                     const char *name);
@@ -204,11 +213,14 @@ typedef struct MarmotStorage {
      * Rollback a group to a named snapshot (consumes the snapshot).
      *
      * libmarmot never calls this.  The MLS state holds the sender ratchets
-     * (since 0.8.0, nostrc-ai04): rolling it back within an epoch rewinds
-     * them, so the next send would reuse a generation -- the key and nonce
-     * of a message already sent -- and receivers would read replays again.
-     * Only roll back to a snapshot of an epoch no message has been sent or
-     * read in, or move to a new epoch before sending.
+     * (since 0.8.0, nostrc-ai04), so a rollback within an epoch rewinds
+     * them.  Since 0.14.1 (nostrc-ow0c) that is safe for sending: every
+     * operation that steps our sender ratchet first moves a state that is
+     * behind the "mls_send_hwm" record past it, so no generation is used
+     * twice -- provided the snapshot does not cover that record (see
+     * create_snapshot).  Messages read after the snapshot are read again
+     * only if their processed-message markers were rolled back too, which
+     * a snapshot must not do either.
      */
     MarmotError (*rollback_snapshot)(void *ctx,
                                       const MarmotGroupId *group_id,

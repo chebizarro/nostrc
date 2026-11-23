@@ -431,6 +431,11 @@ if(BUILD_LIBHANAMI)
 endif()
 # Declare before dependency resolution on a fresh configure.
 option(BUILD_GROUNDHOG "Build the Groundhog messaging app shell" OFF)
+if(BUILD_GROUNDHOG AND (NOT WITH_NOSTRDB OR NOT LIBNOSTR_WITH_NOSTRDB))
+  message(FATAL_ERROR
+    "Groundhog qualification requires WITH_NOSTRDB=ON and LIBNOSTR_WITH_NOSTRDB=ON; "
+    "nostrdb-disabled core builds are not Groundhog gates (see docs/TESTING.md).")
+endif()
 if(BUILD_GROUNDHOG)
   set(ENABLE_NIP02 ON CACHE BOOL "Enable nip02 (required by Groundhog)" FORCE)
 endif()

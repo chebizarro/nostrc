@@ -33,6 +33,9 @@ typedef struct NostrSubscription {
 /* nostr_subscription_new: create a subscription on @relay. It is registered
  * for EVENT/EOSE/CLOSED dispatch the first time nostr_subscription_fire() runs
  * (nostr_relay_prepare_subscription() registers it immediately). */
+/* @filters is borrowed. Keep it alive until unsubscribe/free/free_async returns
+ * (free_async must return a handle); cleanup_abandon does not extend this borrow.
+ * Do not mutate filters concurrently with fire/refire. set_filters transfers ownership. */
 NOSTR_API NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filters);
 NOSTR_API void               nostr_subscription_free(NostrSubscription *sub);
 /* Opt in before firing when the consumer owns deduplication and must reply to
@@ -83,7 +86,9 @@ typedef struct AsyncCleanupHandle AsyncCleanupHandle;
  * @timeout_ms: maximum time to wait for cleanup (0 = no timeout)
  *
  * Initiates async cleanup of subscription. Returns immediately with a handle.
- * Cleanup happens in background with timeout. If timeout expires, subscription leaks.
+ * Fire/refire is synchronously revoked before successful return; borrowed filters
+ * may then be freed even if cleanup is still running or the handle is abandoned.
+ * Physical cleanup runs in the background.
  *
  * Returns: (transfer full): handle to track cleanup progress, or NULL on error
  */

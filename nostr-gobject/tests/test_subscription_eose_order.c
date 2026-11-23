@@ -35,6 +35,8 @@
  * SPDX-License-Identifier: MIT
  */
 #include <nostr-gobject-1.0/nostr_relay.h>
+#include <nostr-gobject-1.0/nostr_pool.h>
+#include <nostr-gobject-1.0/nostr_simple_pool.h>
 #include <nostr-gobject-1.0/nostr_subscription.h>
 #include <nostr-event.h>
 #include <nostr-filter.h>
@@ -42,6 +44,7 @@
 #include <nostr-relay.h>
 #include <json.h>
 #include "nostr_subscription_test_hooks.h"
+#include "nostr_pool_test_hooks.h"
 
 #include <gio/gio.h>
 #include <glib.h>
@@ -190,6 +193,7 @@ typedef struct {
   SoupServer *server;
   GPtrArray *connections; /* SoupWebsocketConnection, relay thread only */
   GPtrArray *stored;      /* signed event JSON, immutable once started */
+  const gchar *closed_reason; /* final relay frame instead of EOSE */
   const gchar *nip11_json; /* served over HTTP when set */
   gchar *url;
   GMutex lock;
@@ -233,8 +237,10 @@ on_relay_message(SoupWebsocketConnection *connection, SoupWebsocketDataType type
                                               (const gchar *)g_ptr_array_index(relay->stored, i));
     soup_websocket_connection_send_text(connection, frame);
   }
-  g_autofree gchar *eose = g_strdup_printf("[\"EOSE\",\"%s\"]", sub_id);
-  soup_websocket_connection_send_text(connection, eose);
+  g_autofree gchar *terminal = relay->closed_reason
+      ? g_strdup_printf("[\"CLOSED\",\"%s\",\"%s\"]", sub_id, relay->closed_reason)
+      : g_strdup_printf("[\"EOSE\",\"%s\"]", sub_id);
+  soup_websocket_connection_send_text(connection, terminal);
 }
 
 static void
@@ -434,6 +440,8 @@ typedef struct {
   gboolean closed;
   gchar *closed_reason;
   guint events_at_close;
+  guint closed_count;
+  gboolean close_on_first;
 } Backfill;
 
 static void
@@ -444,6 +452,7 @@ on_backfill_event(GNostrSubscription *sub G_GNUC_UNUSED, const gchar *json, gpoi
   g_assert_nonnull(content);
   guint index = (guint)g_ascii_strtoull(content + strlen("\"stored "), NULL, 10);
   g_array_append_val(b->indices, index);
+  if (b->close_on_first && b->indices->len == 1) gnostr_subscription_close(sub);
 }
 
 static void
@@ -464,6 +473,7 @@ on_backfill_closed(GNostrSubscription *sub G_GNUC_UNUSED, const gchar *reason,
     b->closed_reason = g_strdup(reason);
     b->events_at_close = b->indices->len;
   }
+  b->closed_count++;
   b->closed = TRUE;
 }
 
@@ -733,6 +743,223 @@ test_fire_reaches_auth_required_relay(void)
   g_ptr_array_unref(server.stored);
 }
 
+static GMutex terminal_mutex;
+static GCond terminal_changed;
+static gboolean monitor_finished, monitor_paused, monitor_ready, monitor_release;
+
+static void terminal_monitor_barrier(NostrSubscription *sub, gboolean finished) {
+  if (!finished) {
+    char *reason = NULL;
+    GoChannel *closed = nostr_subscription_get_closed_channel(sub);
+    GoSelectCase receive = { .op = GO_SELECT_RECEIVE, .chan = closed, .recv_buf = (void **)&reason };
+    g_assert_cmpint(go_select_timeout(&receive, 1, WAIT_BOUND_S * 1000).selected_case, ==, 0);
+    g_assert_nonnull(reason);
+    g_assert_cmpint(go_channel_try_send(closed, reason), ==, 0);
+    g_mutex_lock(&terminal_mutex);
+    monitor_ready = TRUE;
+    g_cond_broadcast(&terminal_changed);
+    while (monitor_paused && !monitor_release) g_cond_wait(&terminal_changed, &terminal_mutex);
+    g_mutex_unlock(&terminal_mutex);
+    return; /* Every EVENT and CLOSED is now in the real core channels. */
+  }
+  g_mutex_lock(&terminal_mutex);
+  monitor_finished = TRUE;
+  g_cond_broadcast(&terminal_changed);
+  g_mutex_unlock(&terminal_mutex);
+}
+
+static void test_relay_closed_survives_overflow(void) {
+  BurstRelay server = { .stored = stored_events(), .closed_reason = "auth-required: fixture" };
+  relay_start(&server);
+  GNostrRelay *relay = connect_relay(&server);
+  Backfill b = { .indices = g_array_new(FALSE, FALSE, sizeof(guint)) };
+  GNostrSubscription *sub = gnostr_subscription_new(relay, kind1_filters());
+  gnostr_subscription_set_backlog_limit(sub, 8, 0);
+  g_signal_connect(sub, "event", G_CALLBACK(on_backfill_event), &b);
+  g_signal_connect(sub, "closed", G_CALLBACK(on_backfill_closed), &b);
+  g_atomic_int_set(&overflow_expected, 1);
+  guint warning_handler = g_log_set_handler("gnostr-subscription",
+      G_LOG_LEVEL_WARNING | G_LOG_FLAG_FATAL | G_LOG_FLAG_RECURSION, on_subscription_warning, NULL);
+  monitor_finished = FALSE;
+  gnostr_subscription_test_set_monitor_hook(terminal_monitor_barrier);
+  GError *error = NULL;
+  g_assert_true(gnostr_subscription_fire(sub, &error));
+  g_assert_no_error(error);
+  gint64 deadline = g_get_monotonic_time() + WAIT_BOUND_S * G_USEC_PER_SEC;
+  g_mutex_lock(&terminal_mutex);
+  while (!monitor_finished) g_assert_true(g_cond_wait_until(&terminal_changed, &terminal_mutex, deadline));
+  g_mutex_unlock(&terminal_mutex);
+  gnostr_subscription_test_set_monitor_hook(NULL);
+  g_assert_true(gnostr_subscription_get_overflowed(sub));
+  gboolean timed_out = FALSE;
+  guint bound = g_timeout_add_seconds(WAIT_BOUND_S, on_bound, &timed_out);
+  while (!b.closed && !timed_out) g_main_context_iteration(NULL, TRUE);
+  g_assert_false(timed_out);
+  g_source_remove(bound);
+  g_assert_cmpstr(b.closed_reason, ==, server.closed_reason);
+  g_assert_cmpuint(b.events_at_close, ==, 8);
+  g_assert_cmpuint(b.indices->len, ==, 8);
+  for (guint i = 0; i < b.indices->len; i++)
+    g_assert_cmpuint(g_array_index(b.indices, guint, i), ==, i);
+  g_signal_handlers_disconnect_by_data(sub, &b);
+  g_object_unref(sub);
+  gnostr_relay_disconnect(relay);
+  g_object_unref(relay);
+  relay_stop(&server);
+  g_log_remove_handler("gnostr-subscription", warning_handler);
+  g_atomic_int_set(&overflow_expected, 0);
+  g_ptr_array_unref(server.stored);
+  g_array_unref(b.indices);
+  g_free(b.closed_reason);
+}
+
+static void run_explicit_close_preserves_relay_reason(gboolean from_event) {
+  BurstRelay server = { .stored = stored_events(), .closed_reason = "restricted: fixture" };
+  relay_start(&server);
+  GNostrRelay *relay = connect_relay(&server);
+  Backfill b = { .indices = g_array_new(FALSE, FALSE, sizeof(guint)), .close_on_first = from_event };
+  GNostrSubscription *sub = gnostr_subscription_new(relay, kind1_filters());
+  g_signal_connect(sub, "event", G_CALLBACK(on_backfill_event), &b);
+  g_signal_connect(sub, "closed", G_CALLBACK(on_backfill_closed), &b);
+  monitor_finished = monitor_ready = monitor_release = FALSE;
+  monitor_paused = !from_event;
+  gnostr_subscription_test_set_monitor_hook(terminal_monitor_barrier);
+  GError *error = NULL;
+  g_assert_true(gnostr_subscription_fire(sub, &error));
+  g_assert_no_error(error);
+  gint64 deadline = g_get_monotonic_time() + WAIT_BOUND_S * G_USEC_PER_SEC;
+  g_mutex_lock(&terminal_mutex);
+  while (!(from_event ? monitor_finished : monitor_ready))
+    g_assert_true(g_cond_wait_until(&terminal_changed, &terminal_mutex, deadline));
+  g_mutex_unlock(&terminal_mutex);
+  if (!from_event) {
+    gnostr_subscription_close(sub); /* core CLOSED is queued, not consumed */
+    g_assert_false(b.closed); /* terminal cannot overtake queued events */
+    gnostr_subscription_close(sub);
+  }
+  g_mutex_lock(&terminal_mutex);
+  monitor_release = TRUE;
+  g_cond_broadcast(&terminal_changed);
+  while (!monitor_finished) g_assert_true(g_cond_wait_until(&terminal_changed, &terminal_mutex, deadline));
+  monitor_paused = FALSE;
+  g_mutex_unlock(&terminal_mutex);
+  gnostr_subscription_test_set_monitor_hook(NULL);
+  gboolean timed_out = FALSE;
+  guint bound = g_timeout_add_seconds(WAIT_BOUND_S, on_bound, &timed_out);
+  while (!b.closed && !timed_out) g_main_context_iteration(NULL, TRUE);
+  g_assert_false(timed_out);
+  g_source_remove(bound);
+  g_assert_cmpstr(b.closed_reason, ==, server.closed_reason);
+  g_assert_cmpuint(b.events_at_close, ==, N_STORED);
+  g_assert_cmpuint(b.closed_count, ==, 1);
+  gnostr_subscription_close(sub);
+  g_assert_cmpuint(b.closed_count, ==, 1);
+  g_signal_handlers_disconnect_by_data(sub, &b);
+  g_object_unref(sub);
+  gnostr_relay_disconnect(relay);
+  g_object_unref(relay);
+  relay_stop(&server);
+  g_ptr_array_unref(server.stored);
+  g_array_unref(b.indices);
+  g_free(b.closed_reason);
+}
+
+static void test_explicit_close_preserves_queued_relay_reason(void) {
+  run_explicit_close_preserves_relay_reason(FALSE);
+}
+static void test_handler_close_preserves_queued_relay_reason(void) {
+  run_explicit_close_preserves_relay_reason(TRUE);
+}
+
+typedef struct { gboolean done; guint count; } PoolRound;
+
+static void pool_query_done(GObject *source, GAsyncResult *result, gpointer data) {
+  PoolRound *round = data;
+  GError *error = NULL;
+  GPtrArray *events = GNOSTR_IS_POOL(source)
+      ? gnostr_pool_query_finish(GNOSTR_POOL(source), result, &error)
+      : gnostr_simple_pool_query_single_finish(GNOSTR_SIMPLE_POOL(source), result, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(events);
+  round->count = events->len;
+  g_ptr_array_unref(events);
+  round->done = TRUE;
+}
+
+static void pool_batch(GNostrSimplePool *pool G_GNUC_UNUSED, GPtrArray *events, gpointer data) {
+  ((PoolRound *)data)->count += events->len;
+}
+
+static void pool_finalized(gpointer data, GObject *object G_GNUC_UNUSED) {
+  g_atomic_int_set((gint *)data, TRUE);
+  g_main_context_wakeup(g_main_context_default());
+}
+
+static GoSelectResult select_eose_first(GoSelectCase *cases, size_t count, uint64_t timeout G_GNUC_UNUSED) {
+  g_assert_cmpuint(count, ==, 2); /* single relay: EVENT, EOSE */
+  GoSelectResult result = go_select_timeout(&cases[1], 1, WAIT_BOUND_S * 1000);
+  g_assert_cmpint(result.selected_case, ==, 0);
+  result.selected_case = 1;
+  return result;
+}
+
+static void run_pool_burst(guint mode) {
+  BurstRelay server = { .stored = stored_events() };
+  relay_start(&server);
+  const gchar *urls[] = { server.url };
+  if (mode == 0) gnostr_pool_test_set_select_hook(select_eose_first);
+  for (guint i = 0; i < 16; i++) {
+    PoolRound round = {0};
+    GCancellable *cancel = g_cancellable_new();
+    GObject *pool = mode == 0 ? G_OBJECT(gnostr_pool_new()) : G_OBJECT(gnostr_simple_pool_new());
+    /* This libsoup fixture deliberately uses libnostr's compact backend;
+     * no jansson backend is loaded alongside json-glib (see fixture header). */
+    nostr_json_force_fallback(false);
+    NostrFilters *filters = kind1_filters();
+    if (mode == 0) {
+      gnostr_pool_query_urls_async(GNOSTR_POOL(pool), urls, 1, filters, cancel, pool_query_done, &round);
+      filters = NULL; /* transferred */
+    } else if (mode == 1) {
+      gnostr_simple_pool_query_single_async(GNOSTR_SIMPLE_POOL(pool), urls, 1,
+          &filters->filters[0], cancel, pool_query_done, &round);
+    } else {
+      g_signal_connect(pool, "events", G_CALLBACK(pool_batch), &round);
+      if (mode == 2)
+        gnostr_simple_pool_paginate_with_interval_async(GNOSTR_SIMPLE_POOL(pool), urls, 1,
+            &filters->filters[0], 0, cancel, NULL, NULL);
+      else
+        gnostr_simple_pool_subscribe_many_async(GNOSTR_SIMPLE_POOL(pool), urls, 1,
+            filters, cancel, NULL, NULL);
+    }
+    gboolean timed_out = FALSE;
+    guint bound = g_timeout_add_seconds(WAIT_BOUND_S, on_bound, &timed_out);
+    while (!(mode < 2 ? round.done : round.count >= N_STORED) && !timed_out)
+      g_main_context_iteration(NULL, TRUE);
+    g_assert_false(timed_out);
+    g_source_remove(bound);
+    g_assert_cmpuint(round.count, ==, N_STORED);
+    g_cancellable_cancel(cancel);
+    g_signal_handlers_disconnect_by_data(pool, &round);
+    gint finalized = FALSE;
+    g_object_weak_ref(pool, pool_finalized, &finalized);
+    g_object_unref(pool);
+    bound = g_timeout_add_seconds(WAIT_BOUND_S, on_bound, &timed_out);
+    while (!g_atomic_int_get(&finalized) && !timed_out) g_main_context_iteration(NULL, TRUE);
+    g_assert_false(timed_out);
+    g_source_remove(bound);
+    if (filters) nostr_filters_free(filters);
+    g_object_unref(cancel);
+  }
+  gnostr_pool_test_set_select_hook(NULL);
+  relay_stop(&server);
+  g_ptr_array_unref(server.stored);
+}
+
+static void test_pool_query_burst(void) { run_pool_burst(0); }
+static void test_simple_query_burst(void) { run_pool_burst(1); }
+static void test_paginate_burst(void) { run_pool_burst(2); }
+static void test_stream_burst(void) { run_pool_burst(3); }
+
 int
 main(int argc, char **argv)
 {
@@ -753,5 +980,12 @@ main(int argc, char **argv)
                   test_bounded_backfill_keeps_newest);
   g_test_add_func("/nostr-gobject/subscription/fire-reaches-auth-required-relay",
                   test_fire_reaches_auth_required_relay);
+  g_test_add_func("/nostr-gobject/pool/query-burst", test_pool_query_burst);
+  g_test_add_func("/nostr-gobject/pool/single-burst", test_simple_query_burst);
+  g_test_add_func("/nostr-gobject/pool/paginate-burst", test_paginate_burst);
+  g_test_add_func("/nostr-gobject/pool/stream-burst", test_stream_burst);
+  g_test_add_func("/nostr-gobject/subscription/relay-closed-survives-overflow", test_relay_closed_survives_overflow);
+  g_test_add_func("/nostr-gobject/subscription/explicit-close-preserves-relay-reason", test_explicit_close_preserves_queued_relay_reason);
+  g_test_add_func("/nostr-gobject/subscription/handler-close-preserves-relay-reason", test_handler_close_preserves_queued_relay_reason);
   return g_test_run();
 }

@@ -59,6 +59,10 @@ signet_add_test_executable(test_signetctl_intent)
 add_test(NAME signetctl_intent COMMAND test_signetctl_intent)
 signet_add_test_executable(test_secret_input)
 signet_add_test_executable(test_http_listen)
+signet_add_test_executable(test_bootstrap_security)
+add_test(NAME bootstrap_security COMMAND test_bootstrap_security)
+signet_add_test_executable(test_challenge_transports)
+add_test(NAME challenge_transports COMMAND test_challenge_transports)
 signet_add_test_executable(test_http_routes)
 add_test(NAME secret_input COMMAND test_secret_input)
 add_test(NAME http_listen COMMAND test_http_listen)
@@ -134,6 +138,14 @@ signet_add_test_executable(test_store_lifecycle)          # audit chain, revoke 
 signet_add_test_executable(test_db_migration)             # plaintext -> SQLCipher
 signet_add_test_executable(test_adopt_existing)
 signet_add_test_executable(test_reissue_connect)
+# Test-local observer implementation; production helper has no observer unless
+# the explicit test-hook build is selected. This compiles real management code.
+signet_add_test_executable(test_bootstrap_wipe test_bootstrap_wipe.c ../src/secret_json.c)
+target_compile_definitions(test_bootstrap_wipe PRIVATE SIGNET_ENABLE_TEST_HOOKS=1)
+add_test(NAME bootstrap_wipe COMMAND test_bootstrap_wipe)
+signet_add_test_executable(test_secret_json test_secret_json.c ../src/secret_json.c)
+target_compile_definitions(test_secret_json PRIVATE SIGNET_ENABLE_TEST_HOOKS=1)
+add_test(NAME secret_json COMMAND test_secret_json)
 signet_add_test_executable(test_mgmt_replay)
 signet_add_test_executable(test_backend_admission)
 signet_add_test_executable(backend_admission_fixture backend_admission_fixture.c)
@@ -273,6 +285,14 @@ add_test(NAME nostr_auth COMMAND test_nostr_auth)
 add_test(NAME capability COMMAND test_capability)
   add_test(NAME relay_pool_protocol COMMAND test_relay_pool_protocol)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME backup_upload COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_backup_upload.py)
+  set_tests_properties(backup_upload PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
+  if(COMMAND nostrc_describe_test)
+    nostrc_describe_test(backup_upload OWNER signet
+      INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_backup_upload.py"
+             "${CMAKE_CURRENT_SOURCE_DIR}/../deploy/ops.py")
+  endif()
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_test(NAME linux_hardening COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/check_linux_hardening.py $<TARGET_FILE:signetd>)

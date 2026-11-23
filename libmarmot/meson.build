@@ -111,6 +111,7 @@ marmot_sources = files(
   'src/commits.c',
   'src/convergence.c',
   'src/proposals.c',
+  'src/send_guard.c',
   'src/members.c',
   'src/groups.c',
   'src/welcome.c',

@@ -25,6 +25,13 @@ override_dh_auto_install:
 	! grep -q '@' debian/tmp/usr/share/dbus-1/services/org.nostr.Signer.service
 	! grep -q '@' debian/tmp/usr/share/dbus-1/services/org.nostr.Grotto.service
 
+# The unreleased 0.x panels ABI must match the SDK used for this build,
+# including the package revision, not merely the library SONAME.
+override_dh_gencontrol:
+	panels_version=$$(dpkg-query -W -f='$${Version}' libgrotto-panels-0-dev) && \
+		test -n "$$panels_version" && \
+		dh_gencontrol -- -Vgrotto:Panels-Version="$$panels_version"
+
 override_dh_installsystemduser:
 	dh_installsystemduser --no-enable
 

@@ -30,6 +30,9 @@
 #include "nostr_relay.h"
 #include "channel.h"
 #include "select.h"
+#ifdef GNOSTR_TESTING
+#include "nostr_pool_test_hooks.h"
+#endif
 
 /* Forward-declare subscription API to avoid include conflicts (nostrc-wjlt) */
 GNostrSubscription *gnostr_subscription_new(GNostrRelay *relay, NostrFilters *filters);
@@ -96,6 +99,13 @@ pool_hook_ref(PoolHook *hook)
 }
 
 /* GDestroyNotify-compatible. NULL-safe. */
+#ifdef GNOSTR_TESTING
+static _Atomic(GNostrPoolSelectHook) query_select_hook;
+void gnostr_pool_test_set_select_hook(GNostrPoolSelectHook hook) {
+    atomic_store(&query_select_hook, hook);
+}
+#endif
+
 static void
 pool_hook_unref(gpointer data)
 {
@@ -646,6 +656,7 @@ query_thread_func(GTask         *task,
         NostrRelay *core_relay;
         struct NostrSubscription *sub;
         gboolean eosed;
+        gboolean eose_received;
     } RelaySubItem;
 
     GPtrArray *items = g_ptr_array_new();
@@ -811,7 +822,12 @@ query_thread_func(GTask         *task,
         /* Block until any channel fires (500ms timeout for cancellation checks) */
         GoSelectResult sel = { .selected_case = -1 };
         if (n_cases > 0) {
+#ifdef GNOSTR_TESTING
+            GNostrPoolSelectHook hook = atomic_load(&query_select_hook);
+            sel = hook ? hook(cases, n_cases, 500) : go_select_timeout(cases, n_cases, 500);
+#else
             sel = go_select_timeout(cases, n_cases, 500);
+#endif
         }
 
         /* If select returned a specific case, handle the received value */
@@ -823,7 +839,7 @@ query_thread_func(GTask         *task,
             if (case_is_eose[sc]) {
                 /* EOSE received for this relay */
                 if (item) {
-                    item->eosed = TRUE;
+                    item->eose_received = TRUE;
                     g_debug("[POOL_QUERY] relay[%u] EOSE after %lldms, %u results",
                             idx, (long long)((g_get_monotonic_time() - query_start) / 1000),
                             data->results->len);
@@ -848,6 +864,11 @@ query_thread_func(GTask         *task,
             RelaySubItem *item = g_ptr_array_index(items, i);
             if (!item || !item->sub || item->eosed) continue;
 
+            /* Taking EOSE before the drain establishes that every stored EVENT
+             * is already queued. Mark done only after delivering that queue. */
+            GoChannel *ch_eose = nostr_subscription_get_eose_channel(item->sub);
+            gboolean got_eose = item->eose_received ||
+                (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0);
             /* Drain events */
             GoChannel *ch_events = nostr_subscription_get_events_channel(item->sub);
             void *msg = NULL;
@@ -868,8 +889,7 @@ query_thread_func(GTask         *task,
             }
 
             /* Check EOSE */
-            GoChannel *ch_eose = nostr_subscription_get_eose_channel(item->sub);
-            if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
+            if (got_eose) {
                 item->eosed = TRUE;
                 g_debug("[POOL_QUERY] relay[%u] EOSE after %lldms, %u results",
                         i, (long long)((g_get_monotonic_time() - query_start) / 1000),

@@ -46,6 +46,25 @@ static void auth_route(unsigned short port, SignetChallengeStore *challenges,
   free(json); nostr_event_free(event); g_free(challenge);
 }
 
+static void challenge_route_limits(unsigned short port, const char *agent) {
+  char response[8192];
+  CHECK(http_get(port, "/challenge?agent_id=not-provisioned", "X-Forwarded-Proto: https\r\n",
+                 response, sizeof(response)) == 404);
+  char long_path[512];
+  memset(long_path, 'x', sizeof(long_path));
+  memcpy(long_path, "/challenge?agent_id=", 20);
+  long_path[sizeof(long_path) - 1] = 0;
+  CHECK(http_get(port, long_path, "X-Forwarded-Proto: https\r\n",
+                 response, sizeof(response)) == 400);
+  char *escaped = g_uri_escape_string(agent, NULL, FALSE);
+  char *path = g_strdup_printf("/challenge?agent_id=%s", escaped);
+  for (int i = 0; i < 4; i++)
+    CHECK(http_get(port, path, "X-Forwarded-Proto: https\r\n", response, sizeof(response)) == 200);
+  for (int i = 0; i < 12; i++)
+    CHECK(http_get(port, path, "X-Forwarded-Proto: https\r\n", response, sizeof(response)) == 200);
+  g_free(path); g_free(escaped);
+}
+
 /* An incomplete local request must not occupy a server slot indefinitely. */
 static void idle_connection_expires(unsigned short port) {
   int fd = http_connect("127.0.0.1", port); CHECK(fd >= 0);
@@ -85,6 +104,8 @@ int main(void) {
   uint8_t raw[32] = {0}; raw[31] = 1;
   CHECK(signet_store_put_agent_ex(signet_key_store_get_store(keys), agent, raw, 32,
     "fixture", pk, "provisioned", time(NULL)) == 0);
+  challenge_route_limits(port, agent);
+  signet_challenge_store_cleanup(challenges, time(NULL) + SIGNET_CHALLENGE_TTL_S);
   auth_route(port, challenges, "unknown-agent", sk, 403);
   auth_route(port, challenges, agent, sk, 200);
   free(pk);

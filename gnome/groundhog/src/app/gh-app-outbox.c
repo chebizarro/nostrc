@@ -52,6 +52,7 @@ struct _GhAppOutbox {
   /* W26 slice B: reactions across all backends. */
   GhReactionStore *reactions;             /* in-memory model, or NULL */
   GhStoreReactions *store_reactions;      /* persistence delegate, or NULL */
+  GhStore *reaction_store;                /* borrowed until unbind_reactions */
   GObject *reactions_outbox;              /* the outbox it was made beside (weak) */
   GhAppOutboxDeleteFunc delete_func;      /* received NIP-09 requests for messages */
   gpointer delete_data;
@@ -346,8 +347,15 @@ nip17_reaction_sink(gpointer data, const GhNip17Message *message,
       gh_reaction_new(target_id, message->rumor_id, message->sender_pubkey,
                       emoji, message->created_at, room_id);
     if (reaction) {
-      gh_reaction_store_admit(self->reactions, reaction, NULL);
+      g_autoptr(GError) store_error = NULL;
+      gh_reaction_store_admit(self->reactions, reaction, &store_error);
       g_object_unref(reaction);
+      if (store_error) {
+        g_propagate_error(error, g_steal_pointer(&store_error));
+        nostr_event_free(inner);
+        g_free(room_id);
+        return FALSE;
+      }
     }
   } else if (kind == 5) {
     /* Deletion: each e-tag names a reaction to remove.
@@ -371,7 +379,12 @@ nip17_reaction_sink(gpointer data, const GhNip17Message *message,
   }
   nostr_event_free(inner);
   g_free(room_id);
-  return TRUE;
+  /* Only after durable admission (including a pending or duplicate reaction).
+   * If recording the verdict fails, retrying is safe and must remain possible.
+   * Deletion callbacks have no failure result, so they cannot yet acknowledge
+   * a wrap this way. */
+  return kind != 7 || gh_store_seen_add(self->reaction_store, GH_STORE_SEEN_WRAP,
+                                       message->wrap_id, error);
 }
 
 static void
@@ -385,6 +398,7 @@ bind_reactions(GhAppOutbox *self, GhStore *store, GObject *outbox)
   /* One reaction store per open account store. */
   self->reactions = gh_reaction_store_new();
   self->store_reactions = gh_store_reactions_new(store);
+  self->reaction_store = store;
 
   g_autoptr(GError) error = NULL;
   if (!gh_store_reactions_attach(self->store_reactions, self->reactions, &error))
@@ -419,6 +433,7 @@ unbind_reactions(gpointer data, GObject *outbox)
     g_clear_object(&self->store_reactions);
   }
   g_clear_object(&self->reactions);
+  self->reaction_store = NULL;
 }
 
 GhReactionStore *
@@ -502,6 +517,66 @@ gh_app_outbox_delete_group_message(GhAppOutbox *self, GhConversation *conversati
   }
   g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
                       "Messages can't be deleted here now");
+  return FALSE;
+}
+
+gboolean
+gh_app_outbox_remove_reaction(GhAppOutbox *self, GhConversation *conversation,
+                               const gchar *target_id, const gchar *emoji, GError **error)
+{
+  g_return_val_if_fail(self != NULL && GH_IS_CONVERSATION(conversation), FALSE);
+  GhReactionSummary *summary = self->reactions
+    ? gh_reaction_store_lookup(self->reactions, target_id) : NULL;
+  g_autofree gchar *reaction_id = summary
+    ? g_strdup(gh_reaction_summary_own_reaction_id(summary, emoji)) : NULL;
+  if (!reaction_id)
+    return FALSE;
+
+  const gchar *room_id = gh_conversation_get_room_id(conversation);
+  (void)room_id;
+  switch (gh_conversation_get_backend(conversation)) {
+  case GH_CONVERSATION_BACKEND_NIP17: {
+    const gchar *const *recipients = gh_conversation_get_peers(conversation);
+    if (!GH_IS_OUTBOX(self->reactions_outbox) || !recipients)
+      goto unavailable;
+    g_autofree gchar *request = gh_outbox_send_deletion_room(
+      GH_OUTBOX(self->reactions_outbox), recipients, reaction_id, error);
+    if (!request)
+      return FALSE;
+    break;
+  }
+#if GROUNDHOG_HAVE_NIP29
+  case GH_CONVERSATION_BACKEND_NIP29: {
+    GhNip29Room *room = GH_IS_NIP29_SERVICE(self->nip29)
+      ? gh_nip29_service_lookup_room(GH_NIP29_SERVICE(self->nip29), room_id) : NULL;
+    if (!room)
+      goto unavailable;
+    g_autoptr(GhNip29Op) op = gh_nip29_service_send_deletion(
+      GH_NIP29_SERVICE(self->nip29), room, reaction_id, error);
+    if (!op)
+      return FALSE;
+    break;
+  }
+#endif
+#if GROUNDHOG_HAVE_MLS
+  case GH_CONVERSATION_BACKEND_MLS: {
+    GhMlsGroup *group = GH_IS_MLS_SERVICE(self->mls)
+      ? gh_mls_service_lookup(GH_MLS_SERVICE(self->mls), room_id) : NULL;
+    if (!group)
+      goto unavailable;
+    if (!gh_mls_service_send_deletion(GH_MLS_SERVICE(self->mls), group, reaction_id, error))
+      return FALSE;
+    break;
+  }
+#endif
+  default:
+    goto unavailable;
+  }
+  return gh_reaction_store_remove(self->reactions, reaction_id, error);
+
+unavailable:
+  g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
+                      "Reactions can't be removed here now");
   return FALSE;
 }
 

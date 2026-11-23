@@ -177,6 +177,13 @@ static char *nip5l_handle_message(SignetNip5lServer *ns,
         return g_strdup("{\"error\":\"agent_id required\"}");
       }
 
+      char agent_pubkey[65];
+      if (!signet_key_store_get_agent_pubkey(ns->keys, agent_id, agent_pubkey, sizeof(agent_pubkey))) {
+        free(method);
+        free(agent_id);
+        return g_strdup("{\"error\":\"agent not provisioned\"}");
+      }
+
       int64_t now = signet_now_unix();
       char *challenge = signet_challenge_issue(ns->challenges, agent_id, now);
       free(agent_id);

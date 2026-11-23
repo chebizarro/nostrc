@@ -176,10 +176,12 @@ def run(daemon_binary, crypto_binary):
                     "\n[policy_defaults]\ndefault_decision=deny\n[bootstrap]\nport=0\n"
                     "[dbus]\nunix_enabled=false\ntcp_enabled=false\n[nip5l]\nenabled=false\n"
                     "[ssh_agent]\nenabled=false\n[passkeys]\nenabled=false\nvirtual_ctap=false\n")
-                # The loopback ws:// relay is not a production deployment.
-                # A key still enables SQLCipher without the production TLS gate.
+                # Like test_daemon_startup's loopback cases, use the real keyed
+                # store without production TLS policy for this ws:// fixture.
+                # Production refusal is covered separately.
                 daemon_env = {**env, "SIGNET_DB_KEY_FILE": str(directory / "master.hex"),
-                              "SIGNET_BUNKER_NSEC_FILE": str(directory / "bunker.hex")}
+                              "SIGNET_BUNKER_NSEC_FILE": str(directory / "bunker.hex"),
+                              "SIGNET_REQUIRE_ENCRYPTED_DB": "false"}
                 daemon = subprocess.Popen([daemon_binary, "-c", str(config)], env=daemon_env,
                                           stdout=subprocess.DEVNULL, stderr=daemon_stderr)
 

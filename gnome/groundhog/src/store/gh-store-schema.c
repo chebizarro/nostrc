@@ -500,6 +500,15 @@ static const gchar schema_v14[] =
   " author TEXT NOT NULL, identifier TEXT NOT NULL DEFAULT '', event_json TEXT NOT NULL,"
   " stored_at INTEGER NOT NULL) WITHOUT ROWID;";
 
+/* MIP-01 v1 carries a raw image key; v2 carries a derivation seed. Existing
+ * records/snapshots did not preserve that distinction: keep it unknown (0),
+ * never guess which cryptographic interpretation their bytes had. */
+static const gchar schema_v15[] =
+  "ALTER TABLE mls_group_info ADD COLUMN group_data_version INTEGER NOT NULL DEFAULT 0 "
+  "CHECK(group_data_version BETWEEN 0 AND 65535);"
+  "ALTER TABLE mls_snapshot_rows ADD COLUMN c13;"
+  "UPDATE mls_snapshot_rows SET c13 = 0 WHERE tbl = 1;";
+
 static const GhStoreMigration migrations[] = {
   { 1, "Groundhog store schema v1 (privacy charter §3.3)", schema_v1 },
   { 2, "MLS state for libmarmot's MarmotStorage (charter §3.9, G23)", schema_v2 },
@@ -515,6 +524,7 @@ static const GhStoreMigration migrations[] = {
   { 12, "Retained hidden history and visibility projection", schema_v12 },
   { 13, "NIP-37 draft synchronization state, publications and conflicts (nostrc-9lwl7.8)", schema_v13 },
   { 14, "Explicit public reports and social event cache", schema_v14 },
+  { 15, "Preserve MIP-01 image-key version in groups and snapshots (nostrc-x215)", schema_v15 },
 };
 
 G_STATIC_ASSERT(G_N_ELEMENTS(migrations) == GH_STORE_SCHEMA_VERSION);

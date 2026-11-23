@@ -343,6 +343,25 @@ inbox_live(gpointer data)
          gh_account_store_get_outbox(s->store) != NULL;
 }
 
+static gboolean
+inbox_caught_up(gpointer data)
+{
+  SendStack *s = data;
+  GhDmInboxCounters counters;
+  gh_dm_inbox_get_counters(s->inbox, &counters);
+  return gh_dm_inbox_get_state(s->inbox) == GH_DM_INBOX_LIVE && counters.pending == 0;
+}
+
+static guint
+decrypt_calls(void)
+{
+  guint count = 0;
+  for (guint i = 0; i < signer.methods->len; i++)
+    if (g_str_has_prefix(g_ptr_array_index(signer.methods, i), "NIP44Decrypt "))
+      count++;
+  return count;
+}
+
 typedef struct {
   GhConversationStore *model;
   const gchar *room;
@@ -924,11 +943,22 @@ test_two_accounts(void)
   g_assert_cmpuint(g_strv_length(ids_a), ==, g_strv_length(ids_b) + 2); /* the bot DMs */
   g_assert_false(gh_conversation_get_is_request(room_a));
 
-  /* 5. Both restart; everything comes back from the encrypted stores. */
+  /* 5. Both restart; everything comes back without decrypting known wraps. */
+  gh_test_spin_until(inbox_caught_up, &a);
+  gh_test_spin_until(inbox_caught_up, &b);
+  guint decrypted = decrypt_calls();
   send_stack_down(&a);
   send_stack_down(&b);
   stack_bring_up(&a);
   stack_bring_up(&b);
+  gh_test_spin_until(inbox_caught_up, &a);
+  gh_test_spin_until(inbox_caught_up, &b);
+  GhDmInboxCounters replay_a, replay_b;
+  gh_dm_inbox_get_counters(a.inbox, &replay_a);
+  gh_dm_inbox_get_counters(b.inbox, &replay_b);
+  g_assert_cmpuint(replay_a.admitted, ==, 0);
+  g_assert_cmpuint(replay_b.admitted, ==, 0);
+  g_assert_cmpuint(decrypt_calls(), ==, decrypted);
   gh_conversation_view_set_reaction_store(send_stack_view(&a),
                                           gh_app_outbox_get_reactions(a.sender));
   gh_conversation_view_set_reaction_store(send_stack_view(&b),

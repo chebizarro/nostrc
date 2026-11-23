@@ -102,6 +102,32 @@ identify the new source-bound replay commits, separately from the original plan.
 The G15 path fixture in `tests/selection/fixtures/nip55l_affected.json` pins the
 expected current-policy signer set and explicitly excludes MLS/NIP-29/voice tests.
 
+## nostrdb-disabled builds
+
+Groundhog and its full nostr-gobject storage qualification require both
+`-DWITH_NOSTRDB=ON -DLIBNOSTR_WITH_NOSTRDB=ON`. A core-only build without those
+providers is not a Groundhog gate. Configuration rejects Groundhog with either
+provider disabled rather than reporting success for an unlinked static archive.
+
+NIP-57's BOLT11 decoder comes from libnostr's pinned nostrdb backend. Enabling
+NIP-57 requires `LIBNOSTR_WITH_NOSTRDB=ON`; its tests must not silently disappear
+when the decoder is unavailable. There is no standalone decoder or storage
+fallback. For the supported core-only subset, use:
+
+```sh
+cmake -S . -B build-core-only \
+  -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF -DENABLE_NIP57=OFF \
+  -DBUILD_GROUNDHOG=OFF -DBUILD_NOSTR_GTK=OFF -DBUILD_NOSTR_GOBJECT=OFF
+cmake --build build-core-only --target nostr
+```
+
+Other optional applications may impose their own dependencies. A deliberately
+static nostr-gobject event-only consumer (such as the Windows signer) may omit
+storage objects, but that is not qualification of the full public storage API.
+Run the configure-contract regression explicitly with
+`python3 nips/nip57/tests/test_backend_configuration.py --build-root <scratch-dir>`;
+it exercises the real root configure entrypoint for each unsupported combination.
+
 ## Focused verification and evidence
 
 Use relevant selector/adapter/workflow regressions and representative change

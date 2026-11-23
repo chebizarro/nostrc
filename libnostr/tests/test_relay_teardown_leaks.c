@@ -67,6 +67,7 @@
 #include "error.h"
 #include "nostr-filter.h"
 #include "nostr-envelope.h"
+#include "nostr-event.h"
 #include "nostr-relay.h"
 #include "nostr-subscription.h"
 #include "select.h"
@@ -101,6 +102,7 @@ static struct {
     atomic_int connections;   /* ESTABLISHED so far */
     atomic_int open;          /* currently open */
     atomic_bool drop;         /* close every open connection */
+    atomic_bool reject_handshake;
     atomic_bool paused;       /* service nothing: handshakes stay pending */
     int port;
 } srv;
@@ -111,6 +113,8 @@ static int server_cb(struct lws *wsi, enum lws_callback_reasons reason, void *us
     (void)in;
     (void)len;
     switch (reason) {
+    case LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION:
+        return atomic_load(&srv.reject_handshake) ? 1 : 0;
     case LWS_CALLBACK_ESTABLISHED:
         atomic_fetch_add(&srv.connections, 1);
         atomic_fetch_add(&srv.open, 1);
@@ -475,6 +479,227 @@ static void hold_before_publish(NostrRelay *relay, void *data) {
     pthread_mutex_unlock(&barrier->mutex);
 }
 
+static void barrier_wait(DialBarrier *barrier) {
+    struct timespec deadline;
+    clock_gettime(CLOCK_REALTIME, &deadline);
+    deadline.tv_sec += 10;
+    pthread_mutex_lock(&barrier->mutex);
+    while (!barrier->arrived)
+        CHECK(pthread_cond_timedwait(&barrier->changed, &barrier->mutex, &deadline) == 0);
+    pthread_mutex_unlock(&barrier->mutex);
+}
+
+static void barrier_release(DialBarrier *barrier) {
+    pthread_mutex_lock(&barrier->mutex);
+    barrier->release = true;
+    pthread_cond_broadcast(&barrier->changed);
+    pthread_mutex_unlock(&barrier->mutex);
+}
+
+static void barrier_destroy(DialBarrier *barrier) {
+    pthread_cond_destroy(&barrier->changed);
+    pthread_mutex_destroy(&barrier->mutex);
+}
+
+/* Both interleavings hold the real writer after its lease acquisition. The
+ * hold is a condition-variable barrier, not an assumption about scheduling. */
+static void test_retirement_ignores_replacement_lease(void) {
+    int base = nostr_connection_unreleased_count();
+    NostrRelay *relay = relay_for_port(srv.port);
+    Error *err = NULL;
+    CHECK(nostr_relay_connect(relay, &err));
+    CHECK(nostr_relay_wait_established(relay, 10000, &err));
+    DialBarrier retiring = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, false, false };
+    DialBarrier leased = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, false, false };
+    DialBarrier retired = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, false, false };
+    nostr_relay_test_set_retire_hook(hold_before_publish, &retiring);
+    nostr_relay_test_set_reconnect_hook(hold_before_publish, &retired);
+    server_drop();
+    nostr_relay_reconnect_now(relay);
+    barrier_wait(&retiring); /* A detached, retirement has not started */
+    CHECK(nostr_relay_connect(relay, &err)); /* publishes B */
+    nostr_relay_test_set_lease_hook(hold_before_publish, &leased);
+    GoChannel *answer = nostr_relay_write(relay, "[\"REQ\",\"lease\",{}]");
+    CHECK(answer);
+    barrier_wait(&leased); /* writer owns B's lease */
+    barrier_release(&retiring);
+    barrier_wait(&retired); /* A retired while B's lease is still held */
+    CHECK(nostr_connection_unreleased_count() == base + 2); /* B + losing C */
+    barrier_release(&leased);
+    nostr_relay_test_set_lease_hook(NULL, NULL);
+    barrier_release(&retired);
+    nostr_relay_test_set_retire_hook(NULL, NULL);
+    nostr_relay_test_set_reconnect_hook(NULL, NULL);
+    nostr_relay_write_answer_release(answer);
+    nostr_relay_free(relay);
+    CHECK(nostr_connection_unreleased_count() == base);
+    barrier_destroy(&retiring);
+    barrier_destroy(&leased);
+    barrier_destroy(&retired);
+    WAIT_FOR(atomic_load(&srv.open) == 0);
+    puts("  [ok] retiring A ignores the real writer's lease on B");
+}
+
+static void test_losing_dial_ignores_winner_lease(void) {
+    int base = nostr_connection_unreleased_count();
+    NostrRelay *relay = relay_for_port(srv.port);
+    DialBarrier dial = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, false, false };
+    DialBarrier leased = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, false, false };
+    nostr_relay_test_set_dial_hook(hold_before_publish, &dial);
+    pthread_t loser;
+    CHECK(pthread_create(&loser, NULL, dial_thread, relay) == 0);
+    barrier_wait(&dial);
+    nostr_relay_test_set_dial_hook(NULL, NULL);
+    Error *err = NULL;
+    CHECK(nostr_relay_connect(relay, &err));
+    nostr_relay_test_set_lease_hook(hold_before_publish, &leased);
+    GoChannel *answer = nostr_relay_write(relay, "[\"REQ\",\"winner\",{}]");
+    CHECK(answer);
+    barrier_wait(&leased);
+    barrier_release(&dial);
+    void *result = NULL;
+    CHECK(pthread_join(loser, &result) == 0 && result == relay);
+    CHECK(nostr_connection_unreleased_count() == base + 1);
+    barrier_release(&leased);
+    nostr_relay_test_set_lease_hook(NULL, NULL);
+    nostr_relay_write_answer_release(answer);
+    nostr_relay_free(relay);
+    CHECK(nostr_connection_unreleased_count() == base);
+    barrier_destroy(&dial);
+    barrier_destroy(&leased);
+    WAIT_FOR(atomic_load(&srv.open) == 0);
+    puts("  [ok] losing dial never waits on the winner's writer lease");
+}
+
+typedef struct {
+    NostrRelay *relay;
+    NostrEvent *event;
+    Error *error;
+    bool accepted;
+} PublishCall;
+
+static void *publish_with_timeout(void *arg) {
+    PublishCall *call = arg;
+    call->accepted = nostr_relay_publish_and_wait(call->relay, call->event, 1, &call->error);
+    return NULL;
+}
+
+static void test_publish_timeout_during_disconnect(void) {
+    NostrRelay *relay = relay_for_port(srv.port);
+    Error *err = NULL;
+    CHECK(nostr_relay_connect(relay, &err));
+    CHECK(nostr_relay_wait_established(relay, 10000, &err));
+    DialBarrier leased = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, false, false };
+    DialBarrier failed = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, false, false };
+    nostr_relay_test_set_lease_hook(hold_before_publish, &leased);
+    nostr_relay_test_set_pending_ok_hook(hold_before_publish, &failed);
+    PublishCall call = { .relay = relay, .event = nostr_event_new() };
+    CHECK(call.event);
+    nostr_event_set_kind(call.event, 1);
+    nostr_event_set_created_at(call.event, 1);
+    nostr_event_set_content(call.event, "timeout race");
+    CHECK(nostr_event_sign(call.event,
+          "0000000000000000000000000000000000000000000000000000000000000001") == 0);
+    pthread_t publisher;
+    CHECK(pthread_create(&publisher, NULL, publish_with_timeout, &call) == 0);
+    barrier_wait(&leased); /* waiter registered, publish still waiting for write */
+    server_drop();
+    barrier_wait(&failed); /* failure iterator owns detached map, before sending */
+    barrier_release(&leased);
+    CHECK(pthread_join(publisher, NULL) == 0); /* timeout drops caller's reference */
+    CHECK(!call.accepted && call.error);
+    free_error(call.error);
+    barrier_release(&failed); /* late failure still owns its waiter */
+    nostr_relay_test_set_lease_hook(NULL, NULL);
+    nostr_relay_test_set_pending_ok_hook(NULL, NULL);
+    nostr_event_free(call.event);
+    nostr_relay_free(relay);
+    barrier_destroy(&leased);
+    barrier_destroy(&failed);
+    WAIT_FOR(atomic_load(&srv.open) == 0);
+    puts("  [ok] publish timeout cannot free a detached disconnect waiter");
+}
+
+static void test_async_retirement_revokes_refire(void) {
+    NostrRelay *relay = relay_for_port(srv.port);
+    Error *err = NULL;
+    CHECK(nostr_relay_connect(relay, &err));
+    CHECK(nostr_relay_wait_established(relay, 10000, &err));
+    NostrFilters *filters = nostr_filters_new();
+    NostrFilter filter = {0};
+    CHECK(nostr_filters_add(filters, &filter));
+    NostrSubscription *sub = nostr_relay_prepare_subscription(relay, NULL, filters);
+    CHECK(sub && nostr_subscription_fire(sub, &err));
+    nostr_subscription_ref(sub); /* a reconnect snapshot still holds this ref */
+    AsyncCleanupHandle *handle = nostr_subscription_free_async(sub, 10000);
+    CHECK(handle);
+    nostr_subscription_cleanup_abandon(handle);
+    nostr_filters_free(filters); /* permitted immediately, not after worker completion */
+    CHECK(!nostr_subscription_refire_since(sub, 1, &err));
+    CHECK(err);
+    free_error(err);
+    err = NULL;
+    CHECK(!nostr_subscription_fire(sub, &err));
+    CHECK(err);
+    free_error(err);
+    nostr_subscription_unref(sub);
+    nostr_relay_free(relay);
+    WAIT_FOR(atomic_load(&srv.open) == 0);
+    puts("  [ok] async retirement revokes refire before releasing borrowed filters");
+}
+
+static void disable_reconnect(NostrRelay *relay, void *unused) {
+    (void)unused;
+    nostr_relay_set_auto_reconnect(relay, false);
+}
+
+static void test_connect_during_reader_retirement(void) {
+    NostrRelay *relay = relay_for_port(srv.port);
+    Error *err = NULL;
+    CHECK(nostr_relay_connect(relay, &err));
+    CHECK(nostr_relay_wait_established(relay, 10000, &err));
+    DialBarrier exiting = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, false, false };
+    nostr_relay_test_set_reconnect_hook(disable_reconnect, NULL);
+    nostr_relay_test_set_loop_exit_hook(hold_before_publish, &exiting);
+    atomic_store(&srv.reject_handshake, true);
+    server_drop();
+    nostr_relay_reconnect_now(relay);
+    barrier_wait(&exiting); /* failed reconnect left no connection; loop will retire */
+    atomic_store(&srv.reject_handshake, false);
+    CHECK(nostr_relay_connect(relay, &err)); /* publisher relies on the existing reader */
+    CHECK(nostr_relay_wait_established(relay, 10000, &err));
+    NostrFilters *filters = nostr_filters_new();
+    NostrSubscription *sub = nostr_relay_prepare_subscription(relay, NULL, filters);
+    CHECK(sub && nostr_subscription_fire(sub, &err));
+    /* Feed the same framed input the connection callback would enqueue. Only
+     * the real message_loop can parse and route it to this subscription. */
+    WebSocketMessage *frame = calloc(1, sizeof(*frame));
+    CHECK(frame);
+    const char *id = nostr_subscription_get_id_const(sub);
+    frame->data = malloc(strlen(id) + 32);
+    CHECK(frame->data);
+    snprintf(frame->data, strlen(id) + 32, "[\"EOSE\",\"%s\"]", id);
+    frame->length = strlen(frame->data);
+    CHECK(go_channel_send(relay->connection->recv_channel, frame) == 0);
+    nostr_relay_test_set_loop_exit_hook(NULL, NULL);
+    nostr_relay_test_set_reconnect_hook(NULL, NULL);
+    barrier_release(&exiting);
+    GoSelectCase eose = { .op = GO_SELECT_RECEIVE, .chan = sub->end_of_stored_events };
+    CHECK(go_select_timeout(&eose, 1, 10000).selected_case == 0);
+    CHECK(nostr_relay_get_connection_state(relay) == NOSTR_RELAY_STATE_CONNECTED);
+    GoChannel *answer = nostr_relay_write(relay, "[\"CLOSE\",\"reader-proof\"]");
+    Error *write_error = NULL;
+    GoSelectCase written = { .op = GO_SELECT_RECEIVE, .chan = answer, .recv_buf = (void **)&write_error };
+    CHECK(go_select_timeout(&written, 1, 10000).selected_case == 0 && !write_error);
+    nostr_relay_write_answer_release(answer);
+    nostr_subscription_free(sub);
+    nostr_filters_free(filters);
+    nostr_relay_free(relay);
+    barrier_destroy(&exiting);
+    WAIT_FOR(atomic_load(&srv.open) == 0);
+    puts("  [ok] connect during reader retirement retains reader and writer ownership");
+}
+
 static void test_close_rejects_inflight_dial(void) {
     int base = nostr_connection_unreleased_count();
     NostrRelay *relay = relay_for_port(srv.port);
@@ -544,7 +769,7 @@ static void hold_reconnect(NostrRelay *relay, void *data) {
 
 static int relay_connection_leases(NostrRelay *relay) {
     nsync_mu_lock(&relay->priv->mutex);
-    int leases = relay->priv->conn_leases;
+    int leases = relay->connection ? (int)relay->connection->priv->relay_leases : 0;
     nsync_mu_unlock(&relay->priv->mutex);
     return leases;
 }
@@ -651,6 +876,11 @@ int main(void) {
     test_close_rejects_inflight_dial();
     test_racing_dials_publish_one_connection();
     test_reconnect_adopts_without_lease_wait();
+    test_retirement_ignores_replacement_lease();
+    test_losing_dial_ignores_winner_lease();
+    test_publish_timeout_during_disconnect();
+    test_async_retirement_revokes_refire();
+    test_connect_during_reader_retirement();
     test_close_answers_writes_when_not_connected();
 
     server_stop();

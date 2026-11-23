@@ -67,6 +67,7 @@ struct _NostrcTestBus {
   gchar *dir;
   gchar *socket_dir;        /* short, under /tmp: see nostrc_test_bus_up() */
   gchar *address;
+  gchar *previous_runtime;
   gint lifeline;            /* write end; only this process holds it */
   gint lifeline_read;       /* duplicated into each supervisor as its fd 3 */
   gint done;                /* write end of the "done" pipe, see LIFELINE_SH */
@@ -238,6 +239,10 @@ nostrc_test_bus_up(NostrcTestBus *bus)
   bus->socket_dir = g_strdup("/tmp/nostrc-bus-XXXXXX");
   if (!g_mkdtemp_full(bus->socket_dir, 0700))
     g_error("nostrc-test-bus: cannot create a socket directory in /tmp: %s", g_strerror(errno));
+  if (bus->flags & NOSTRC_TEST_BUS_FLAGS_PRIVATE_RUNTIME) {
+    bus->previous_runtime = g_strdup(g_getenv("XDG_RUNTIME_DIR"));
+    g_setenv("XDG_RUNTIME_DIR", bus->socket_dir, TRUE);
+  }
   gint fds[2];
   if (!g_unix_open_pipe(fds, FD_CLOEXEC, &error))
     g_error("nostrc-test-bus: %s", error->message);
@@ -586,6 +591,11 @@ nostrc_test_bus_down(NostrcTestBus *bus)
   g_ptr_array_unref(bus->supervisors);
   g_ptr_array_unref(bus->service_dirs);
   g_mutex_clear(&bus->lock);
+  if (bus->flags & NOSTRC_TEST_BUS_FLAGS_PRIVATE_RUNTIME) {
+    if (bus->previous_runtime) g_setenv("XDG_RUNTIME_DIR", bus->previous_runtime, TRUE);
+    else g_unsetenv("XDG_RUNTIME_DIR");
+    g_free(bus->previous_runtime);
+  }
   g_free(bus->address);
   g_free(bus->socket_dir);
   g_free(bus->dir);

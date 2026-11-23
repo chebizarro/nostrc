@@ -14,8 +14,9 @@ stage=$(cd "${4:?stage}" && pwd)
 out=${5:?out}
 mkdir -p "$out" package-roots
 
-pkg() { # NAME ROOT
-  fpm -s dir -t "$type" -n "$1" -v "$version" -C "$2" -p "$out/$1_VERSION_ARCH.$type" .
+pkg() { # NAME ROOT [FPM_ARGS...]
+  local name=$1 root=$2; shift 2
+  fpm -s dir -t "$type" -n "$name" -v "$version" -C "$root" -p "$out/${name}_VERSION_ARCH.$type" "$@" .
 }
 put() { # ROOT FILE...: copy STAGE/usr files into ROOT, same paths
   local root=$1; shift
@@ -37,11 +38,17 @@ if [[ $component == global || $component == grotto ]]; then
   put "$r" usr/bin/grotto \
     usr/share/glib-2.0/schemas/org.nostr.Grotto.gschema.xml \
     usr/share/dbus-1/services/org.nostr.Signer.service \
+    usr/share/dbus-1/services/org.nostr.Grotto.service \
     usr/share/applications/org.nostr.Grotto.desktop
   (cd "$stage" && ls usr/share/icons/hicolor/*/apps/org.nostr.Grotto.png) |
     while read -r f; do put "$r" "$f"; done
+  # The GUI's embedded panels SDK installs its runtime at the library root.
+  # Keep only its versioned DSOs, not headers, static archives or SDK metadata.
+  mkdir -p "$r/usr/lib/grotto"
+  cp -a "$stage"/usr/lib/libgrotto-panels-0.so.* "$r/usr/lib/grotto/"
   glib-compile-schemas "$r/usr/share/glib-2.0/schemas"
-  pkg grotto "$r"
+  # The daemon package owns the shared private runtime used by both binaries.
+  pkg grotto "$r" --depends "grotto-daemon = $version"
 fi
 
 if [[ $component == global || $component == grotto || $component == grotto-daemon-tcp ]]; then
@@ -49,5 +56,7 @@ if [[ $component == global || $component == grotto || $component == grotto-daemo
   [[ $component == grotto-daemon-tcp ]] && name=grotto-daemon-tcp
   r=package-roots/$name
   put "$r" usr/bin/grotto-daemon usr/share/systemd/user/grotto-daemon.service
+  mkdir -p "$r/usr/lib/grotto"
+  cp -a "$stage/usr/lib/grotto/." "$r/usr/lib/grotto/"
   pkg "$name" "$r"
 fi

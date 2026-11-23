@@ -266,6 +266,21 @@ MARMOT_TEST_API int mls_group_profile_check(const MlsGroup *g);
 MARMOT_TEST_API int mls_group_profile_check_entered(const MlsGroup *g);
 
 /**
+ * RFC 9420 §12.4.3.1 for a tree imported by Welcome: every non-blank leaf
+ * passes §7.3 for its own leaf_node_source against the group `g` joins --
+ * LeafNodeTBS signature (bound to group_id and leaf_index for the update and
+ * commit sources), credential, version, ciphersuite and GroupContext
+ * extension support, mutual credential support, leaf extensions listed in its
+ * capabilities, and signature/encryption key uniqueness.  Key_package leaves'
+ * lifetimes are not enforced: a joiner inherits long-lived members whose
+ * KeyPackage lifetimes have legitimately passed.  0, or
+ * MARMOT_ERR_WELCOME_LEGACY_TREE when the only failures are commit leaves
+ * signed without that binding (libmarmot <= 0.3.6), else
+ * MARMOT_ERR_WELCOME_INVALID.
+ */
+int mls_group_validate_imported_leaves(const MlsGroup *g);
+
+/**
  * Reduce `g` to what reading the rest of its epoch's application messages
  * needs (nostrc-yuj2; Marmot protocol-core/retained-history.md, "Retained
  * cryptographic material": the app-payload row without the candidate-
@@ -569,6 +584,13 @@ MARMOT_TEST_API int mls_private_message_sender_leaf(const uint8_t sender_data_se
                                     const uint8_t *group_id, size_t group_id_len,
                                     uint64_t epoch, const uint8_t *msg, size_t msg_len,
                                     uint32_t *out_leaf);
+
+/* Read-only application sender data, including the generation. Same routing-only
+ * contract as mls_private_message_sender_leaf(); never consumes a ratchet key. */
+MARMOT_TEST_API int mls_private_message_sender_generation(const uint8_t sender_data_secret[32],
+                                    const uint8_t *group_id, size_t group_id_len,
+                                    uint64_t epoch, const uint8_t *msg, size_t msg_len,
+                                    uint32_t *out_leaf, uint32_t *out_generation);
 
 /**
  * Process an incoming Commit message.

@@ -1190,47 +1190,10 @@ on_react(GhConversation *conversation, GhMessage *target, const gchar *emoji,
   g_autofree gchar *target_kind_str = g_strdup_printf("%d", target_kind);
 
   if (!add) {
-    /* Remove our own reaction with this emoji. */
-    g_autofree gchar *reaction_id = reactions
-      ? gh_reaction_store_remove_own(reactions, target_id, emoji, NULL) : NULL;
-    if (!reaction_id)
-      return;
-    switch (gh_conversation_get_backend(conversation)) {
-    case GH_CONVERSATION_BACKEND_NIP17: {
-      const gchar *const *recipients = gh_conversation_get_peers(conversation);
-      GObject *outbox_obj = gh_account_store_get_outbox(self->account_store);
-      GhOutbox *outbox = outbox_obj ? GH_OUTBOX(outbox_obj) : NULL;
-      if (outbox && recipients)
-        gh_outbox_send_deletion_room(outbox, recipients, reaction_id, NULL);
-      break;
-    }
-    case GH_CONVERSATION_BACKEND_NIP29: {
-      /* W26 slice B review fix (F2): use kind-5 (NIP-09 author deletion),
-       * not kind 9005 (admin delete-event). A regular member can remove
-       * their own reaction without admin permission. */
-      GObject *service_obj = gh_app_outbox_get_nip29_service(self->outbox);
-      if (GH_IS_NIP29_SERVICE(service_obj)) {
-        GhNip29Room *room = gh_nip29_service_lookup_room(GH_NIP29_SERVICE(service_obj), room_id);
-        if (room)
-          gh_nip29_service_send_deletion(GH_NIP29_SERVICE(service_obj), room, reaction_id,
-                                         NULL);
-      }
-      break;
-    }
-    case GH_CONVERSATION_BACKEND_MLS: {
-#if GROUNDHOG_HAVE_MLS_UI
-      GObject *service_obj = gh_app_outbox_get_mls_service(self->outbox);
-      if (GH_IS_MLS_SERVICE(service_obj)) {
-        GhMlsGroup *group = gh_mls_service_lookup(GH_MLS_SERVICE(service_obj), room_id);
-        if (group)
-          gh_mls_service_send_deletion(GH_MLS_SERVICE(service_obj), group, reaction_id, NULL);
-      }
-#endif
-      break;
-    }
-    default:
-      break;
-    }
+    g_autoptr(GError) error = NULL;
+    if (!gh_app_outbox_remove_reaction(self->outbox, conversation, target_id, emoji, &error) &&
+        error)
+      g_message("Groundhog could not queue a reaction deletion: %s", error->message);
     return;
   }
 
@@ -1462,26 +1425,6 @@ notifier_room_state(gpointer data, const gchar *room_id, GhNotifierRoomState *st
   return TRUE;
 }
 
-/* N1 (nostrc-qp24.84): the account's last-seen marker is the DM inbox's
- * checkpoint in its encrypted store, read when the model binds it (before
- * this session's inbox moves it). None without an open store of that
- * account. */
-static gint64
-notifier_last_seen(gpointer data, const gchar *account)
-{
-  GhAccountStore *account_store = GH_ACCOUNT_STORE(data);
-  GhStore *store = gh_account_store_get_store(account_store);
-  gint64 since = 0;
-  g_autoptr(GError) error = NULL;
-  if (!store || g_strcmp0(gh_store_get_account_pubkey(store), account) != 0)
-    return 0;
-  if (!gh_store_get_cursor(store, GH_ACCOUNT_STORE_INBOX_CURSOR, "", &since, &error)) {
-    g_message("Groundhog could not read when messages were last received: %s", error->message);
-    return 0;
-  }
-  return since;
-}
-
 /* NO-11: a locked store gets one hidden notice while no window shows it. */
 static void
 sync_notifier_locked(GhAppServices *self)
@@ -1499,7 +1442,7 @@ notifier_init(GhAppServices *self, GError **error)
     .conversations = self->conversations,
     .room_state = notifier_room_state,
     .room_state_data = self->account_store,
-    .last_seen = notifier_last_seen,
+    .last_seen = gh_account_store_notifier_last_seen,
     .last_seen_data = self->account_store,
   };
   self->notifier = gh_notifier_new(G_APPLICATION(self->app), &config);
