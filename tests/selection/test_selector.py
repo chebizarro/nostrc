@@ -6,6 +6,29 @@ from selector_support import ROOT, s, policy, plan, change
 
 
 class PolicyTests(unittest.TestCase):
+    def test_broad_grotto_room_flow_targets_match_configured_lanes(self):
+        p = s.load_inventory(ROOT / "tests/selection/inventory.json")
+        expected = {
+            "grotto.linux.asan_ubsan": False,
+            "core.linux": False,
+            "core.linux.asan": False,
+            "groundhog.linux": True,
+            "groundhog.mdk08": True,
+            "groundhog.mdk011": True,
+        }
+        selected = plan(p, paths=(), context="ci", mode="broad", profiles=list(expected))
+        lanes = {lane["profile"]: lane["checks"] for lane in selected["lanes"]}
+        self.assertEqual(set(lanes), set(expected))
+        for profile, room_flow_enabled in expected.items():
+            with self.subTest(profile=profile):
+                self.assertIn("supported.apps.grotto.tests.display.private_bus", lanes[profile])
+                checks = [p["checks"][ident] for ident in lanes[profile]]
+                targets = {target for check in checks for target in check.get("build_targets", [])}
+                tests = {name for check in checks for name in check.get("ctest_tests", {}).get(profile, [])}
+                for target in ("room-flow-schemas", "test-room-flow"):
+                    self.assertEqual(target in targets, room_flow_enabled, target)
+                self.assertEqual("signer/room-flow" in tests, room_flow_enabled)
+
     def test_consumer_change_does_not_select_prerequisite_tests(self):
         self.assertEqual(plan()["selected_checks"], ["app.live", "app.unit"])
 

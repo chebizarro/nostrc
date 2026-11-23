@@ -20229,7 +20229,6 @@
           "signer/desktop-contract",
           "signer/identity-model",
           "signer/onboarding",
-          "signer/room-flow",
           "signer/ui-accessibility",
           "signer/ui-layout"
         ],
@@ -20239,7 +20238,6 @@
           "signer/desktop-contract",
           "signer/identity-model",
           "signer/onboarding",
-          "signer/room-flow",
           "signer/ui-accessibility",
           "signer/ui-layout"
         ],
@@ -20249,7 +20247,6 @@
           "signer/desktop-contract",
           "signer/identity-model",
           "signer/onboarding",
-          "signer/room-flow",
           "signer/ui-accessibility",
           "signer/ui-layout"
         ]
@@ -20260,14 +20257,61 @@
         "grotto-schemas",
         "grotto_resources",
         "grotto_test_locales",
-        "room-flow-schemas",
         "test-approval-controller",
         "test-approval-integration",
         "test-desktop-activation",
         "test-panel-inbox-model",
         "test-onboarding",
-        "test-room-flow",
         "test-ui-layout"
+      ],
+      "runtime_inputs": [],
+      "requires": [
+        "display",
+        "private_bus"
+      ]
+    },
+    "supported.apps.grotto.tests.display.private_bus.room_flow": {
+      "nodes": [
+        "execution.core",
+        "execution.grotto",
+        "execution.groundhog",
+        "gnome.common",
+        "grotto.daemon",
+        "grotto.gui",
+        "groundhog.identity_auth",
+        "groundhog.schema_inputs",
+        "groundhog.unclassified",
+        "nip17",
+        "nip55l.dbus_contract",
+        "nip59",
+        "packaging.grotto",
+        "relayd.async_storage_api",
+        "testing.common_inputs",
+        "testing.framework"
+      ],
+      "profiles": [
+        "groundhog.linux",
+        "groundhog.mdk08",
+        "groundhog.mdk011"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "signer/room-flow"
+        ],
+        "groundhog.mdk08": [
+          "signer/room-flow"
+        ],
+        "groundhog.mdk011": [
+          "signer/room-flow"
+        ]
+      },
+      "build_targets": [
+        "room-flow-schemas",
+        "test-room-flow"
       ],
       "runtime_inputs": [],
       "requires": [
