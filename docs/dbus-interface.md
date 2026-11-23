@@ -46,7 +46,7 @@ Initial pairing offers only Pair application/once-only denial, not reusable conn
 Named UID-only claims are explicitly unverifiable; empty `claimed:` principals
 cannot receive reusable grants, flow consent or client trust.
 
-Canonical XML: [`apps/grotto/data/org.nostr.Grotto.Control1.xml`](../apps/grotto/data/org.nostr.Grotto.Control1.xml).
+Canonical XML: [`gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml`](../gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml).
 It is exported on the **existing daemon connection**, bus **`org.nostr.Signer`**,
 object **`/org/nostr/signer/grotto`**. The GUI's `org.nostr.Grotto` name is not the
 service destination and owning that name grants no authority. Legacy

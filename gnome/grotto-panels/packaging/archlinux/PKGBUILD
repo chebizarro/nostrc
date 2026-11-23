@@ -1,7 +1,7 @@
 # Maintainer: Biz <chebizarro@protonmail.com>
 # Runtime and SDK built from the same release archive as the desktop consumers.
 pkgname=grotto-panels
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=1
 pkgdesc='Public-metadata GTK management panel runtime and SDK'
 arch=('x86_64' 'aarch64')

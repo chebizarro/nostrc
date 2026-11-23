@@ -49,7 +49,9 @@ function own(bus, name) {
     waitFor(() => acquired, `acquire ${name}`);
     return id;
 }
-const [, xmlBytes] = GLib.file_get_contents('../../apps/grotto/data/org.nostr.Grotto.Control1.xml');
+const controlXMLPath = GLib.getenv('NSE_CONTROL1_XML');
+assert(controlXMLPath, 'runner provides the canonical Control1 XML path');
+const [, xmlBytes] = GLib.file_get_contents(controlXMLPath);
 const controlXML = new TextDecoder().decode(xmlBytes);
 let version = 1;
 let count = 0;

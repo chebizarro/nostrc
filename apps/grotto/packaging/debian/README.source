@@ -11,7 +11,7 @@ headless package recipe. Replace it only in that disposable copy:
 
 Build and install the separate grotto-panels runtime/SDK provider first; see
 `gnome/grotto-panels/packaging/README.md` in the repository root. This recipe
-requires libgrotto-panels-0-dev >=0.1.0 to build and libgrotto-panels-0-0 >=0.1.0
+requires libgrotto-panels-0-dev >=0.1.2 to build and libgrotto-panels-0-0 >=0.1.2
 at runtime. GROTTO_USE_SYSTEM_PANELS=ON prevents an unclaimed nested DSO install.
 
 Install build dependencies from debian/control in the target distribution.

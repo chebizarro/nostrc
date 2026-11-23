@@ -1,4 +1,5 @@
 #include "nostr-relay.h"
+#include <errno.h>
 #include "nostr-event.h"
 #include "nostr-tag.h"
 #include "nostr-filter.h"
@@ -272,15 +273,19 @@ static void relay_ok_waiter_free(NostrRelayOkWaiter *waiter) {
     free(waiter);
 }
 
-static void relay_ok_waiter_insert(NostrRelay *r, const char *id, NostrRelayOkWaiter *waiter) {
-    NostrRelayOkWaiter *old = go_hash_map_get_string(r->priv->ok_callbacks, id);
+/* Called under the relay mutex; the map owns a reference on success. */
+static const char *relay_ok_waiter_insert(NostrRelay *r, const char *id, NostrRelayOkWaiter *waiter) {
+    GoHashMap *map = r->priv->ok_callbacks;
+    if (!map) return "OK waiter map is unavailable";
+    if (go_hash_map_get_string(map, id)) return "an OK waiter for this event already exists";
+    go_hash_map_insert_str(map, id, waiter);
+    if (go_hash_map_get_string(map, id) != waiter) return "could not register OK waiter";
     atomic_fetch_add(&waiter->refs, 1);
-    go_hash_map_insert_str(r->priv->ok_callbacks, id, waiter);
-    relay_ok_waiter_free(old);
+    return NULL;
 }
 
 static void relay_ok_waiter_remove(NostrRelay *r, const char *id, NostrRelayOkWaiter *waiter) {
-    if (go_hash_map_get_string(r->priv->ok_callbacks, id) == waiter) {
+    if (r->priv->ok_callbacks && go_hash_map_get_string(r->priv->ok_callbacks, id) == waiter) {
         go_hash_map_remove_str(r->priv->ok_callbacks, id);
         relay_ok_waiter_free(waiter);
     }
@@ -330,7 +335,7 @@ static void relay_fail_pending_ok(NostrRelay *r, const char *reason) {
     GoHashMap *old = r->priv->ok_callbacks;
     r->priv->ok_callbacks = go_hash_map_create(64);
     nsync_mu_unlock(&r->priv->mutex);
-
+    /* The detached map retains its references even if publishers retire. */
     if (old) {
         NostrRelayDialHook hook = atomic_load(&g_pending_ok_hook);
         if (hook) hook(r, atomic_load(&g_pending_ok_hook_data));
@@ -1989,7 +1994,8 @@ GoChannel *nostr_relay_write_auth(NostrRelay *r, const char *frame,
     return answer;
 }
 
-GoChannel *nostr_relay_write(NostrRelay *r, char *msg) {
+static GoChannel *relay_write_impl(NostrRelay *r, char *msg, GoContext *cancel,
+                                    uint64_t admission_timeout_ms) {
     if (!r) return NULL;
     /* Parse the envelope discriminator, not an exact serializer prefix:
      * hand-written AUTH is allowed insignificant JSON whitespace. */
@@ -2004,6 +2010,7 @@ GoChannel *nostr_relay_write(NostrRelay *r, char *msg) {
         }
     }
     GoChannel *chan = go_channel_create(1);
+    if (!chan) return NULL;
 
     // hq-e3ach: Bump refcount to 2 so both the caller and write_operations
     // each own a reference.  Each side calls go_channel_unref when done.
@@ -2023,8 +2030,21 @@ GoChannel *nostr_relay_write(NostrRelay *r, char *msg) {
     req->msg = msg_copy;
     req->answer = chan;
 
-    // Enqueue may block while the write queue is full; callers must not hold subscription locks.
-    if (go_channel_send(r->priv->write_queue, req) != 0) {
+    /* Queue admission can block: do not hold subscription locks here.
+     * Raw writes preserve backpressure; cancellable publish selects context
+     * cancellation while admitting the EVENT as well as while waiting for OK. */
+    bool queued;
+    if (!admission_timeout_ms) queued = go_channel_send(r->priv->write_queue, req) == 0;
+    else if (cancel && go_context_is_canceled(cancel)) queued = false;
+    else {
+        GoSelectCase cases[] = {
+            { .op = GO_SELECT_SEND, .chan = r->priv->write_queue, .value = req },
+            { .op = GO_SELECT_RECEIVE, .chan = cancel ? go_context_done(cancel) : NULL }
+        };
+        GoSelectResult selected = go_select_timeout(cases, cancel ? 2 : 1, admission_timeout_ms);
+        queued = selected.selected_case == 0 && selected.ok;
+    }
+    if (!queued) {
         // Fallback: if cannot enqueue, surface error
         write_error(chan);
         free(req->msg);
@@ -2032,6 +2052,10 @@ GoChannel *nostr_relay_write(NostrRelay *r, char *msg) {
         return chan;
     }
     return chan;
+}
+
+GoChannel *nostr_relay_write(NostrRelay *r, char *msg) {
+    return relay_write_impl(r, msg, NULL, 0);
 }
 
 void nostr_relay_publish(NostrRelay *relay, NostrEvent *event) {
@@ -2136,68 +2160,124 @@ void nostr_relay_publish(NostrRelay *relay, NostrEvent *event) {
 
 bool nostr_relay_publish_and_wait(NostrRelay *relay, NostrEvent *event,
                                   uint64_t timeout_ms, Error **err) {
-    if (!relay || !relay->priv) {
-        if (err) *err = new_error(1, "relay is NULL");
-        return false;
-    }
-    if (!event) {
-        if (err) *err = new_error(1, "event is NULL");
-        return false;
-    }
+    return nostr_relay_publish_and_wait_with_context(relay, event, timeout_ms, NULL, err);
+}
 
+bool nostr_relay_publish_and_wait_with_context(NostrRelay *relay, NostrEvent *event,
+    uint64_t timeout_ms, GoContext *cancel, Error **err) {
+    if (err) *err = NULL;
+    if (!relay || !relay->priv || !event) {
+        if (err) *err = new_error(ERR_UNKNOWN, "relay or event is NULL");
+        return false;
+    }
+    if (cancel && go_context_is_canceled(cancel)) {
+        if (err) *err = new_error(ECANCELED, "publish cancelled");
+        return false;
+    }
+    if (cancel && event->kind == NOSTR_KIND_CLIENT_AUTHENTICATION) {
+        if (err) *err = new_error(ERR_UNKNOWN, "use the NIP-42 session API to cancel AUTH");
+        return false;
+    }
     char *event_id = nostr_event_get_id(event);
     if (!event_id || !*event_id) {
         free(event_id);
-        if (err) *err = new_error(1, "event id is unavailable");
+        if (err) *err = new_error(ERR_UNKNOWN, "event id is unavailable");
         return false;
     }
-
-    NostrRelayOkWaiter *waiter = (NostrRelayOkWaiter *)calloc(1, sizeof(*waiter));
-    if (!waiter) {
-        free(event_id);
-        if (err) *err = new_error(1, "failed to allocate OK waiter");
+    NostrRelayOkWaiter *waiter = calloc(1, sizeof(*waiter));
+    if (waiter) {
+        atomic_init(&waiter->refs, 1);
+        waiter->done = go_channel_create(1);
+    }
+    if (!waiter || !waiter->done) {
+        relay_ok_waiter_free(waiter); free(event_id);
+        if (err) *err = new_error(ERR_UNKNOWN, "failed to allocate OK waiter");
         return false;
     }
-    atomic_init(&waiter->refs, 1);
-    waiter->done = go_channel_create(1);
-    if (!waiter->done) {
-        free(event_id);
-        relay_ok_waiter_free(waiter);
-        if (err) *err = new_error(1, "failed to allocate OK waiter channel");
-        return false;
-    }
-
     nsync_mu_lock(&relay->priv->mutex);
-    relay_ok_waiter_insert(relay, event_id, waiter);
+    const char *registration_error = relay_ok_waiter_insert(relay, event_id, waiter);
     nsync_mu_unlock(&relay->priv->mutex);
-
-    nostr_relay_publish(relay, event);
-
-    if (timeout_ms == 0) timeout_ms = 30000;
-    NostrRelayOkResult *ok_res = NULL;
-    GoSelectCase cases[] = {
-        { .op = GO_SELECT_RECEIVE, .chan = waiter->done, .recv_buf = (void **)&ok_res },
-    };
-    GoSelectResult result = go_select_timeout(cases, 1, timeout_ms);
-
-    bool accepted = false;
-    if (result.selected_case == 0 && ok_res) {
-        accepted = ok_res->ok;
-        if (!accepted && err) {
-            *err = new_error(ok_res->disconnected ? ERR_WEBSOCKET_CLOSED : ERR_UNKNOWN,
-                             "relay rejected event %s: %s",
-                             event_id, ok_res->reason ? ok_res->reason : "");
-        }
-        relay_ok_result_free(ok_res);
-    } else {
-        nsync_mu_lock(&relay->priv->mutex);
-        relay_ok_waiter_remove(relay, event_id, waiter);
-        nsync_mu_unlock(&relay->priv->mutex);
-        if (err) *err = new_error(1, "timed out waiting for relay OK for event %s", event_id);
+    if (registration_error) {
+        relay_ok_waiter_free(waiter); free(event_id);
+        if (err) *err = new_error(ERR_UNKNOWN, "%s", registration_error);
+        return false;
     }
 
+    Error *failure = NULL;
+    GoChannel *write = NULL;
+    uint64_t started = get_monotonic_time_ms();
+    if (!timeout_ms) timeout_ms = 30000;
+    if (event->kind == NOSTR_KIND_CLIENT_AUTHENTICATION) {
+        /* Compatibility for the uncancellable legacy AUTH helper. */
+        nostr_relay_publish(relay, event);
+    } else if (!cancel || !go_context_is_canceled(cancel)) {
+        char *json = nostr_event_serialize_compact(event);
+        char *frame = NULL;
+        if (json) {
+            size_t n = strlen(json) + 16;
+            frame = malloc(n);
+            if (frame) snprintf(frame, n, "[\"EVENT\",%s]", json);
+        }
+        free(json);
+        if (frame) {
+            nostr_metric_counter_add("events_published", 1);
+            nostr_metric_counter_add("ws_tx_bytes", strlen(frame));
+            uint64_t elapsed = get_monotonic_time_ms() - started;
+            if (elapsed < timeout_ms)
+                write = relay_write_impl(relay, frame, cancel, timeout_ms - elapsed);
+        }
+        free(frame);
+        if (!write) failure = new_error(ERR_UNKNOWN, "could not enqueue EVENT");
+    }
+    NostrRelayOkResult *ok_res = NULL;
+    if (!failure && write) {
+        GoSelectCase cases[] = {
+            { .op = GO_SELECT_RECEIVE, .chan = write, .recv_buf = (void **)&failure },
+            { .op = GO_SELECT_RECEIVE, .chan = cancel ? go_context_done(cancel) : NULL }
+        };
+        uint64_t elapsed = get_monotonic_time_ms() - started;
+        uint64_t remaining = elapsed < timeout_ms ? timeout_ms - elapsed : 0;
+        uint64_t write_timeout = remaining < 5000 ? remaining : 5000;
+        if (!write_timeout) failure = new_error(ERR_UNKNOWN, "EVENT write timed out");
+        else {
+            GoSelectResult result = go_select_timeout(cases, cancel ? 2 : 1, write_timeout);
+            if (result.selected_case < 0) failure = new_error(ERR_UNKNOWN, "EVENT write timed out");
+        }
+        nostr_relay_write_answer_release(write);
+    }
+    if (!failure && (!cancel || !go_context_is_canceled(cancel))) {
+        uint64_t elapsed = get_monotonic_time_ms() - started;
+        if (elapsed >= timeout_ms) {
+            failure = new_error(ERR_UNKNOWN, "timed out waiting for relay OK");
+        } else {
+            GoSelectCase cases[] = {
+                { .op = GO_SELECT_RECEIVE, .chan = waiter->done, .recv_buf = (void **)&ok_res },
+                { .op = GO_SELECT_RECEIVE, .chan = cancel ? go_context_done(cancel) : NULL }
+            };
+            GoSelectResult result = go_select_timeout(cases, cancel ? 2 : 1, timeout_ms - elapsed);
+            if (result.selected_case < 0) failure = new_error(ERR_UNKNOWN, "timed out waiting for relay OK");
+        }
+    }
+    /* Drop the live registration, if present. A detached disconnect map can
+     * still complete the waiter using its own reference; final unref drains it. */
+    nsync_mu_lock(&relay->priv->mutex);
+    relay_ok_waiter_remove(relay, event_id, waiter);
+    nsync_mu_unlock(&relay->priv->mutex);
+    if (!ok_res) (void)go_channel_try_receive(waiter->done, (void **)&ok_res);
+    bool cancelled = cancel && go_context_is_canceled(cancel);
+    bool accepted = !cancelled && !failure && ok_res && ok_res->ok;
+    if (cancelled) {
+        if (failure) free_error(failure);
+        failure = new_error(ECANCELED, "publish cancelled");
+    } else if (!failure && !accepted) {
+        failure = new_error(ok_res && ok_res->disconnected ? ERR_WEBSOCKET_CLOSED : ERR_UNKNOWN,
+            "relay rejected event %s: %s", event_id, ok_res && ok_res->reason ? ok_res->reason : "no OK");
+    }
+    relay_ok_result_free(ok_res);
     relay_ok_waiter_free(waiter);
     free(event_id);
+    if (err) *err = failure;
+    else if (failure) free_error(failure);
     return accepted;
 }
 
@@ -2251,8 +2331,10 @@ static void relay_auth_impl(NostrRelay *relay, void (*sign)(NostrEvent *, Error 
             failure = new_error(1, "failed to allocate OK waiter");
         } else {
             nsync_mu_lock(&relay->priv->mutex);
-            relay_ok_waiter_insert(relay, event_id, waiter);
+            const char *registration_error = relay_ok_waiter_insert(relay, event_id, waiter);
             nsync_mu_unlock(&relay->priv->mutex);
+            if (registration_error)
+                failure = new_error(ERR_UNKNOWN, "%s", registration_error);
         }
     }
     if (!failure && !nostr_relay_send_auth(relay, event, generation, &failure) && !failure)
@@ -2275,9 +2357,7 @@ static void relay_auth_impl(NostrRelay *relay, void (*sign)(NostrEvent *, Error 
     }
     if (waiter) {
         nsync_mu_lock(&relay->priv->mutex);
-        if (relay->priv->ok_callbacks &&
-            go_hash_map_get_string(relay->priv->ok_callbacks, event_id) == waiter)
-            relay_ok_waiter_remove(relay, event_id, waiter);
+        relay_ok_waiter_remove(relay, event_id, waiter);
         nsync_mu_unlock(&relay->priv->mutex);
         relay_ok_waiter_free(waiter);
     }

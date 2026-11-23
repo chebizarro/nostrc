@@ -33,6 +33,7 @@ gobject_dep = dependency('gobject-2.0', version: '>= 2.80')
 gio_dep = dependency('gio-2.0', version: '>= 2.80')
 adwaita_dep = dependency('libadwaita-1', version: '>= 1.5')
 panels_dep = dependency('grotto-panels-0', version: '>= 0.1.0')
+control_client_dep = dependency('grotto-control-client-0', version: '>= 0.1.0')
 json_glib_dep = dependency('json-glib-1.0')
 native_camera_required = host_machine.system() == 'linux'
 qrencode_dep = dependency('libqrencode', required: native_camera_required)
@@ -266,7 +267,7 @@ app_deps = [
   gobject_dep,
   gio_dep,
   adwaita_dep,
-  panels_dep,
+  panels_dep, control_client_dep,
   json_glib_dep,
   nostr_gobject_dep,
 ]
@@ -289,7 +290,6 @@ endif
 
 # Main executable
 grotto_exe = executable(app_bin,
-  'src/grotto-panels-control1-service.c',
   'src/grotto-connection-link.c',
   app_sources,
   app_ui_sources,
@@ -347,10 +347,7 @@ install_data(
   'daemon/packaging/systemd/user/grotto-daemon.service.d/headless-bunker.conf.example',
   install_dir: get_option('datadir') / 'doc/grotto/examples')
 
-# CMake builds the daemon; Meson currently builds only the GUI. Keep the
-# canonical management XML available to clients in either installation.
-install_data('data/org.nostr.Grotto.Control1.xml',
-  install_dir: get_option('datadir') / 'dbus-1' / 'interfaces')
+# The installed Control1 client provider owns the canonical interface XML.
 
 # Install D-Bus activation file, configured with the absolute daemon path
 dbus_service_conf = configuration_data()

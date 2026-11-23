@@ -33,11 +33,7 @@ add_executable(nip04_example examples/examples.c)
 target_link_libraries(nip04_example PRIVATE nip04 nostr OpenSSL::Crypto ${SECP256K1_LIB})
 
 # Install rules
-install(TARGETS nip04
-        ARCHIVE DESTINATION lib
-        LIBRARY DESTINATION lib
-        RUNTIME DESTINATION bin)
-install(FILES include/nostr/nip04.h DESTINATION include/nostr)
+install(FILES include/nostr/nip04.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr)
 
 # Add tests if available
 # Per-test executables (avoid duplicate main)
@@ -53,3 +49,7 @@ foreach(TEST_SRC ${TEST_SOURCES})
         add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
     endif()
 endforeach()
+
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcNipPackage.cmake")
+declare_component_version(nip04 0 1 1)
+nostrc_install_nip(nip04 nip04 "nostr >= 2.5.2" "" EXTERNAL_PRIVATE openssl libsecp256k1)
