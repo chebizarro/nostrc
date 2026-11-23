@@ -55,6 +55,11 @@ a vendor update must reconcile or retire the affected patch, not disable it.
 - **0012:** clone finalized empty filters without NULL arithmetic or zero-length
   copies from NULL, and check allocation before deriving buffer pointers.
 
+- **0013:** align pointer-bearing custom-filter elements after variable-length
+  string data (nostrc-btzb). The supersession existence probe combines `#d`
+  with a callback/context; its storage must remain aligned through filter
+  finalization and cloning. No public API or stored event format changes.
+
 ## Upstream status
 
 These are downstream-only patches for **nostrc-wktgk**, not yet submitted or
