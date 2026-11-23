@@ -1072,7 +1072,11 @@ if (TARGET PkgConfig::GROUNDHOG_STORE_KEY_DEPS)
       tests/store/test_store_key_keyring.c tests/store/fake-secret.c)
     target_link_libraries(test-groundhog-store-key-keyring PRIVATE groundhog-store-key nostrc-test-bus)
     target_compile_options(test-groundhog-store-key-keyring PRIVATE -Wall -Wextra -Werror)
+    # This non-GUI test starts its own bus unless KC-6 explicitly requests
+    # the runner's disposable login-session bus. Neither mode needs AT-SPI.
+    set(NOSTRC_TEST_PRIVATE_SESSION OFF)
     add_test(NAME groundhog-store-key-keyring COMMAND test-groundhog-store-key-keyring)
+    set(NOSTRC_TEST_PRIVATE_SESSION ON)
     set_tests_properties(groundhog-store-key-keyring PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90
       ENVIRONMENT "G_DEBUG=fatal-criticals")
 
