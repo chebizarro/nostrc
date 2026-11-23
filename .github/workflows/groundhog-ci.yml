@@ -281,7 +281,7 @@ jobs:
           cache: false
       - name: Build nak
         run: |
-          go install github.com/fiatjaf/nak@v0.19.7
+          go install -ldflags='-X main.version=v0.19.7' github.com/fiatjaf/nak@v0.19.7
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           "$(go env GOPATH)/bin/nak" --version
       - name: Compile and test Groundhog without SQLCipher

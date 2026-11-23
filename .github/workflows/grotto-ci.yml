@@ -243,7 +243,7 @@ jobs:
       - name: Build pinned nak for selected interop checks
         if: steps.gate.outputs.affected == 'true' && steps.selection.outputs.needs_nak == 'true'
         run: |
-          go install github.com/fiatjaf/nak@v0.19.7
+          go install -ldflags='-X main.version=v0.19.7' github.com/fiatjaf/nak@v0.19.7
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           "$(go env GOPATH)/bin/nak" --version
       - name: Execute affected Grotto profile
@@ -324,7 +324,7 @@ jobs:
       - name: Build pinned nak (same interop peer as Groundhog CI)
         if: matrix.mode == 'native' && steps.gate.outputs.affected != 'true'
         run: |
-          go install github.com/fiatjaf/nak@v0.19.7
+          go install -ldflags='-X main.version=v0.19.7' github.com/fiatjaf/nak@v0.19.7
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           "$(go env GOPATH)/bin/nak" --version
       - name: Known desktop baseline tests (executed, named quarantine)
