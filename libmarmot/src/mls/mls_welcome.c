@@ -786,14 +786,14 @@ welcome_process_impl(const MlsWelcome *welcome,
      * Adopted groups (nostrc-qp24.5.1) must further satisfy the group's
      * capability and component requirements, with every admin a member.
      * Legacy trees whose commit leaves were signed without the group_id and
-     * leaf_index binding (libmarmot <= 0.3.6) are refused, as MDK does. */
+     * leaf_index binding (libmarmot <= 0.3.6) are refused, as MDK does, with
+     * MARMOT_ERR_WELCOME_LEGACY_TREE (a member must update the group). */
     {
         int leaf_rc = group_out->profile == MARMOT_GROUP_PROFILE_ADOPTED
                           ? mls_group_profile_check_entered(group_out)
                           : 0;
         if (leaf_rc == 0) leaf_rc = mls_group_validate_imported_leaves(group_out);
         if (leaf_rc != 0) {
-            fprintf(stderr, "welcome invalid: ratchet tree leaf\n");
             mls_group_info_clear(&gi);
             sodium_memzero(joiner_secret, sizeof(joiner_secret));
             mls_group_free(group_out);

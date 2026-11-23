@@ -273,7 +273,9 @@ MARMOT_TEST_API int mls_group_profile_check_entered(const MlsGroup *g);
  * extension support, mutual credential support, leaf extensions listed in its
  * capabilities, and signature/encryption key uniqueness.  Key_package leaves'
  * lifetimes are not enforced: a joiner inherits long-lived members whose
- * KeyPackage lifetimes have legitimately passed.  0 or
+ * KeyPackage lifetimes have legitimately passed.  0, or
+ * MARMOT_ERR_WELCOME_LEGACY_TREE when the only failures are commit leaves
+ * signed without that binding (libmarmot <= 0.3.6), else
  * MARMOT_ERR_WELCOME_INVALID.
  */
 int mls_group_validate_imported_leaves(const MlsGroup *g);

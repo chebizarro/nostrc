@@ -219,6 +219,9 @@ group_derive_epoch(MlsGroup *group,
  *     common ancestor a Welcome hands to each joiner (RFC 9420 §12.4.3.1,
  *     nostrc-il4i)
  */
+/* leaf_node_validate(): nonzero is a failure; this one means only the
+ * LeafNodeTBS signature failed. */
+#define LEAF_SIGNATURE_ONLY (-2)
 static int leaf_node_validate(const MlsGroup *group, const MlsLeafNode *leaf,
                                uint8_t expected_source, uint32_t leaf_index,
                                const MlsLeafNode *replaced,
@@ -3388,10 +3391,11 @@ leaf_node_validate(const MlsGroup *group, const MlsLeafNode *leaf,
         return -1;
 
     /* Step 2: signature over LeafNodeTBS, which for the update and commit
-     * sources binds this group_id and leaf_index (§7.2). */
+     * sources binds this group_id and leaf_index (§7.2).  Checked last:
+     * LEAF_SIGNATURE_ONLY says every other check passed. */
     if (mls_leaf_node_verify_signature(leaf, group->group_id, group->group_id_len,
                                        leaf_index) != 0)
-        return -1;
+        return LEAF_SIGNATURE_ONLY;
     return 0;
 }
 
@@ -3455,17 +3459,27 @@ int
 mls_group_validate_imported_leaves(const MlsGroup *g)
 {
     if (!g) return MARMOT_ERR_WELCOME_INVALID;
+    bool legacy = false;
     for (uint32_t i = 0; i < g->tree.n_leaves; i++) {
         const MlsNode *n = &g->tree.nodes[mls_tree_leaf_to_node(i)];
         if (n->type != MLS_NODE_LEAF) continue;
+        if (leaf_keys_unique(&g->tree, i) != 0) return MARMOT_ERR_WELCOME_INVALID;
         /* The leaf is its own predecessor: there is no earlier state of an
          * imported member to be a successor of. */
-        if (leaf_node_validate(g, &n->leaf, n->leaf.leaf_node_source, i, &n->leaf,
-                               g->extensions_data, g->extensions_len) != 0 ||
-            leaf_keys_unique(&g->tree, i) != 0)
-            return MARMOT_ERR_WELCOME_INVALID;
+        int rc = leaf_node_validate(g, &n->leaf, n->leaf.leaf_node_source, i, &n->leaf,
+                                    g->extensions_data, g->extensions_len);
+        if (rc == 0) continue;
+        /* Review m3: a commit leaf valid in every other respect, signed as
+         * libmarmot <= 0.3.6 signed it, is a group needing an update, not a
+         * forgery -- if nothing else in the tree is wrong. */
+        if (rc == LEAF_SIGNATURE_ONLY &&
+            mls_leaf_node_verify_legacy_commit_signature(&n->leaf) == 0) {
+            legacy = true;
+            continue;
+        }
+        return MARMOT_ERR_WELCOME_INVALID;
     }
-    return 0;
+    return legacy ? MARMOT_ERR_WELCOME_LEGACY_TREE : 0;
 }
 
 /**

@@ -140,6 +140,12 @@ typedef enum {
     MARMOT_ERR_WELCOME_EXPIRED          = -74,
     MARMOT_ERR_WELCOME_ALREADY_ACCEPTED = -75,
     MARMOT_ERR_WELCOME_ALREADY_DECLINED = -76,
+    /* Since 0.12.0 (nostrc-3hzu): the Welcome is genuine but its group's
+     * ratchet tree has commit leaves signed as libmarmot <= 0.3.6 signed
+     * them, without the RFC 9420 group_id/leaf_index binding (MDK refuses
+     * them too).  Nobody can join until a member's Commit renews those
+     * leaves: ask a member of the group to update. */
+    MARMOT_ERR_WELCOME_LEGACY_TREE      = -77,
 
     /* Extension errors */
     MARMOT_ERR_EXTENSION                = -80,
