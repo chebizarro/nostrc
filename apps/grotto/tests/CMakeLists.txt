@@ -539,9 +539,13 @@ target_compile_options(grotto_approval_test_core PRIVATE -Wall -Wextra -Werror)
 add_executable(test-approval-controller test-approval-controller.c ${_APPROVAL_GRESOURCE_C})
 add_dependencies(test-approval-controller grotto-schemas)
 target_link_libraries(test-approval-controller PRIVATE grotto_approval_test_core nostrc-test-bus)
+get_filename_component(_approval_fixture_bin
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../../gnome/grotto-panels/tests/fixtures/bin" REALPATH)
+target_compile_definitions(test-approval-controller PRIVATE
+  GROTTO_TEST_FIXTURE_BIN="${_approval_fixture_bin}")
 add_test(NAME signer/approval-controller COMMAND test-approval-controller)
 set_tests_properties(signer/approval-controller PROPERTIES TIMEOUT 90 LABELS "signer;unit"
-  ENVIRONMENT "${_UI_TEST_ENV};XDG_DATA_DIRS=${CMAKE_CURRENT_SOURCE_DIR}/../../../gnome/grotto-panels/tests/fixtures:/usr/local/share:/usr/share")
+  ENVIRONMENT "${_UI_TEST_ENV};PATH=${_approval_fixture_bin}:$ENV{PATH};XDG_DATA_DIRS=${CMAKE_CURRENT_SOURCE_DIR}/../../../gnome/grotto-panels/tests/fixtures:/usr/local/share:/usr/share")
 add_dependencies(signer-tests test-approval-controller)
 if (TARGET grotto-daemon AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_definitions)
   if(NOT APPLE)
