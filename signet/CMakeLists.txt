@@ -69,6 +69,7 @@ set(SIGNET_CORE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/relay_pool.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/nip46_server.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mgmt_protocol.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/secret_json.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/store_tokens.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/store_secrets.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/store_leases.c

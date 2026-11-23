@@ -2,6 +2,7 @@
 """Focused link/install regression for NostrcVisibility, shared and static."""
 import pathlib
 import platform
+import re
 import shutil
 import subprocess
 import tempfile
@@ -16,6 +17,16 @@ def run(*args, **kwargs):
 
 
 class VisibilityTests(unittest.TestCase):
+    def test_gnostr_loader_regressions_disallow_unresolved_symbol_waivers(self):
+        cmake = (ROOT / "apps/gnostr/CMakeLists.txt").read_text()
+        targets = ("plugin-raw-relay-api", "image-viewer-remote-media",
+                   "delete-authorization", "ndb-main-thread-violations",
+                   "real-bind-latency", "dm-files-key-encoding", "sync-bridge-user-state")
+        for name in targets:
+            with self.subTest(target=name):
+                self.assertNotRegex(cmake, r"target_link_options\(\s*gnostr-test-" +
+                    re.escape(name) + r"\s+[^)]*(?:ignore-in-object-files|dynamic_lookup)")
+
     def test_compile_only_probes_recover_cached_failure(self):
         for language, extension in (("C", "c"), ("CXX", "cpp")):
             with self.subTest(language=language), tempfile.TemporaryDirectory(prefix="nostrc-visibility-probe-") as tmp:
@@ -88,9 +99,17 @@ nostrc_library_visibility(fixture FIXTURE_API fixture/export.h "include/fixture"
             (src / "nips").mkdir()
             (src / "cmake").mkdir()
             shutil.copy(ROOT / "cmake/NostrcVisibility.cmake", src / "cmake")
-            run("bash", str(ROOT / "nips/create_nip.sh"), "nip-fixture", cwd=src / "nips")
-            run("bash", str(ROOT / "nips/generate_cmake.sh"), cwd=src)
+            for name in ("create_nip.sh", "generate_cmake.sh", "NipOptions.cmake.in"):
+                shutil.copy(ROOT / "nips" / name, src / "nips" / name)
+            run("bash", str(src / "nips/create_nip.sh"), "nip-fixture", cwd=src / "nips")
             package = src / "nips/nip-fixture"
+            run("bash", str(src / "nips/generate_cmake.sh"), cwd=src)
+            authored_cmake = (package / "CMakeLists.txt").read_bytes() + b"\n# Authored module policy must survive regeneration.\n"
+            (package / "CMakeLists.txt").write_bytes(authored_cmake)
+            run("bash", str(src / "nips/generate_cmake.sh"), cwd=src)
+            self.assertEqual((src / "NipOptions.cmake").read_bytes(),
+                             (ROOT / "nips/NipOptions.cmake.in").read_bytes())
+            self.assertEqual((package / "CMakeLists.txt").read_bytes(), authored_cmake)
             header = package / "include/nostr/nip_fixture/nip-fixture.h"
             with header.open("a") as out:
                 out.write('\nNOSTR_NIP_FIXTURE_API int fixture_api(void);\n')
@@ -100,8 +119,8 @@ nostrc_library_visibility(fixture FIXTURE_API fixture/export.h "include/fixture"
 cmake_minimum_required(VERSION 3.22)
 project(generated_nip C)
 add_library(nostr INTERFACE)
-set(ENABLE_NIP_FIXTURE ON)
-include(NipOptions.cmake)
+# New module enablement is authored policy, not inferred by directory scanning.
+add_subdirectory(nips/nip-fixture)
 add_executable(consumer main.c)
 target_link_libraries(consumer PRIVATE nip-fixture)
 ''')

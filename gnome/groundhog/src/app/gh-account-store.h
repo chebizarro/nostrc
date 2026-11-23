@@ -27,7 +27,9 @@ G_BEGIN_DECLS
  *     the store) and deletes them with its <pubkey>.checkpoint, unread
  *     (ST-12): their message keys and checkpoint covered messages that were
  *     only ever in memory, so the first session fetches whatever the relays
- *     still hold (W13 review B1);
+ *     still hold (W13 review B1). Steps 2-3 run under exclusive worker
+ *     ownership before handing the store to the main context; no model or
+ *     receive grant is bound during migration;
  *  4. attaches GhStoreConversations as the conversation model's persistence
  *     delegate, restoring the stored rooms;
  *  5. makes the account's per-store service (the durable outbox, G06) with
@@ -133,6 +135,8 @@ guint64 gh_account_store_get_generation(GhAccountStore *self);
 const gchar *gh_account_store_get_account(GhAccountStore *self);
 /* Borrowed; non-NULL only in OPEN, EPHEMERAL and CORRUPT. */
 GhStore *gh_account_store_get_store(GhAccountStore *self);
+/* Production GhNotifierLastSeenFunc: read only the matching open account. */
+gint64 gh_account_store_notifier_last_seen(gpointer data, const gchar *account);
 GhStoreConversations *gh_account_store_get_conversations(GhAccountStore *self);
 /* The create_outbox object, only in OPEN and EPHEMERAL. */
 GObject *gh_account_store_get_outbox(GhAccountStore *self);

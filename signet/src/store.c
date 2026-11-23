@@ -24,6 +24,7 @@
 #include "signet/store.h"
 #include "signet/backend_admission.h"
 #include "store_passkeys_schema.h"
+#include "store_connect_private.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -2818,11 +2819,12 @@ int signet_store_reissue_connect_secret(SignetStore *store, const char *agent_id
  * transaction as the secret consumption: either both commit or neither does,
  * so a crash / binding failure can never burn the one-time credential
  * without establishing the durable pairing (and vice versa). */
-static int signet_store_consume_connect_secret_value_internal(
+static int signet_store_consume_connect_secret_value_unlocked(
     SignetStore *store,
     const char *connect_secret,
     int64_t now,
     const char *bind_client_pubkey,
+    SignetConnectAdmissionFn admit, void *admit_data,
     char **out_agent_id) {
   if (out_agent_id) *out_agent_id = NULL;
   if (!store || !store->open || !connect_secret || !connect_secret[0] || !out_agent_id) {
@@ -2870,6 +2872,15 @@ static int signet_store_consume_connect_secret_value_internal(
     g_free(agent_pk_copy);
     sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
     return -1;
+  }
+
+  /* Resolve without consuming. The same transaction pins this exact agent
+   * through admission, token consumption and binding creation. */
+  if (admit && !admit(agent_copy, agent_pk_copy, admit_data)) {
+    g_free(agent_copy);
+    g_free(agent_pk_copy);
+    sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+    return 2;
   }
 
   const char *token_sql =
@@ -2992,12 +3003,36 @@ static int signet_store_consume_connect_secret_value_internal(
   return 0;
 }
 
+/* FULLMUTEX serializes statements, not a transaction's entire lifetime. */
+static int signet_store_consume_connect_secret_value_internal(
+    SignetStore *store, const char *secret, int64_t now, const char *client,
+    SignetConnectAdmissionFn admit, void *data, char **out_agent_id) {
+  if (out_agent_id) *out_agent_id = NULL;
+  if (!store || !store->open) return -1;
+  sqlite3_mutex *mutex = sqlite3_db_mutex(store->db);
+  sqlite3_mutex_enter(mutex);
+  int rc = signet_store_consume_connect_secret_value_unlocked(
+      store, secret, now, client, admit, data, out_agent_id);
+  sqlite3_mutex_leave(mutex);
+  return rc;
+}
+
+int signet_store_admit_connect_client(SignetStore *store, const char *secret,
+                                      const char *client, int64_t now,
+                                      SignetConnectAdmissionFn admit, void *data,
+                                      char **out_agent_id) {
+  if (out_agent_id) *out_agent_id = NULL;
+  if (!client || !client[0] || !admit) return -1;
+  return signet_store_consume_connect_secret_value_internal(
+      store, secret, now, client, admit, data, out_agent_id);
+}
+
 int signet_store_consume_connect_secret_value(SignetStore *store,
                                               const char *connect_secret,
                                               int64_t now,
                                               char **out_agent_id) {
   return signet_store_consume_connect_secret_value_internal(
-      store, connect_secret, now, NULL, out_agent_id);
+      store, connect_secret, now, NULL, NULL, NULL, out_agent_id);
 }
 
 int signet_store_consume_connect_secret_and_bind(SignetStore *store,
@@ -3007,7 +3042,7 @@ int signet_store_consume_connect_secret_and_bind(SignetStore *store,
                                                  char **out_agent_id) {
   if (!client_pubkey || !client_pubkey[0]) return -1;
   return signet_store_consume_connect_secret_value_internal(
-      store, connect_secret, now, client_pubkey, out_agent_id);
+      store, connect_secret, now, client_pubkey, NULL, NULL, out_agent_id);
 }
 
 sqlite3 *signet_store_get_db(SignetStore *store) {

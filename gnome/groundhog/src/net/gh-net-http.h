@@ -115,8 +115,9 @@ void gh_net_http_get_accept_prefix_async(GhNetHttp *self, const gchar *uri, cons
  * for IPv6 anything outside global unicast 2000::/3 (so unique local,
  * link-local, multicast) and 2001:db8::/32. IPv6 forms carrying an IPv4
  * address are judged by that address: IPv4-compatible ::a.b.c.d, mapped
- * ::ffff:a.b.c.d, SIIT ::ffff:0:a.b.c.d, NAT64 64:ff9b::/96 and
- * 64:ff9b:1::/48 (every RFC 6052 layout the address fits must be public),
+ * ::ffff:a.b.c.d, SIIT ::ffff:0:a.b.c.d and NAT64 64:ff9b::/96;
+ * local-use NAT64 64:ff9b:1::/48 is refused outright, as are non-global
+ * IANA special-purpose ranges. Embedded public IPv4 is required for
  * 6to4 2002::/16, and Teredo 2001::/32 (server and client). */
 gboolean gh_net_address_is_public(GInetAddress *address);
 

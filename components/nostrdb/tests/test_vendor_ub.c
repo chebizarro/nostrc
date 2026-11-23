@@ -187,8 +187,52 @@ static void empty_filter_clone(void)
     ndb_filter_destroy(&source);
 }
 
+static bool custom_callback(void *ctx, struct ndb_note *note)
+{
+    (void)note;
+    return *(int *)ctx == 23;
+}
+
+static void check_custom_alignment(struct ndb_filter *filter, int *ctx)
+{
+    struct ndb_filter_elements *elements = NULL;
+    for (int i = 0; i < filter->num_elements; ++i) {
+        struct ndb_filter_elements *candidate = ndb_filter_get_elements(filter, i);
+        if (candidate->field.type == NDB_FILTER_CUSTOM) { elements = candidate; break; }
+    }
+    CHECK(elements && elements->count == 1);
+    struct ndb_filter_custom *custom = (void *)(filter->data_buf.start + elements->elements[0]);
+    CHECK((uintptr_t)custom % _Alignof(struct ndb_filter_custom) == 0);
+    CHECK(custom->ctx == ctx && custom->cb == custom_callback);
+    CHECK(custom->cb(custom->ctx, NULL));
+}
+
+static void custom_filter_alignment(void)
+{
+    int ctx = 23;
+    for (size_t len = 0; len < 8; ++len) {
+        char tag[8]; memset(tag, 'x', len); tag[len] = 0;
+        struct ndb_filter source, clone;
+        CHECK(ndb_filter_init(&source));
+        CHECK(ndb_filter_start_tag_field(&source, 'd'));
+        CHECK(ndb_filter_add_str_element(&source, tag));
+        ndb_filter_end_field(&source);
+        CHECK(ndb_filter_start_field(&source, NDB_FILTER_CUSTOM));
+        CHECK(ndb_filter_add_custom_filter_element(&source, custom_callback, &ctx));
+        ndb_filter_end_field(&source);
+        check_custom_alignment(&source, &ctx);
+        CHECK(ndb_filter_end(&source));
+        check_custom_alignment(&source, &ctx);
+        CHECK(ndb_filter_clone(&clone, &source));
+        check_custom_alignment(&clone, &ctx);
+        ndb_filter_destroy(&clone);
+        ndb_filter_destroy(&source);
+    }
+}
+
 int main(void)
 {
+    custom_filter_alignment();
     empty_filter_clone();
     unaligned_json_tokens();
     unaligned_sha256();

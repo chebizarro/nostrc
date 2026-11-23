@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <assert.h>
 
 #include "go.h"
 
@@ -53,5 +54,22 @@ cleanup:
         result = 6;
     go_context_unref(child.context);
     go_context_unref(parent);
+    /* A child owns its parent's lifetime, including through free's legacy API. */
+    parent = go_context_background();
+    child = go_context_with_cancel(parent);
+    assert(atomic_load(&parent->refcount) == 2);
+    go_context_free(parent);
+    assert(atomic_load(&parent->refcount) == 1);
+    assert(!go_context_is_canceled(child.context));
+    child.cancel(child.context);
+    assert(go_context_is_canceled(child.context));
+    go_context_unref(child.context);
+
+    ctx = go_context_background();
+    go_context_ref(ctx);
+    go_context_free(ctx);
+    assert(atomic_load(&ctx->refcount) == 1);
+    assert(!go_context_is_canceled(ctx));
+    go_context_unref(ctx);
     return result;
 }

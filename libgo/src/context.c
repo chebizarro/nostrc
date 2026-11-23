@@ -36,6 +36,8 @@ void go_context_cancel(GoContext *ctx) {
     nsync_mu_unlock(&ctx->mutex);
 }
 
+static void context_destroy(GoContext *ctx);
+
 // Reference counting for safe context lifecycle
 GoContext *go_context_ref(GoContext *ctx) {
     if (!ctx) return NULL;
@@ -48,7 +50,7 @@ void go_context_unref(GoContext *ctx) {
     int old = atomic_fetch_sub_explicit(&ctx->refcount, 1, memory_order_acq_rel);
     if (old == 1) {
         // Refcount hit zero, actually free the context
-        go_context_free(ctx);
+        context_destroy(ctx);
     }
 }
 
@@ -96,7 +98,7 @@ void base_context_wait(void *ctx) {
 }
 
 // Wrapper functions to avoid direct vtable access
-void go_context_free(GoContext *ctx) {
+static void context_destroy(GoContext *ctx) {
     if (!ctx) return;
     if (ctx->vtable) {
         if (ctx->vtable->free) ctx->vtable->free(ctx);
@@ -106,6 +108,10 @@ void go_context_free(GoContext *ctx) {
      * (nostrc-jw23). Background contexts use the vtable path above, whose
      * destructor owns both the context and its vtable. */
     base_context_free(ctx);
+}
+
+void go_context_free(GoContext *ctx) {
+    go_context_unref(ctx);
 }
 
 // Wrapper functions
@@ -248,12 +254,18 @@ GoContext *go_with_deadline(GoContext *parent, struct timespec deadline) {
 
 void hierarchical_context_init(GoHierarchicalContext *ctx, GoContext *parent) {
     go_context_init(&ctx->base, 0);
-    ctx->parent = parent;
+    ctx->parent = go_context_ref(parent);
 }
 
 bool hierarchical_context_is_canceled(void *ctx) {
     GoHierarchicalContext *hctx = (GoHierarchicalContext *)ctx;
     return base_context_is_canceled(ctx) || (hctx->parent && base_context_is_canceled(hctx->parent));
+}
+
+static void hierarchical_context_free(void *value) {
+    GoHierarchicalContext *ctx = value;
+    go_context_unref(ctx->parent);
+    base_context_free(ctx);
 }
 
 CancelContextResult go_context_with_cancel(GoContext *parent) {
@@ -263,7 +275,7 @@ CancelContextResult go_context_with_cancel(GoContext *parent) {
     ctx->base.vtable = calloc(1, sizeof(GoContextInterface));
     ctx->base.vtable->is_canceled = hierarchical_context_is_canceled;
     ctx->base.vtable->wait = base_context_wait;
-    ctx->base.vtable->free = base_context_free;
+    ctx->base.vtable->free = hierarchical_context_free;
     ctx->base.vtable->done = base_context_done;
     ctx->base.vtable->err = base_context_err;
 

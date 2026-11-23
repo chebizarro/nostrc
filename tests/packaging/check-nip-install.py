@@ -62,7 +62,7 @@ def main():
     for package in sdk_packages:
         version = pc('--modversion', package)
         assert version, f'{package} has no version'
-        assert Path(pc('--variable=prefix', package)) == prefix, package
+        assert Path(pc('--variable=prefix', package)).resolve() == prefix.resolve(), package
         print(f'{package}: {version}', flush=True)
         # --static is for the SDK's internal closure, not for recursively
         # requiring static implementations of the distro's shared libraries.
@@ -80,7 +80,7 @@ def main():
             modes.append(('shared', [], ['nip11', 'nip78', 'nip98'], ['-DSHARED_NIPS_ONLY']))
             modes.append(('nip78-shared', [], ['nip78'], ['-DNIP78_ONLY']))
         if (libdir / 'pkgconfig' / 'nip46-glib.pc').is_file():
-            assert Path(pc('--variable=prefix', 'nip46-glib')) == prefix
+            assert Path(pc('--variable=prefix', 'nip46-glib')).resolve() == prefix.resolve()
             modes.append(('glib', ['--static'], ['nip46-glib', *PACKAGES], ['-DNIP46_GLIB']))
         for mode, static_flags, packages, defines in modes:
             flags = shlex.split(pc('--cflags', '--libs', *static_flags, *packages))

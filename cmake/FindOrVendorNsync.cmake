@@ -143,16 +143,7 @@ else()
   target_include_directories(nostrc_nsync INTERFACE "${NSYNC_INCLUDE_DIR}")
   target_link_libraries     (nostrc_nsync INTERFACE nsync)
 
-  # Install the vendored nsync public headers alongside libnostrgo's headers
-  # so downstream consumers of the -devel packages can #include <nsync.h>
-  # without needing a separate distro nsync-devel package installed.  The
-  # vendored ``nsync`` static archive itself is EXCLUDE_FROM_ALL and folded
-  # into libnostrgo.so via --whole-archive, so we do NOT install the .a.
-  include(GNUInstallDirs)
-  file(GLOB _nsync_public_headers "${_nsync_vendor_dir}/public/nsync*.h")
-  install(FILES ${_nsync_public_headers}
-    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
-    COMPONENT Development)
+  # libgo owns installation of the vendored header/archive closure.
 
   message(STATUS "nsync: using VENDORED copy (third_party/nsync)")
 endif()

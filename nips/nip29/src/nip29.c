@@ -475,10 +475,25 @@ fail:
     return false;
 }
 
+static bool snapshot_should_replace(const NostrEvent *event, nostr_timestamp_t previous_time,
+                                    const char previous_id[65], char candidate_id[65]) {
+    nostr_timestamp_t time = nostr_event_get_created_at(event);
+    if (time < previous_time) return false;
+    memset(candidate_id, 0, 65);
+    /* Legacy unsigned templates may be merged at a newer timestamp. They
+     * cannot displace a canonical equal-time winner; real relay events carry
+     * the pubkey needed to calculate their canonical id. */
+    (void)nostr_event_compute_id(event, candidate_id);
+    if (time > previous_time) return true;
+    return candidate_id[0] && (!previous_id[0] || strcmp(candidate_id, previous_id) < 0);
+}
+
 bool nostr_group_merge_in_metadata_event(nostr_group_t *group, const nostr_event_t *event) {
     if (!group || !event || nostr_event_get_kind(event) != NOSTR_KIND_SIMPLE_GROUP_METADATA) return false;
     if (!event_matches_group(group, event)) return false;
-    if (nostr_event_get_created_at(event) < group->last_metadata_update) return false;
+    char candidate_id[65];
+    if (!snapshot_should_replace(event, group->last_metadata_update,
+                                 group->last_metadata_event_id, candidate_id)) return false;
 
     char *name = NULL;
     char *about = NULL;
@@ -517,6 +532,7 @@ bool nostr_group_merge_in_metadata_event(nostr_group_t *group, const nostr_event
     group->is_hidden = has_tag(event, "hidden");
     group->is_closed = has_tag(event, "closed");
     group->last_metadata_update = nostr_event_get_created_at(event);
+    memcpy(group->last_metadata_event_id, candidate_id, sizeof(candidate_id));
 
     return true;
 }
@@ -569,7 +585,9 @@ bool nostr_group_admin_add_role(nostr_group_admin_t *admin, const char *role) {
 bool nostr_group_merge_in_admins_event(nostr_group_t *group, const nostr_event_t *event) {
     if (!group || !event || nostr_event_get_kind(event) != NOSTR_KIND_SIMPLE_GROUP_ADMINS) return false;
     if (!event_matches_group(group, event)) return false;
-    if (nostr_event_get_created_at(event) < group->last_admins_update) return false;
+    char candidate_id[65];
+    if (!snapshot_should_replace(event, group->last_admins_update,
+                                 group->last_admins_event_id, candidate_id)) return false;
 
     nostr_group_admin_t *admins = NULL;
     size_t admins_len = 0;
@@ -607,6 +625,7 @@ bool nostr_group_merge_in_admins_event(nostr_group_t *group, const nostr_event_t
     group->admins_len = admins_len;
     group->admins_loaded = true;
     group->last_admins_update = nostr_event_get_created_at(event);
+    memcpy(group->last_admins_event_id, candidate_id, sizeof(candidate_id));
     return true;
 }
 
@@ -642,7 +661,9 @@ static nostr_group_member_t *append_member(nostr_group_member_t **members, size_
 bool nostr_group_merge_in_members_event(nostr_group_t *group, const nostr_event_t *event) {
     if (!group || !event || nostr_event_get_kind(event) != NOSTR_KIND_SIMPLE_GROUP_MEMBERS) return false;
     if (!event_matches_group(group, event)) return false;
-    if (nostr_event_get_created_at(event) < group->last_members_update) return false;
+    char candidate_id[65];
+    if (!snapshot_should_replace(event, group->last_members_update,
+                                 group->last_members_event_id, candidate_id)) return false;
 
     nostr_group_member_t *members = NULL;
     size_t members_len = 0;
@@ -669,6 +690,7 @@ bool nostr_group_merge_in_members_event(nostr_group_t *group, const nostr_event_
     group->members_loaded = true;
     group->members_may_be_partial = true;
     group->last_members_update = nostr_event_get_created_at(event);
+    memcpy(group->last_members_event_id, candidate_id, sizeof(candidate_id));
     return true;
 }
 
@@ -704,7 +726,9 @@ static nostr_group_role_t *append_role(nostr_group_role_t **roles, size_t *len, 
 bool nostr_group_merge_in_roles_event(nostr_group_t *group, const nostr_event_t *event) {
     if (!group || !event || nostr_event_get_kind(event) != NOSTR_KIND_SIMPLE_GROUP_ROLES) return false;
     if (!event_matches_group(group, event)) return false;
-    if (nostr_event_get_created_at(event) < group->last_roles_update) return false;
+    char candidate_id[65];
+    if (!snapshot_should_replace(event, group->last_roles_update,
+                                 group->last_roles_event_id, candidate_id)) return false;
 
     nostr_group_role_t *roles = NULL;
     size_t roles_len = 0;
@@ -730,6 +754,7 @@ bool nostr_group_merge_in_roles_event(nostr_group_t *group, const nostr_event_t 
     group->roles_len = roles_len;
     group->roles_loaded = true;
     group->last_roles_update = nostr_event_get_created_at(event);
+    memcpy(group->last_roles_event_id, candidate_id, sizeof(candidate_id));
     return true;
 }
 
@@ -786,7 +811,9 @@ static nostr_group_pin_t *append_pin(nostr_group_pin_t **pins, size_t *len,
 bool nostr_group_merge_in_pins_event(nostr_group_t *group, const nostr_event_t *event) {
     if (!group || !event || nostr_event_get_kind(event) != NOSTR_KIND_SIMPLE_GROUP_PINNED_EVENTS) return false;
     if (!event_matches_group(group, event)) return false;
-    if (nostr_event_get_created_at(event) < group->last_pins_update) return false;
+    char candidate_id[65];
+    if (!snapshot_should_replace(event, group->last_pins_update,
+                                 group->last_pins_event_id, candidate_id)) return false;
 
     nostr_group_pin_t *pins = NULL;
     size_t pins_len = 0;
@@ -814,6 +841,7 @@ bool nostr_group_merge_in_pins_event(nostr_group_t *group, const nostr_event_t *
     group->pins_len = pins_len;
     group->pins_loaded = true;
     group->last_pins_update = nostr_event_get_created_at(event);
+    memcpy(group->last_pins_event_id, candidate_id, sizeof(candidate_id));
     return true;
 }
 

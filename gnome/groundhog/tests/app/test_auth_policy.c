@@ -8,6 +8,7 @@
  * counts every signer call. Waits iterate the main context; their deadlines
  * are failure bounds only. */
 #include "gh-auth-policy.h"
+#include "gh-account-auth.h"
 #include "gh-test-signer.h"
 
 #include "nostr-tag.h"
@@ -366,6 +367,11 @@ test_matrix(void)
       g_autofree gchar *url = g_strdup_printf("wss://%s-%s.test.invalid",
                                               gh_auth_purpose_to_string(p), write ? "w" : "r");
       Conn *conn = write ? open_publish(&f, p, url) : open_scope(&f, generation(&f), p, url);
+      gboolean owned = p != GH_AUTH_PURPOSE_CONTACT_DIRECTORY &&
+        p != GH_AUTH_PURPOSE_RECIPIENT_WRAP && p != GH_AUTH_PURPOSE_GROUP &&
+        p != GH_AUTH_PURPOSE_MLS_ROUTING;
+      g_assert_cmpint(write ? gh_relay_publish_url_address_trusted(conn->publish, url)
+                            : gh_relay_scope_url_address_trusted(conn->scope, url), ==, owned);
       guint calls = f.mock.calls;
       demand_auth(conn);
       gh_test_spin_until(auth_sent, conn);
@@ -628,6 +634,40 @@ test_shared_prompt(void)
   fixture_down(&f);
 }
 
+static gboolean
+auth_sent_or_terminal(gpointer data)
+{
+  Conn *conn = data;
+  return conn->auth->len > 0 || publish_terminal(conn);
+}
+
+static void
+test_queued_auth_timestamp(void)
+{
+  Fixture f;
+  fixture_up(&f);
+  const gchar *url = "wss://queued-auth.test.invalid";
+  Conn *read = open_scope(&f, generation(&f), GH_AUTH_PURPOSE_OWN_INBOX_READ, url);
+  f.mock.hold = TRUE;
+  demand_auth(read);
+  HeldWait one = { &f.mock, 1 };
+  gh_test_spin_until(held_reached, &one);
+  gh_account_auth_test_age_next_queued(GH_RELAY_AUTH_MAX_SKEW_SECONDS + 1);
+  Conn *copy = open_publish(&f, GH_AUTH_PURPOSE_SELF_WRAP, url);
+  demand_auth(copy);
+  drain();
+  g_assert_cmpuint(f.mock.held->len, ==, 1);
+  f.mock.hold = FALSE;
+  gh_test_signer_release_all(&f.mock);
+  gh_test_spin_until(auth_sent_or_terminal, copy);
+  g_assert_cmpuint(copy->auth->len, ==, 1);
+  gchar id[65];
+  g_autofree gchar *pubkey = checked_auth(copy, 0, id);
+  g_assert_cmpstr(pubkey, ==, hex_alice);
+  g_assert_cmpuint(f.mock.calls, ==, 2);
+  fixture_down(&f);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -641,6 +681,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/auth-policy/nt3-stale-challenge", test_stale_challenge);
   g_test_add_func("/groundhog/auth-policy/nt4-one-auth-no-escalation", test_one_auth_no_escalation);
   g_test_add_func("/groundhog/auth-policy/r6-shared-prompt", test_shared_prompt);
+  g_test_add_func("/groundhog/auth-policy/queued-auth-timestamp", test_queued_auth_timestamp);
   int result = g_test_run();
   gh_test_bus_down(&shared_bus);
   g_free(hex_alice);

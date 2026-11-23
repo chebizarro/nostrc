@@ -31,7 +31,7 @@ function(fipsd_unit_test target source)
     C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
   apply_warnings(${target})
   apply_sanitizers(${target})
-  if(source MATCHES "^test_((node|ble|mdns)_two_nodes|node_crossing_dials|mdns_multipath)\\.c$")
+  if(source MATCHES "^test_((node|ble|mdns)_two_nodes|node_crossing_dials|node_multi|mdns_multipath)\\.c$")
     target_sources(${target} PRIVATE $<TARGET_OBJECTS:fipsd_provider_hooked>)
     target_compile_definitions(${target} PRIVATE FIPSD_TEST_HOOKS=1)
   endif()
@@ -395,6 +395,14 @@ add_dependencies(fipsd_tests fipsd_node_rekey_msg2_test)
 add_test(NAME FipsdNodeRekeyMsg2Test COMMAND fipsd_node_rekey_msg2_test)
 set_tests_properties(FipsdNodeRekeyMsg2Test PROPERTIES TIMEOUT 120 LABELS "fips;node" ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdNodeRekeyMsg2Test OWNER fipsd TARGETS fipsd_node_rekey_msg2_test)
+
+# FilterAnnounce submit/completion ownership, with dispatcher-side faults.
+fipsd_unit_test(fipsd_bloom_completion_test test_bloom_completion.c)
+target_sources(fipsd_bloom_completion_test PRIVATE handshake_fixture.c)
+add_dependencies(fipsd_tests fipsd_bloom_completion_test)
+add_test(NAME FipsdBloomCompletionTest COMMAND fipsd_bloom_completion_test)
+set_tests_properties(FipsdBloomCompletionTest PROPERTIES TIMEOUT 60 LABELS "fips;node" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdBloomCompletionTest OWNER fipsd TARGETS fipsd_bloom_completion_test)
 
 # Tier B4: all privileged device syscalls replaced in the ordinary tests.
 fipsd_unit_test(fipsd_tun_test test_tun.c)

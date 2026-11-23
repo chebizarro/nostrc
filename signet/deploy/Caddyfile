@@ -26,6 +26,16 @@ https://{$SIGNET_ENROLLMENT_HOST} {
 		request_body {
 			max_size 8KB
 		}
+		rate_limit {
+			zone challenges_by_source {
+				match {
+					path /challenge
+				}
+				key {remote_host}
+				window 1m
+				events 20
+			}
+		}
 		reverse_proxy 127.0.0.1:9487 {
 			header_up X-Forwarded-Proto https
 		}

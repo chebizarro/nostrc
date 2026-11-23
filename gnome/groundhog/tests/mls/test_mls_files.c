@@ -7,7 +7,7 @@
  * restart (the epoch restored from the store); the name sent is neutral; a
  * Commit during the upload means the file is sealed and uploaded again, and
  * a message in a stale epoch is never stored or sent; in Tor mode every
- * transfer goes through Tor; a legacy group has no picture; and Save As's
+ * transfer goes through Tor; legacy pictures use their MIP-01 version; and Save As's
  * name is sanitized. Only loopback is contacted. Nothing sleeps. */
 
 #include "mls-world.h"
@@ -18,6 +18,8 @@
 #include "gh-mls-attachments.h"
 #include "gh-mls-imeta.h"
 #include "gh-store-media.h"
+#include "gh-store-marmot.h"
+#include <sodium.h>
 #include "socks5-fixture.h"
 
 #include <nostr-event.h>
@@ -724,7 +726,7 @@ test_legacy_group_has_no_picture(void)
   g_assert_false(gh_mls_service_get_adopted(alice->service, ga));
   g_autoptr(GBytes) picture = NULL;
   g_assert_cmpint(gh_mls_attachments_get_picture(fa.files, ga, &picture, NULL), ==,
-                  GH_MLS_PICTURE_UNSUPPORTED);
+                  GH_MLS_PICTURE_NONE);
   g_assert_null(picture);
   guint64 epoch = gh_mls_group_get_epoch(ga);
   g_autoptr(GBytes) photo = make_png();
@@ -785,6 +787,110 @@ current_picture_id(App *app, GhMlsGroup *group)
   gchar *id = c.image.present ? gh_mls_media_picture_id(&c.image) : NULL;
   marmot_group_components_clear(&c);
   return id;
+}
+
+/* Fixed HKDF-SHA256 vector for seed 00..1f, computed independently of the
+ * production derivation: Extract(empty salt), Expand(label, 32). */
+static void
+test_legacy_picture_version(gconstpointer data)
+{
+  guint version = GPOINTER_TO_UINT(data);
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_legacy_only = TRUE;
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "MIP-01 picture", (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  const gchar *hex_id = gh_mls_group_get_group_id(ga);
+  g_autofree guint8 *id = g_malloc(strlen(hex_id) / 2);
+  g_assert_true(nostr_hex2bin(id, hex_id, strlen(hex_id) / 2));
+  MarmotGroupId gid = { id, strlen(hex_id) / 2 };
+  Marmot *m = gh_mls_service_get_marmot(alice->service);
+  MarmotGroup *legacy = NULL;
+  g_assert_cmpint(marmot_get_group(m, &gid, &legacy), ==, MARMOT_OK);
+  g_assert_null(legacy->image_key);
+  g_assert_null(legacy->image_nonce);
+  g_assert_null(legacy->image_hash);
+  legacy->group_data_version = version;
+  legacy->image_key = g_malloc(32);
+  legacy->image_nonce = g_malloc0(12);
+  legacy->image_hash = g_malloc(32);
+  for (guint i = 0; i < 32; i++) legacy->image_key[i] = i;
+  guint8 key[32];
+  if (version == 1) memcpy(key, legacy->image_key, 32);
+  else g_assert_true(nostr_hex2bin(key,
+    "2880a3496fc1f9705e5a0df3c0a409b00a3e4d94dce2f8bc44e02fbabf94d2fa", 32));
+  g_autoptr(GBytes) photo = make_png();
+  gsize len;
+  const guint8 *plain = g_bytes_get_data(photo, &len);
+  g_autofree guint8 *ct = g_malloc(len + crypto_aead_chacha20poly1305_ietf_ABYTES);
+  unsigned long long ct_len;
+  g_assert_cmpint(crypto_aead_chacha20poly1305_ietf_encrypt(ct, &ct_len, plain, len,
+    NULL, 0, NULL, legacy->image_nonce, key), ==, 0);
+  sodium_memzero(key, sizeof key);
+  crypto_hash_sha256(legacy->image_hash, ct, ct_len);
+  g_autofree gchar *hash = g_malloc(65);
+  sodium_bin2hex(hash, 65, legacy->image_hash, 32);
+  g_autoptr(GError) store_error = NULL;
+  MarmotStorage *storage = gh_store_marmot_new(alice->store, &store_error);
+  g_assert_no_error(store_error);
+  g_assert_cmpint(storage->save_group(storage->ctx, legacy), ==, MARMOT_OK);
+  marmot_storage_free(storage);
+  sodium_memzero(legacy->image_key, 32);
+  marmot_group_free(legacy);
+  app_restart(alice); /* real GhStore round trip before the production read */
+  ga = gh_mls_service_lookup(alice->service, room);
+  BlossomFixture *blossom = blossom_fixture_new();
+  g_autoptr(GBytes) ciphertext = g_bytes_new(ct, ct_len);
+  blossom_fixture_put_blob(blossom, hash, ciphertext);
+  Files fa;
+  files_up(&fa, alice, blossom_fixture_url(blossom), NULL);
+  g_auto(GStrv) hosts = NULL;
+  g_assert_cmpint(gh_mls_attachments_get_picture(fa.files, ga, NULL, &hosts), ==,
+                  GH_MLS_PICTURE_AVAILABLE);
+  g_assert_cmpstr(hosts[0], ==, "127.0.0.1");
+  g_assert_cmpuint(blossom_fixture_count(blossom, "GET"), ==, 0);
+  FetchWait fetched = { 0 };
+  gh_mls_attachments_fetch_picture_async(fa.files, ga, NULL, on_picture_fetched, &fetched);
+  spin_until(fetch_done, &fetched, "MIP-01 Show Picture");
+  g_assert_no_error(fetched.error);
+  g_assert_true(g_bytes_equal(fetched.picture, photo));
+  g_clear_pointer(&fetched.picture, g_bytes_unref);
+  g_autoptr(GBytes) cached = NULL;
+  g_assert_cmpint(gh_mls_attachments_get_picture(fa.files, ga, &cached, NULL), ==,
+                  GH_MLS_PICTURE_READY);
+  g_assert_true(g_bytes_equal(cached, photo));
+  g_assert_cmpuint(blossom_fixture_count(blossom, "GET"), ==, 1);
+  /* The same bytes have a different meaning under another version. Neither
+   * an old plaintext cache hit nor trial decryption may bypass that fact. */
+  m = gh_mls_service_get_marmot(alice->service);
+  g_assert_cmpint(marmot_get_group(m, &gid, &legacy), ==, MARMOT_OK);
+  legacy->group_data_version = version == 1 ? 2 : 1;
+  storage = gh_store_marmot_new(alice->store, &store_error);
+  g_assert_no_error(store_error);
+  g_assert_cmpint(storage->save_group(storage->ctx, legacy), ==, MARMOT_OK);
+  g_assert_cmpint(gh_mls_attachments_get_picture(fa.files, ga, NULL, NULL), ==,
+                  GH_MLS_PICTURE_AVAILABLE);
+  FetchWait wrong = { 0 };
+  gh_mls_attachments_fetch_picture_async(fa.files, ga, NULL, on_picture_fetched, &wrong);
+  spin_until(fetch_done, &wrong, "mismatched picture version refused");
+  g_assert_null(wrong.picture);
+  g_assert_error(wrong.error, GH_MLS_MEDIA_ERROR, GH_MLS_MEDIA_ERROR_DAMAGED);
+  g_clear_error(&wrong.error);
+  legacy->group_data_version = 0;
+  g_assert_cmpint(storage->save_group(storage->ctx, legacy), ==, MARMOT_OK);
+  g_assert_cmpint(gh_mls_attachments_get_picture(fa.files, ga, NULL, NULL), ==,
+                  GH_MLS_PICTURE_UNSUPPORTED);
+  g_assert_cmpuint(blossom_fixture_count(blossom, "GET"), ==, 2);
+  marmot_storage_free(storage);
+  sodium_memzero(legacy->image_key, 32);
+  marmot_group_free(legacy);
+  files_down(&fa);
+  blossom_fixture_free(blossom);
+  world_down(&w);
 }
 
 /* An adopted group's picture end to end (W25 review L1, M1): its media
@@ -1067,6 +1173,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-files/tor", test_tor);
   g_test_add_func("/groundhog/mls-files/legacy-group-has-no-picture",
                   test_legacy_group_has_no_picture);
+  g_test_add_data_func("/groundhog/mls-files/mip01-picture-v1", GUINT_TO_POINTER(1), test_legacy_picture_version);
+  g_test_add_data_func("/groundhog/mls-files/mip01-picture-v2", GUINT_TO_POINTER(2), test_legacy_picture_version);
   g_test_add_func("/groundhog/mls-files/adopted-picture", test_adopted_picture);
   g_test_add_func("/groundhog/mls-files/picture-policy", test_picture_policy);
   g_test_add_func("/groundhog/mls-files/names", test_names);

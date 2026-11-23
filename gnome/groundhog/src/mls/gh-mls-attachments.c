@@ -5,6 +5,7 @@
 
 #include <glib/gi18n.h>
 #include <string.h>
+#include <sodium.h>
 
 /* One file of an MLS message and its download in flight, if any. */
 typedef struct {
@@ -855,6 +856,72 @@ gh_mls_picture_may_load(GhMlsPictureState state, gboolean remote_images)
   return (state == GH_MLS_PICTURE_WEB && remote_images) || state == GH_MLS_PICTURE_AVAILABLE;
 }
 
+typedef struct {
+  guint64 generation;
+  GhMlsGroup *group;
+  MarmotGroupComponents components;
+  gboolean has_components;
+  MarmotGroup *legacy;
+} PictureOp;
+
+static void
+picture_op_free(gpointer data)
+{
+  PictureOp *op = data;
+  g_clear_object(&op->group);
+  if (op->has_components)
+    marmot_group_components_clear(&op->components);   /* wipes the picture's keys */
+  if (op->legacy) {
+    if (op->legacy->image_key) sodium_memzero(op->legacy->image_key, 32);
+    marmot_group_free(op->legacy);
+  }
+  g_free(op);
+}
+
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(PictureOp, picture_op_free)
+
+static gboolean
+picture_source(GhMlsAttachments *self, GhMlsGroup *group, PictureOp *op, GError **error)
+{
+  if (!gh_mls_service_get_adopted(self->service, group)) {
+    op->legacy = gh_mls_media_load_legacy_picture(gh_mls_service_get_marmot(self->service),
+                                                  gh_mls_group_get_group_id(group), error);
+    return op->legacy != NULL;
+  }
+  op->has_components = gh_mls_service_get_components(self->service, group, &op->components, error);
+  return op->has_components;
+}
+
+static GhMlsPictureState
+picture_state(const PictureOp *op)
+{
+  return op->legacy ? op->legacy->image_hash ? GH_MLS_PICTURE_AVAILABLE : GH_MLS_PICTURE_NONE
+                    : gh_mls_picture_state_for_source(op->components.avatar_source);
+}
+
+static gchar *
+picture_id(const PictureOp *op)
+{
+  return op->legacy ? gh_mls_media_legacy_picture_id(op->legacy)
+                    : gh_mls_media_picture_id(&op->components.image);
+}
+
+static GStrv
+picture_urls(GhMlsAttachments *self, const PictureOp *op)
+{
+  if (!op->legacy) return gh_mls_media_picture_urls(&op->components);
+  g_autoptr(GStrvBuilder) urls = g_strv_builder_new();
+  GhBlossomClient *client = client_of(self);
+  g_auto(GStrv) servers = client ? gh_blossom_client_dup_account_servers(client) : NULL;
+  for (guint i = 0; servers && servers[i] && op->legacy->image_hash; i++) {
+    char *url = NULL;
+    if (marmot_media_blossom_fallback_url(servers[i], op->legacy->image_hash, &url) == MARMOT_OK)
+      g_strv_builder_add(urls, url);
+    free(url);
+  }
+  return g_strv_builder_end(urls);
+}
+
 GhMlsPictureState
 gh_mls_attachments_get_picture(GhMlsAttachments *self, GhMlsGroup *group, GBytes **out_picture,
                                GStrv *out_hosts)
@@ -866,22 +933,23 @@ gh_mls_attachments_get_picture(GhMlsAttachments *self, GhMlsGroup *group, GBytes
     *out_hosts = NULL;
   if (!service_of(self) || !GH_IS_MLS_GROUP(group))
     return GH_MLS_PICTURE_NONE;
-  MarmotGroupComponents c;
+  g_autoptr(PictureOp) op = g_new0(PictureOp, 1);
   g_autoptr(GError) error = NULL;
-  if (!gh_mls_service_get_components(self->service, group, &c, &error))
-    return g_error_matches(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_UNSUPPORTED)
+  if (!picture_source(self, group, op, &error))
+    return (g_error_matches(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_UNSUPPORTED) ||
+            g_error_matches(error, GH_MLS_MEDIA_ERROR, GH_MLS_MEDIA_ERROR_UNSUPPORTED))
              ? GH_MLS_PICTURE_UNSUPPORTED : GH_MLS_PICTURE_NONE;
-  GhMlsPictureState state = gh_mls_picture_state_for_source(c.avatar_source);
+  GhMlsPictureState state = picture_state(op);
   const gchar *gid = gh_mls_group_get_group_id(group);
   GhStore *store = store_of(self);
-  g_autofree gchar *picture_id = c.image.present ? gh_mls_media_picture_id(&c.image) : NULL;
+  g_autofree gchar *cache_id = picture_id(op);
   /* A picture the group replaced or removed is not kept. */
   if (store && !gh_store_is_read_only(store))
-    (void)gh_store_group_image_forget(store, gid, picture_id, NULL);
+    (void)gh_store_group_image_forget(store, gid, cache_id, NULL);
   if (state == GH_MLS_PICTURE_AVAILABLE) {
-    g_autoptr(GBytes) cached = store && picture_id
-      ? gh_store_group_image_get(store, gid, picture_id, NULL, NULL) : NULL;
-    g_auto(GStrv) urls = gh_mls_media_picture_urls(&c);
+    g_autoptr(GBytes) cached = store && cache_id
+      ? gh_store_group_image_get(store, gid, cache_id, NULL, NULL) : NULL;
+    g_auto(GStrv) urls = picture_urls(self, op);
     /* Only servers Show Picture may contact (public hosts). */
     g_auto(GStrv) hosts = public_hosts(self, (const gchar *const *)urls);
     if (cached) {
@@ -894,25 +962,7 @@ gh_mls_attachments_get_picture(GhMlsAttachments *self, GhMlsGroup *group, GBytes
       *out_hosts = g_steal_pointer(&hosts);
     }
   }
-  marmot_group_components_clear(&c);
   return state;
-}
-
-typedef struct {
-  guint64 generation;
-  GhMlsGroup *group;
-  MarmotGroupComponents components;
-  gboolean has_components;
-} PictureOp;
-
-static void
-picture_op_free(gpointer data)
-{
-  PictureOp *op = data;
-  g_clear_object(&op->group);
-  if (op->has_components)
-    marmot_group_components_clear(&op->components);   /* wipes the picture's keys */
-  g_free(op);
 }
 
 static void
@@ -925,7 +975,9 @@ on_picture_fetched(GObject *source, GAsyncResult *result, gpointer data)
   GError *error = NULL;
   g_autoptr(GBytes) ciphertext = gh_mls_media_fetch_finish(result, &error);
   g_autoptr(GBytes) picture = ciphertext
-    ? gh_mls_media_open_picture(&op->components.image, ciphertext, &error) : NULL;
+    ? op->legacy ? gh_mls_media_open_legacy_picture(op->legacy, ciphertext, &error)
+                 : gh_mls_media_open_picture(&op->components.image, ciphertext, &error)
+    : NULL;
   if (picture && op->generation != self->generation) {
     g_clear_pointer(&picture, g_bytes_unref);
     error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_CANCELLED, "The account changed");
@@ -936,11 +988,11 @@ on_picture_fetched(GObject *source, GAsyncResult *result, gpointer data)
     return;
   }
   GhStore *store = store_of(self);
-  g_autofree gchar *picture_id = gh_mls_media_picture_id(&op->components.image);
+  g_autofree gchar *cache_id = picture_id(op);
   g_autoptr(GError) put_error = NULL;
   if (store && !gh_store_is_read_only(store) &&
-      !gh_store_group_image_put(store, gh_mls_group_get_group_id(op->group), picture_id,
-                                op->components.image.media_type, picture, &put_error))
+      !gh_store_group_image_put(store, gh_mls_group_get_group_id(op->group), cache_id,
+                                op->legacy ? NULL : op->components.image.media_type, picture, &put_error))
     g_debug("Group picture: not kept in the encrypted store: %s", put_error->message);
   g_task_return_pointer(task, g_steal_pointer(&picture), (GDestroyNotify)g_bytes_unref);
   g_object_unref(task);
@@ -965,21 +1017,22 @@ gh_mls_attachments_fetch_picture_async(GhMlsAttachments *self, GhMlsGroup *group
     g_object_unref(task);
     return;
   }
-  if (!gh_mls_service_get_components(self->service, group, &op->components, &error)) {
+  if (!picture_source(self, group, op, &error)) {
     g_task_return_error(task, error);
     g_object_unref(task);
     return;
   }
-  op->has_components = TRUE;
   /* Only the encrypted picture that shows: never a URL avatar. */
-  if (op->components.avatar_source != MARMOT_GROUP_AVATAR_BLOSSOM) {
+  if (picture_state(op) != GH_MLS_PICTURE_AVAILABLE) {
     g_task_return_new_error(task, GH_MLS_MEDIA_ERROR, GH_MLS_MEDIA_ERROR_UNAVAILABLE,
                             "The group has no encrypted picture to show");
     g_object_unref(task);
     return;
   }
-  gh_mls_media_fetch_picture_async(client_of(self), &op->components, cancellable,
-                                   on_picture_fetched, task);
+  g_auto(GStrv) urls = picture_urls(self, op);
+  const guint8 *hash = op->legacy ? op->legacy->image_hash : op->components.image.image_hash;
+  gh_mls_media_fetch_picture_urls_async(client_of(self), hash, (const gchar *const *)urls,
+                                        cancellable, on_picture_fetched, task);
 }
 
 GBytes *

@@ -24,6 +24,14 @@ test_secret_input_exe = executable('test_secret_input', 'test_secret_input.c',
 test_http_listen_exe = executable('test_http_listen', 'test_http_listen.c',
   link_with: signet_core, include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
+test_bootstrap_security_exe = executable('test_bootstrap_security', 'test_bootstrap_security.c',
+  link_with: signet_core, include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
+test('bootstrap_security', test_bootstrap_security_exe)
+test_challenge_transports_exe = executable('test_challenge_transports', 'test_challenge_transports.c',
+  link_with: signet_core, include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
+test('challenge_transports', test_challenge_transports_exe)
 test_http_routes_exe = executable('test_http_routes', 'test_http_routes.c',
   link_with: signet_core, include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
@@ -454,3 +462,22 @@ test('mgmt_ingress_wire', find_program('python3'),
     depends: [signetd_exe, backend_admission_fixture],
     timeout: 45,
   )
+
+# Same deallocation-boundary regression as CMake; compile real management code.
+test_secret_json = executable('test_secret_json',
+  'test_secret_json.c', '../src/secret_json.c',
+  link_with: signet_core, include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args + ['-DSIGNET_ENABLE_TEST_HOOKS=1'], install: false)
+test('secret_json', test_secret_json)
+
+test_bootstrap_wipe = executable('test_bootstrap_wipe',
+  'test_bootstrap_wipe.c', '../src/secret_json.c',
+  link_with: signet_core, include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args + ['-DSIGNET_ENABLE_TEST_HOOKS=1'], install: false)
+test('bootstrap_wipe', test_bootstrap_wipe)
+
+# Script returns 77 (Meson's visible skip convention) when AWS CLI is absent.
+test('backup_upload', find_program('python3'),
+  args: [files('test_backup_upload.py')], timeout: 90)

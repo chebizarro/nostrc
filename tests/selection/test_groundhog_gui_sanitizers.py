@@ -34,6 +34,21 @@ class GroundhogGuiSanitizers(unittest.TestCase):
         self.assertEqual(env["LSAN_OPTIONS"],
                          "suppressions=/src/gnome/groundhog/tests/lsan.supp:print_suppressions=1")
 
+    def test_call_enrollment_maps_two_process_to_its_real_peer_executable(self):
+        calls = {"groundhog-calls", "groundhog-call-capabilities", "groundhog-call-loopback",
+                 "groundhog-call-media", "groundhog-call-media-two-process", "groundhog-call-settings",
+                 "groundhog-call-settings-store-failure", "groundhog-call-ui", "groundhog-call-preferences"}
+        # The source-bearing voice branch enrolls these together. Do not invent
+        # registrations in a checkout where that branch has not landed.
+        candidate = self.workflow.replace("        groundhog-identity groundhog-account ",
+            "        " + " ".join(sorted(calls)) + "\n        groundhog-identity groundhog-account ", 1)
+        config = self.config(candidate)
+        self.assertTrue(calls <= set(config["GH_SAN_TESTS"]))
+        self.assertIn("test-groundhog-call-media", config["GH_SAN_TARGETS"])
+        self.assertNotIn("test-groundhog-call-media-two-process", config["GH_SAN_TARGETS"])
+        self.assertTrue({"test-" + name for name in calls - {"groundhog-call-media-two-process"}}
+                        <= set(config["GH_SAN_TARGETS"]))
+
     def test_withdrawn_nonmember_exemption_cannot_omit_gui_suites(self):
         policy = s.load_inventory(ROOT / "tests/selection/inventory.json")
         self.assertEqual(policy["diagnostic_nonmembers"], {})

@@ -11,6 +11,7 @@
 #include "json.h"
 #include "channel.h"
 #include "select.h"
+#include "nostr_pool_channel_wait.h"
 #include "context.h"
 #include "error.h"
 #include "go.h"
@@ -565,13 +566,15 @@ static gpointer paginate_with_interval_thread(gpointer user_data) {
                         if (ch) cases[nc++] = (GoSelectCase){.op = GO_SELECT_RECEIVE, .chan = ch, .recv_buf = NULL};
                     }
                 }
-                if (nc > 0) go_select_timeout(cases, nc, 50);
+                if (nc > 0) pool_wait_channels(cases, nc, 50);
             }
 
             /* Drain all channels */
             for (guint i = 0; i < subs->len; i++) {
                 SubItem *it = (SubItem *)subs->pdata[i];
                 if (!it || !it->sub) continue;
+                GoChannel *ch_eose = nostr_subscription_get_eose_channel(it->sub);
+                gboolean got_eose = ch_eose && go_channel_try_receive(ch_eose, NULL) == 0;
                 void *msg = NULL;
                 GoChannel *ch_events = nostr_subscription_get_events_channel(it->sub);
                 while (ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
@@ -593,8 +596,7 @@ static gpointer paginate_with_interval_thread(gpointer user_data) {
                     }
                     msg = NULL;
                 }
-                GoChannel *ch_eose = nostr_subscription_get_eose_channel(it->sub);
-                if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
+                if (got_eose) {
                     it->eosed = TRUE;
                     const char *sid = nostr_subscription_get_id(it->sub);
                     event_bus_emit_eose(sid);
@@ -687,7 +689,7 @@ static gpointer subscribe_many_thread(gpointer user_data) {
      * CRITICAL: Store url_copy so we don't access relay after it might be freed by main thread.
      * The relay pointer is only valid during the subscription loop; after cancellation,
      * the main thread may remove/free relays via sync_relays(). */
-    typedef struct { NostrRelay *relay; NostrSubscription *sub; gchar *url_copy; gboolean eosed; guint64 emitted; gint64 start_us; gint64 eose_us; } SubItem;
+    typedef struct { NostrRelay *relay; NostrSubscription *sub; gchar *url_copy; gboolean eosed; gboolean eose_pending; size_t eose_remaining; guint64 emitted; gint64 start_us; gint64 eose_us; } SubItem;
     GPtrArray *subs = g_ptr_array_new_with_free_func(NULL);
 
     GoContext *bg = go_context_background();
@@ -810,7 +812,7 @@ static gpointer subscribe_many_thread(gpointer user_data) {
                     if (ch) cases[nc++] = (GoSelectCase){.op = GO_SELECT_RECEIVE, .chan = ch, .recv_buf = NULL};
                 }
             }
-            if (nc > 0) go_select_timeout(cases, nc, 50);
+            if (nc > 0) pool_wait_channels(cases, nc, 50);
         }
 
         GPtrArray *batch = g_ptr_array_new_with_free_func((GDestroyNotify)nostr_event_free);
@@ -820,10 +822,18 @@ static gpointer subscribe_many_thread(gpointer user_data) {
             SubItem *it = (SubItem *)subs->pdata[i];
             if (!it || !it->sub) continue;
             GoChannel *ch_events = nostr_subscription_get_events_channel(it->sub);
+            GoChannel *ch_eose = nostr_subscription_get_eose_channel(it->sub);
+            if (!it->eosed && !it->eose_pending && ch_eose &&
+                go_channel_try_receive(ch_eose, NULL) == 0) {
+                it->eose_pending = TRUE;
+                it->eose_remaining = go_channel_get_depth(ch_events);
+            }
             void *msg = NULL;
 
             while (batch->len < max_batch_size &&
+                   !(it->eose_pending && it->eose_remaining == 0) &&
                    ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
+                if (it->eose_pending) it->eose_remaining--;
                 if (msg) {
                     NostrEvent *ev = (NostrEvent*)msg;
                     char *eid = nostr_event_get_id(ev);
@@ -840,8 +850,8 @@ static gpointer subscribe_many_thread(gpointer user_data) {
             }
 
             /* Drain EOSE signals */
-            GoChannel *ch_eose = nostr_subscription_get_eose_channel(it->sub);
-            if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
+            if (it->eose_pending && it->eose_remaining == 0) {
+                it->eose_pending = FALSE;
                 it->eosed = TRUE;
                 if (it->eose_us < 0 && it->start_us > 0) {
                     it->eose_us = g_get_monotonic_time() - it->start_us;
@@ -991,6 +1001,7 @@ static void query_single_ctx_free(QuerySingleCtx *ctx) {
     if (ctx->task) g_object_unref(ctx->task);
     if (ctx->results) g_ptr_array_unref(ctx->results);
     if (ctx->cancellable) g_object_unref(ctx->cancellable);
+    if (ctx->self_obj) g_object_unref(ctx->self_obj);
     g_free(ctx);
 }
 
@@ -1159,10 +1170,11 @@ static gpointer query_single_thread(gpointer user_data) {
                 if (ch_events) { cases[nc++] = (GoSelectCase){.op = GO_SELECT_RECEIVE, .chan = ch_events, .recv_buf = NULL}; }
                 if (ch_eose) { cases[nc++] = (GoSelectCase){.op = GO_SELECT_RECEIVE, .chan = ch_eose, .recv_buf = NULL}; }
                 if (ch_closed) { cases[nc++] = (GoSelectCase){.op = GO_SELECT_RECEIVE, .chan = ch_closed, .recv_buf = NULL}; }
-                if (nc > 0) go_select_timeout(cases, nc, 100);
+                if (nc > 0) pool_wait_channels(cases, nc, 100);
             }
 
-            /* Drain all available events */
+            bool got_eose = ch_eose && go_channel_try_receive(ch_eose, NULL) == 0;
+            /* Drain all available events after observing the boundary. */
             NostrEvent *evt = NULL;
             GPtrArray *batch = ctx->stream_events ?
                 g_ptr_array_new_with_free_func((GDestroyNotify)nostr_event_free) : NULL;
@@ -1192,7 +1204,7 @@ static gpointer query_single_thread(gpointer user_data) {
             }
 
             /* Check for EOSE (normal completion) */
-            if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
+            if (got_eose) {
                 g_debug("query_single: EOSE from %s with %u events", url, events_received);
                 event_bus_emit_eose(sid);
                 done = true;
@@ -1234,8 +1246,9 @@ static gpointer query_single_thread(gpointer user_data) {
     g_ptr_array_free(created_relays, TRUE);
 
     // Schedule completion on the main thread; task owns ctx via task_data
+    GTask *task = g_steal_pointer(&ctx->task);
     g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, query_single_complete_ok,
-                               g_object_ref(ctx->task), (GDestroyNotify)g_object_unref);
+                               task, (GDestroyNotify)g_object_unref);
 
     return NULL;
 }
@@ -1902,7 +1915,7 @@ static void *fetch_profiles_goroutine(void *arg) {
             }
 
             /* Block until any channel ready or 100ms timeout */
-            if (nc > 0) go_select_timeout(cases, nc, 100);
+            if (nc > 0) pool_wait_channels(cases, nc, 100);
         }
 
         /* Drain all subscription channels (non-blocking) */
@@ -1910,7 +1923,10 @@ static void *fetch_profiles_goroutine(void *arg) {
             SubItem *item = (SubItem*)ctx->subs->pdata[i];
             if (!item || !item->sub) continue;
 
-            /* Drain events */
+            GoChannel *ch_eose = nostr_subscription_get_eose_channel(item->sub);
+            gboolean got_eose = !item->eosed && ch_eose &&
+                go_channel_try_receive(ch_eose, NULL) == 0;
+            /* Drain events after observing EOSE. */
             GoChannel *ch_events = nostr_subscription_get_events_channel(item->sub);
             void *msg = NULL;
 
@@ -1957,8 +1973,7 @@ static void *fetch_profiles_goroutine(void *arg) {
 
             /* Check EOSE */
             if (!item->eosed) {
-                GoChannel *ch_eose = nostr_subscription_get_eose_channel(item->sub);
-                if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
+                if (got_eose) {
                     item->eosed = TRUE;
                     const char *sid = nostr_subscription_get_id(item->sub);
                     g_message("[EOSE] relay=%s sid=%s",

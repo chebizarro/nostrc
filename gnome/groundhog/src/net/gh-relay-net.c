@@ -95,7 +95,22 @@ open_inner(NetHandle *handle, GError **error)
   handle->serial = gh_net_session_get_serial(handle->session);
   if (!policy_allowed(handle, error) || !gh_net_relay_url_allowed(mode, handle->url, error))
     return FALSE;
-  if (mode != GH_NET_MODE_TOR) {
+  gboolean trusted = handle->publish_side
+    ? gh_relay_publish_is_signer_control(handle->publish) ||
+      gh_relay_publish_url_address_trusted(handle->publish, handle->url)
+    : gh_relay_scope_is_signer_control(handle->scope) ||
+      gh_relay_scope_url_address_trusted(handle->scope, handle->url);
+  gboolean fixture = FALSE;
+#ifdef GH_RELAY_NET_TEST_HOOKS
+  g_autoptr(GUri) parsed = g_uri_parse(handle->url, G_URI_FLAGS_NONE, NULL);
+  /* The testing executable is not installable. Production never consults
+   * this environment switch when deciding an untrusted relay's addresses. */
+  fixture = g_strcmp0(g_getenv("NOSTRC_TEST_ISOLATION"), "1") == 0 &&
+    g_strcmp0(g_uri_get_scheme(parsed), "ws") == 0 &&
+    gh_net_host_is_loopback(g_uri_get_host(parsed));
+#endif
+  gboolean public_only = mode != GH_NET_MODE_TOR && !trusted && !fixture;
+  if (mode != GH_NET_MODE_TOR && !public_only) {
     handle->inner_soup = FALSE;
     handle->inner = handle->publish_side
       ? gh_relay_publish_gnostr_transport.open(handle->publish, handle->url,
@@ -120,9 +135,9 @@ open_inner(NetHandle *handle, GError **error)
   handle->inner_soup = TRUE;
   handle->inner = handle->publish_side
     ? gh_relay_soup_publish_open(handle->publish, handle->url, handle->event_json, resolver,
-                                 on_status, handle, error)
+                                 on_status, handle, public_only, error)
     : gh_relay_soup_scope_open(handle->scope, handle->url, handle->filters, resolver,
-                               on_status, handle, error);
+                               on_status, handle, public_only, error);
   return handle->inner != NULL;
 }
 

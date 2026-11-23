@@ -562,7 +562,8 @@ sync_picture(GhMlsGroupInfoDialog *self)
   gtk_widget_set_visible(GTK_WIDGET(self->picture_spinner), busy);
   gtk_spinner_set_spinning(self->picture_spinner, busy);
   gtk_widget_set_visible(self->show_picture_button, state == GH_MLS_PICTURE_AVAILABLE && !busy);
-  gboolean admin = can_manage(self) && state != GH_MLS_PICTURE_UNSUPPORTED;
+  gboolean admin = can_manage(self) && state != GH_MLS_PICTURE_UNSUPPORTED &&
+    gh_mls_service_get_adopted(self->context.service, self->group);
   gboolean has = state != GH_MLS_PICTURE_NONE && state != GH_MLS_PICTURE_UNSUPPORTED;
   gtk_widget_set_visible(self->set_picture_button, admin && !busy);
   gtk_widget_set_visible(self->remove_picture_button, admin && has && !busy);

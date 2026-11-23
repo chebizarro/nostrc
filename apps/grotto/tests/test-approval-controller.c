@@ -4,6 +4,9 @@
 #include "nostrc-test-gdk-frame.h"
 #include <string.h>
 
+#define DESKTOP_EXE_FIRST GROTTO_TEST_FIXTURE_BIN "/nostrc-grotto-panel-fixture-first"
+#define DESKTOP_EXE_SECOND GROTTO_TEST_FIXTURE_BIN "/nostrc-grotto-panel-fixture-second"
+
 typedef struct {
   NostrcTestBus *bus;
   GDBusConnection *server, *client;
@@ -550,7 +553,7 @@ static void notifications(Fixture *f, gconstpointer data) {
   gboolean scoped = data && strstr(data, ";exe:");
   gboolean unmatched_id = executable && strstr(data, "unknown-app-id");
   gboolean website = data && g_str_has_prefix(data, "https://");
-  gboolean desktop = !g_strcmp0(data, "exe:/usr/bin/true") || !g_strcmp0(data, "exe:/usr/bin/false") ||
+  gboolean desktop = !g_strcmp0(data, "exe:" DESKTOP_EXE_FIRST) || !g_strcmp0(data, "exe:" DESKTOP_EXE_SECOND) ||
     !g_strcmp0(data, "flatpak:org.nostr.GrottoTest");
   if (data) {
     g_variant_dict_insert(&dict, "verified", "b", TRUE);
@@ -563,8 +566,8 @@ static void notifications(Fixture *f, gconstpointer data) {
     if (website) {
       g_variant_dict_insert(&dict, "principal_kind", "s", "website");
       g_variant_dict_insert(&dict, "app_id", "s", (const char *)data);
-      g_variant_dict_insert(&dict, "exe", "s", "/usr/bin/true");
-      g_variant_dict_insert(&dict, "via", "s", "exe:/usr/bin/true");
+      g_variant_dict_insert(&dict, "exe", "s", DESKTOP_EXE_FIRST);
+      g_variant_dict_insert(&dict, "via", "s", "exe:" DESKTOP_EXE_FIRST);
     }
     if (management) {
       g_variant_dict_insert(&dict, "transport", "s", "MANAGEMENT");
@@ -578,7 +581,7 @@ static void notifications(Fixture *f, gconstpointer data) {
   g_assert_cmpstr(f->notification_title, ==,
       management ? "Grotto" : website ? (const char *)data : desktop ? "Friendly Test App" : executable || scoped ? "client" : data && g_str_has_prefix(data, "nip46:") ? "Remote NIP-46 client" : "Unverified app");
   g_assert_cmpstr(f->notification_icon, ==, desktop || website ? "grotto-test-app" : executable || scoped ? "application-x-executable-symbolic" : "");
-  if (website) g_assert_nonnull(strstr(f->notification_body, "Via Friendly Test App · exe:/usr/bin/true"));
+  if (website) g_assert_nonnull(strstr(f->notification_body, "Via Friendly Test App · exe:" DESKTOP_EXE_FIRST));
   run_gui_peer(f, "--pending-worker", data ? data : "org.test.Client", f->notification_title);
   gboolean review = FALSE, deny = FALSE;
   for (guint i = 1; f->notification_actions[i - 1] && f->notification_actions[i]; i += 2) {
@@ -653,7 +656,7 @@ static int presentation_worker(const char *mode, const char *principal, const ch
     GtkWidget *row = find_pending_row(group); g_assert_nonnull(row);
     g_assert_true(g_str_has_prefix(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(row)), expected));
     const char *subtitle = adw_action_row_get_subtitle(ADW_ACTION_ROW(row));
-    if (g_str_has_prefix(principal, "https://")) g_assert_nonnull(strstr(subtitle, "Via Friendly Test App · exe:/usr/bin/true"));
+    if (g_str_has_prefix(principal, "https://")) g_assert_nonnull(strstr(subtitle, "Via Friendly Test App · exe:" DESKTOP_EXE_FIRST));
     else if (g_str_has_prefix(principal, "exe:") || g_str_has_prefix(principal, "flatpak:") || strstr(principal, ";exe:")) g_assert_nonnull(strstr(subtitle, principal));
   } else {
     gboolean claim = (g_str_has_prefix(principal, "app:") && !strstr(principal, ";exe:")) || g_str_has_prefix(principal, "claimed:");
@@ -740,7 +743,7 @@ int main(int argc, char **argv) {
 #undef ADD
 #ifndef __APPLE__
   g_test_add("/signer/approval-controller/dialog-executable-principal", Fixture,
-             "dialog:exe:/usr/bin/true", setup, dialog_principal, teardown);
+             "dialog:exe:" DESKTOP_EXE_FIRST, setup, dialog_principal, teardown);
   g_test_add("/signer/approval-controller/dialog-scope-principal", Fixture,
              "dialog:app:org.nostr.GrottoTest;exe:/opt/unrelated/client", setup, dialog_principal, teardown);
   g_test_add("/signer/approval-controller/dialog-unattested-app-id", Fixture,
@@ -754,7 +757,7 @@ int main(int argc, char **argv) {
   g_test_add("/signer/approval-controller/notifications-nameless-executable", Fixture,
              "exe:/home/alice/private-directory/client", setup, notifications, teardown);
   g_test_add("/signer/approval-controller/notifications-desktop-executable", Fixture,
-             "exe:/usr/bin/true", setup, notifications, teardown);
+             "exe:" DESKTOP_EXE_FIRST, setup, notifications, teardown);
   g_test_add("/signer/approval-controller/notifications-unmatched-id-basename", Fixture,
              "exe:/opt/unknown-app-id/client", setup, notifications, teardown);
   g_test_add("/signer/approval-controller/notifications-scope-mismatched-executable", Fixture,
@@ -766,7 +769,7 @@ int main(int argc, char **argv) {
   g_test_add("/signer/approval-controller/notifications-flatpak-id", Fixture,
              "flatpak:org.nostr.GrottoTest", setup, notifications, teardown);
   g_test_add("/signer/approval-controller/notifications-same-label-other-principal", Fixture,
-             "exe:/usr/bin/false", setup, notifications, teardown);
+             "exe:" DESKTOP_EXE_SECOND, setup, notifications, teardown);
   g_test_add("/signer/approval-controller/notifications-website-first", Fixture,
              "https://first.example", setup, notifications, teardown);
   g_test_add("/signer/approval-controller/notifications-website-second", Fixture,

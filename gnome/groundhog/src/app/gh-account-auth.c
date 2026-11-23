@@ -94,11 +94,42 @@ request_return_error(Request *request, const GError *error)
   request_free(request);
 }
 
+#ifdef GH_ACCOUNT_AUTH_TEST_HOOKS
+static guint test_queue_age;
+void gh_account_auth_test_age_next_queued(guint seconds) { test_queue_age = seconds; }
+#endif
+
+/* Timestamp is refreshed at dispatch, never by weakening the relay verifier. */
+static gchar *
+auth_template_at(const gchar *json, gint64 at)
+{
+  NostrEvent *event = nostr_event_new();
+  if (!event) return NULL;
+  gchar *fresh = NULL;
+  if (nostr_event_deserialize_compact(event, json, NULL) == 1) {
+    nostr_event_set_created_at(event, at);
+    char *raw = nostr_event_serialize_compact(event);
+    fresh = raw ? g_strdup(raw) : NULL;
+    free(raw);
+  }
+  nostr_event_free(event);
+  return fresh;
+}
+
 static void sign_done(GObject *source, GAsyncResult *result, gpointer data);
 
 static void
 request_start(Request *request)
 {
+  gchar *fresh = auth_template_at(request->unsigned_json, g_get_real_time() / G_USEC_PER_SEC);
+  if (!fresh) {
+    g_autoptr(GError) error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                                                 "Could not build the queued AUTH event");
+    request_return_error(request, error);
+    return;
+  }
+  g_free(request->unsigned_json);
+  request->unsigned_json = fresh;
   request->relay->active = request;
   gh_account_controller_sign_with_cancellable_async(request->owner->accounts,
                                                     request->unsigned_json,
@@ -268,7 +299,21 @@ sign_async(gpointer user_data, const gchar *unsigned_json, GCancellable *cancell
       request->cancelled_handler = g_signal_connect(cancellable, "cancelled",
                                                     G_CALLBACK(on_waiting_cancelled),
                                                     request);
+#ifdef GH_ACCOUNT_AUTH_TEST_HOOKS
+    if (test_queue_age) {
+      gchar *aged = auth_template_at(request->unsigned_json,
+        g_get_real_time() / G_USEC_PER_SEC - test_queue_age);
+      test_queue_age = 0;
+      g_free(request->unsigned_json);
+      request->unsigned_json = aged;
+    }
+#endif
     g_queue_push_tail(&relay->waiting, request);
+    /* WAITING did not change, but this caller has now joined it: its UI
+     * could not show an approval wait before its AUTH attempt existed. */
+    g_object_ref(self); /* notification may cancel this request or revoke the adapter */
+    g_signal_emit(self, signals[SIGNAL_RELAY_CHANGED], 0, relay->url);
+    g_object_unref(self);
     return;
   }
   GhAccountAuthRelayState before = relay_state(relay);

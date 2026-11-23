@@ -76,26 +76,45 @@ void hs_bloom_refresh(handlers *h, fips_instant now, bool force_all)
         if (a->kind != FIPS_BLOOM_SEND) continue;
         peer_rec *rec = hs_rec_find(h, &a->peer);
         fips_bloom_peer *p = fips_bloom_state_peer(&h->bloom, &a->peer);
-        if (!rec || !p) continue;
+        if (!rec || !p || rec->bloom_inflight) continue;
         fips_writer w; fips_writer_init(&w, h->tx_msg, sizeof h->tx_msg);
-        fips_bloom_send_outcome outcome = {.result = FIPS_BLOOM_SEND_FAILED};
-        const fipsd_peer_info *info = fipsd_active_peer_info(rec->peer);
-        fipsd_transport *t = hs_transport(h, info->transport);
         if (fips_filter_announce_encode(&a->announce, &w, NULL) == FIPS_OK) {
-            outcome.packet_size = fips_writer_len(&w) + FIPS_FRAMING_FMP_FRAME_OVERHEAD;
-            outcome.mtu = t ? t->ops->mtu(t, &info->addr) : 0;
-            if (t && outcome.packet_size > outcome.mtu) outcome.result = FIPS_BLOOM_SEND_TOO_LARGE;
-            else if (hs_link_send(h, rec, h->tx_msg, fips_writer_len(&w))) outcome.result = FIPS_BLOOM_SEND_ACCEPTED;
+            rec->bloom_inflight = a->announce.sequence;
+            if (hs_link_send(h, rec, h->tx_msg, fips_writer_len(&w))) continue;
+            rec->bloom_inflight = 0;
         }
+        /* No completion owns this attempt. The core's pending bit stays set. */
+        ++h->counters.bloom_send_failed;
+    }
+    hs_mark_dirty(h);
+}
+/* A successful crypto submission is provisional. Only the transport outcome
+ * consumes pending delivery, and its actual epoch/counter drive RR evidence. */
+void hs_bloom_complete(handlers *h, peer_rec *rec, const fips_bloom_action *a,
+    bool sent, uint64_t epoch, uint64_t counter)
+{
+    if (!rec || !rec->used || rec->bloom_inflight != a->announce.sequence) return;
+    rec->bloom_inflight = 0;
+    fips_bloom_peer *p = fips_bloom_state_peer(&h->bloom, &rec->addr);
+    if (!p) return;
+    if (sent) {
+        fips_bloom_link_evidence evidence = {.epoch = epoch, .next_counter = counter + 1,
+            .has_rr = rec->evidence.epoch == epoch && rec->evidence.has_rr,
+            .rr = {rec->evidence.rr.highest, rec->evidence.rr.received, rec->evidence.rr.reordered}};
         fips_bloom_actions more = {NULL, 0, 0};
-        fips_bloom_link_evidence evidence = {.epoch = rec->evidence.epoch, .next_counter = rec->evidence.next_counter,
-            .has_rr = rec->evidence.has_rr, .rr = {rec->evidence.rr.highest, rec->evidence.rr.received, rec->evidence.rr.reordered}};
-        (void)fips_bloom_state_sent(&h->bloom, p, a, outcome, 0, &evidence, now_ms, &more);
-        if (outcome.result == FIPS_BLOOM_SEND_ACCEPTED) {
-            ++h->counters.bloom_sent;
-            fipsd_node_notice n = {.kind = FIPSD_NOTICE_FILTER_SENT, .peer = rec->addr, .value = a->announce.sequence};
-            hs_notice_full(h, &n, NULL, 0);
-        } else ++h->counters.bloom_send_failed;
+        (void)fips_bloom_state_sent(&h->bloom, p, a,
+            (fips_bloom_send_outcome){.result = FIPS_BLOOM_SEND_ACCEPTED}, counter,
+            &evidence, hs_now_ms(h), &more);
+        /* Topology can change while a seal waits. Recording the old filter
+         * must not consume the newer filter's pending update. */
+        fips_bloom_state_outgoing(&h->bloom, &rec->addr, &h->filter_scratch);
+        if (!fips_bloom_equal(&h->filter_scratch, &a->announce.filter)) p->pending = true;
+        ++h->counters.bloom_sent;
+        fipsd_node_notice n = {.kind = FIPSD_NOTICE_FILTER_SENT, .peer = rec->addr, .value = a->announce.sequence};
+        hs_notice_full(h, &n, NULL, 0);
+    } else {
+        p->pending = true;
+        ++h->counters.bloom_send_failed;
     }
     hs_mark_dirty(h);
 }

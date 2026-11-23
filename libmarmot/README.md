@@ -510,6 +510,32 @@ private constant (`0x01` = adopted), not the `MarmotGroupProfile` value.
 
 ## Changelog
 
+### 0.14.1 (unreleased): integration API and storage compatibility
+
+The bug-fix integration folds MINOR-class, pre-1.0 changes into the already
+unreleased 0.14.1 declaration; no libmarmot release tag exists.
+
+- **Rebuild consumers.** `MarmotGroup` appends `group_data_version`, and
+  `MarmotMessageResult` appends a per-result `commit_roster` (nostrc-8gbp).
+  New APIs return deferred Commit results
+  (`marmot_clear_pending_commit_with_results`, `marmot_message_results_free`)
+  and inspect scheduling metadata without message admission
+  (`MarmotMessageOrder`, `marmot_inspect_message_order`). Each deferred
+  Commit result carries its own post-Commit roster, not the batch's final roster.
+  The result owns the members; `present` distinguishes an empty roster from no
+  snapshot, and the result-free APIs release it.
+- **Update custom storage backends.** Persist the group-data version and the
+  `mls_send_hwm` label. Snapshots must exclude both that high-water mark and
+  processed-message markers. Built-in SQLite storage adds a column on open;
+  nostrdb writes group record v2, which older readers cannot read.
+- **Legacy Welcome incompatibility.** Every imported ratchet-tree leaf is now
+  validated (nostrc-3hzu), including the account binding required by its group
+  profile. Legacy unbound leaves from <= 0.3.6 are rejected rather than admitted,
+  with the new public error `MARMOT_ERR_WELCOME_LEGACY_TREE` (-77); other invalid
+  leaves still return `MARMOT_ERR_WELCOME_INVALID`. Upgrade and refresh/re-add
+  legacy members before inviting new members. Existing compatibility exceptions
+  of the adopted profile are not broadened.
+
 ### 0.14.0 (unreleased): hidden-by-default shared-library ABI
 
 The shared library now exports its declared `marmot_*` public API and hides
@@ -1208,8 +1234,34 @@ not read (its validity rules need the frozen unsafe-host set): such a tag is
 - **MIP-01 version 1 is read (nostrc-c7ho).** Both encodings MDK used:
   without `image_upload_key` (MDK before December 2025) and with it empty
   (MDK 0.8). Written back as MDK 0.8 writes it. A v1 `image_key` is the
-  image's encryption key itself, not a v2 seed, and `MarmotGroup` does not
-  carry the version yet (nostrc-x215).
+  image's encryption key itself, not a v2 seed: `MarmotGroup.group_data_version`
+  (new, at the struct's end) says which, set on create, join and every
+  Commit's GroupData (which now also refreshes the record's image fields),
+  and stored by the memory, SQLite (a `group_data_version` column, added to
+  older databases on open) and nostrdb (group record version 2) backends;
+  0 means unknown (adopted groups, records stored before). Application
+  storage backends must persist it too (nostrc-x215).
+- **A Welcome into a group with a legacy ratchet tree has its own error
+  (nostrc-3hzu).** Joining validates every leaf of the received tree (RFC
+  9420 §12.4.3.1). A tree whose commit leaves were signed as libmarmot
+  <= 0.3.6 signed them (no group_id/leaf_index binding) is refused with the
+  new `MARMOT_ERR_WELCOME_LEGACY_TREE` (-77): ask a member of the group to
+  update. Any other invalid leaf stays `MARMOT_ERR_WELCOME_INVALID`.
+- **nostrdb Welcome records keep their outcome across the upgrade
+  (nostrc-d1oq).** Welcomes are now stored whole; records written before
+  (event JSON only) read back with the outcome their `wproc` marker
+  recorded, so accepted, declined and failed invitations stay processed.
+- **Deferred Commits are reported when our pending Commit is cleared
+  (nostrc-8gbp).** New `marmot_clear_pending_commit_with_results()` returns
+  the `MarmotMessageResult` of each Commit it applies (deferred behind ours
+  as `MARMOT_ERR_OWN_COMMIT_PENDING`), committer included, in the order
+  applied; free them with the new `marmot_message_results_free()`.
+- **A storage rollback never reuses a sender generation (nostrc-ow0c).**
+  Every operation that steps our own sender ratchet (application messages,
+  a Remove request of ourselves) records the generations handed out in the
+  epoch under the new `mls_send_hwm` label, and first moves a state behind
+  that record past it. A `MarmotStorage` snapshot must not cover that label
+  or the processed-message markers (see `create_snapshot`).
 - **An invitation survives a storage error (nostrc-w285).**
   `marmot_accept_welcome()` refuses a Welcome for good only on a definitive
   not-found: of its raw data (now `MARMOT_ERR_STORAGE_NOT_FOUND`, was
@@ -2383,8 +2435,7 @@ validated before a Commit is applied (§7.3, §12.4.2).
   But every leaf signed by ≤ 0.3.x -- the creator's leaf and each member's
   last commit leaf -- stays in the tree until that member commits again.
   RFC-conformant joiners (MDK/OpenMLS) validate every LeafNode of a Welcome
-  ratchet tree (§12.4.3.1) and reject such trees; libmarmot joiners will too
-  once `nostrc-3hzu` lands. **After upgrading, have each member self-update**
+  ratchet tree (§12.4.3.1) and reject such trees; libmarmot joiners now validate these leaves as well (`nostrc-3hzu`). **After upgrading, have each member self-update**
   so its leaf is re-signed. Trees persisted by ≤ 0.3.6 can also hold non-blank
   parents over empty copaths; the member's next Commit now blanks them, as
   receivers always did (§7.4/§7.5).

@@ -92,6 +92,16 @@ message(guint author, guint recipient, gint64 created_at, const gchar *content,
   return result;
 }
 
+static void
+test_unicode_subject(void)
+{
+  const gchar *subject = "Book Club — planning our autumn reading weekend together 📚";
+  g_autoptr(GhMessage) result = message(2, 1, 1700000000, "Let's read", subject);
+  g_assert_nonnull(result);
+  g_assert_cmpstr(gh_message_get_subject(result), ==, subject);
+  g_assert_true(g_utf8_validate(gh_message_get_rumor_json(result), -1, NULL));
+}
+
 static GhMessage *
 add(GhConversationStore *store, guint author, guint recipient, gint64 created_at,
     const gchar *content, const gchar *subject)
@@ -1468,6 +1478,7 @@ main(int argc, char **argv)
                   test_inbox_status_mapping);
   g_test_add_func("/groundhog/conversation-list/inbox-status-wiring", test_inbox_status_wiring);
   g_test_add_func("/groundhog/conversation-list/time-format", test_time_format);
+  g_test_add_func("/groundhog/conversation-list/unicode-subject", test_unicode_subject);
   int status = g_test_run();
   for (guint key = 1; key < KEYS; key++) {
     g_free(hex[key]);

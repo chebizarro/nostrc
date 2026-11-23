@@ -48,6 +48,9 @@ function(nostrc_isolate_tests fixture)
       "NOSTRC_TEST_ISOLATION=1" "HOME=${_home}/home" "XDG_DATA_HOME=${_home}/data"
       "XDG_CONFIG_HOME=${_home}/config" "XDG_CACHE_HOME=${_home}/cache"
       "XDG_STATE_HOME=${_home}/state" ${_nti_ENVIRONMENT})
+    if(NOSTRC_TEST_PRIVATE_SESSION AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
+      set_property(TEST ${_test} APPEND PROPERTY ENVIRONMENT "NOSTRC_TEST_PRIVATE_SESSION=1")
+    endif()
     set_property(TEST ${_test} APPEND PROPERTY FIXTURES_REQUIRED ${fixture})
   endforeach()
   string(APPEND _body "file(CHMOD_RECURSE \"${_root}\" "

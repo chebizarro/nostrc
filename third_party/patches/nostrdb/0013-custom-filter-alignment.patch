@@ -1,0 +1,12 @@
+--- a/src/nostrdb.c
++++ b/src/nostrdb.c
+@@ -914,6 +914,9 @@
+ 
+ 	switch (current->field.type) {
+ 	case NDB_FILTER_CUSTOM:
++		if (!cursor_align(&filter->data_buf, _Alignof(struct ndb_filter_custom)))
++			return 0;
++		offset = filter->data_buf.p - filter->data_buf.start;
+ 		if (!cursor_push(&filter->data_buf, (unsigned char *)&el, sizeof(el)))
+ 			return 0;
+ 		break;

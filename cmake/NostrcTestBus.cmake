@@ -34,3 +34,16 @@ if(NOT TARGET nostrc-test-bus)
   endif()
   unset(_nostrc_test_bus_dir)
 endif()
+
+# Lazily required only by opted-in native Linux GUI suites.
+function(nostrc_test_session_target)
+  if(TARGET nostrc-test-session)
+    return()
+  endif()
+  find_program(NOSTRC_A11Y_LAUNCHER at-spi-bus-launcher
+    PATHS /usr/libexec /usr/lib/at-spi2-core REQUIRED)
+  add_executable(nostrc-test-session "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../tests/common/nostrc-test-session.c")
+  target_link_libraries(nostrc-test-session PRIVATE nostrc-test-bus)
+  target_compile_definitions(nostrc-test-session PRIVATE NOSTRC_A11Y_LAUNCHER="${NOSTRC_A11Y_LAUNCHER}")
+  target_compile_options(nostrc-test-session PRIVATE -Wall -Wextra -Werror)
+endfunction()

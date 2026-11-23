@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -596,7 +597,70 @@ static void test_reference_parse(void) {
     assert(!nostr_group_reference_parse(NULL, &addr, &code));
 }
 
+static const char *merged_marker(nostr_group_t *group, int kind) {
+    switch (kind) {
+    case NOSTR_KIND_SIMPLE_GROUP_METADATA: return group->name;
+    case NOSTR_KIND_SIMPLE_GROUP_ADMINS: assert(group->admins_len == 1); return group->admins[0].pubkey;
+    case NOSTR_KIND_SIMPLE_GROUP_MEMBERS: assert(group->members_len == 1); return group->members[0].label;
+    case NOSTR_KIND_SIMPLE_GROUP_ROLES: assert(group->roles_len == 1); return group->roles[0].name;
+    default: assert(group->pins_len == 1); return group->pins[0].value;
+    }
+}
+
+static void test_equal_timestamp_order_independence(void) {
+    const char *first_pubkey = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const char *second_pubkey = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    struct {
+        int kind;
+        bool (*merge)(nostr_group_t *, const nostr_event_t *);
+        size_t id_offset;
+    } cases[] = {
+        {NOSTR_KIND_SIMPLE_GROUP_METADATA, nostr_group_merge_in_metadata_event, offsetof(nostr_group_t, last_metadata_event_id)},
+        {NOSTR_KIND_SIMPLE_GROUP_ADMINS, nostr_group_merge_in_admins_event, offsetof(nostr_group_t, last_admins_event_id)},
+        {NOSTR_KIND_SIMPLE_GROUP_MEMBERS, nostr_group_merge_in_members_event, offsetof(nostr_group_t, last_members_event_id)},
+        {NOSTR_KIND_SIMPLE_GROUP_ROLES, nostr_group_merge_in_roles_event, offsetof(nostr_group_t, last_roles_event_id)},
+        {NOSTR_KIND_SIMPLE_GROUP_PINNED_EVENTS, nostr_group_merge_in_pins_event, offsetof(nostr_group_t, last_pins_event_id)},
+    };
+    nostr_group_t *a = nostr_new_group("wss://relay.example.com'Tie.Group");
+    nostr_group_t *b = nostr_new_group("wss://relay.example.com'Tie.Group");
+    assert(a && b);
+    for (size_t i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
+        NostrEvent *events[2];
+        for (int j = 0; j < 2; j++) {
+            events[j] = snapshot_event(cases[i].kind, 100, "Tie.Group");
+            const char *marker = j ? "bravo" : "alpha";
+            const char *pubkey = j ? second_pubkey : first_pubkey;
+            add_tag(events[j], nostr_tag_new("name", marker, NULL));
+            add_tag(events[j], nostr_tag_new("p", pubkey, marker, NULL));
+            add_tag(events[j], nostr_tag_new("role", marker, "description", NULL));
+            add_tag(events[j], nostr_tag_new("e", pubkey, NULL));
+            assert(nostr_event_sign(events[j], "0000000000000000000000000000000000000000000000000000000000000001") == 0);
+        }
+        char ids[2][65];
+        assert(nostr_event_compute_id(events[0], ids[0]) == NOSTR_EVENT_VALIDATION_OK);
+        assert(nostr_event_compute_id(events[1], ids[1]) == NOSTR_EVENT_VALIDATION_OK);
+        int low = strcmp(ids[0], ids[1]) < 0 ? 0 : 1;
+        int high = 1 - low;
+        assert(cases[i].merge(a, events[high]));
+        assert(cases[i].merge(a, events[low]));
+        assert(cases[i].merge(b, events[low]));
+        assert(!cases[i].merge(b, events[high]));
+        assert(!cases[i].merge(a, events[low])); /* duplicate is idempotent */
+        assert(strcmp((char *)a + cases[i].id_offset, ids[low]) == 0);
+        assert(strcmp((char *)b + cases[i].id_offset, ids[low]) == 0);
+        assert(strcmp(merged_marker(a, cases[i].kind), merged_marker(b, cases[i].kind)) == 0);
+        nostr_event_set_created_at(events[high], 101);
+        assert(cases[i].merge(a, events[high])); /* newer time wins regardless of id */
+        assert(!cases[i].merge(a, events[low])); /* stale time never wins */
+        nostr_event_free(events[0]);
+        nostr_event_free(events[1]);
+    }
+    nostr_free_group(a);
+    nostr_free_group(b);
+}
+
 int main(void) {
+    test_equal_timestamp_order_independence();
     test_new_group_valid();
     test_new_group_invalid_addresses();
     test_opaque_group_ids();

@@ -432,6 +432,7 @@ mls_group_to_marmot_group(const MlsGroup *mls,
             group->image_nonce = malloc(12);
             if (group->image_nonce) memcpy(group->image_nonce, gde->image_nonce, 12);
         }
+        group->group_data_version = gde->version;
     }
 
     return group;
@@ -1279,7 +1280,8 @@ merge_pending_commit_impl(Marmot *m, const MarmotGroupId *mls_group_id)
 }
 
 static MarmotError
-clear_pending_commit_impl(Marmot *m, const MarmotGroupId *mls_group_id)
+clear_pending_commit_impl(Marmot *m, const MarmotGroupId *mls_group_id,
+                          MarmotMessageResult **out_results, size_t *out_count)
 {
     if (!m || !mls_group_id)
         return MARMOT_ERR_INVALID_ARG;
@@ -1290,7 +1292,7 @@ clear_pending_commit_impl(Marmot *m, const MarmotGroupId *mls_group_id)
                                                          mls_group_id, &group);
     if (err != MARMOT_OK || !group) return MARMOT_ERR_GROUP_NOT_FOUND;
     err = marmot_group_reconcile(m, group);
-    if (err == MARMOT_OK) err = marmot_commit_clear_pending(m, group);
+    if (err == MARMOT_OK) err = marmot_commit_clear_pending(m, group, out_results, out_count);
     marmot_group_free(group);
     return err;
 }
@@ -2893,7 +2895,29 @@ marmot_clear_pending_commit(Marmot *m, const MarmotGroupId *mls_group_id)
 {
     MarmotError err = marmot_txn_begin(m);
     if (err != MARMOT_OK) return err;
-    return marmot_txn_end(m, clear_pending_commit_impl(m, mls_group_id));
+    return marmot_txn_end(m, clear_pending_commit_impl(m, mls_group_id, NULL, NULL));
+}
+
+MarmotError
+marmot_clear_pending_commit_with_results(Marmot *m, const MarmotGroupId *mls_group_id,
+                                         MarmotMessageResult **out_results, size_t *out_count)
+{
+    if (!out_results || !out_count) return MARMOT_ERR_INVALID_ARG;
+    *out_results = NULL;
+    *out_count = 0;
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    MarmotMessageResult *results = NULL;
+    size_t count = 0;
+    err = marmot_txn_end(m, clear_pending_commit_impl(m, mls_group_id, &results, &count));
+    /* Only what the transaction kept is reported. */
+    if (err != MARMOT_OK) {
+        marmot_message_results_free(results, count);
+        return err;
+    }
+    *out_results = results;
+    *out_count = count;
+    return MARMOT_OK;
 }
 
 /* It may finish a Commit that was merged before a crash: a write. */

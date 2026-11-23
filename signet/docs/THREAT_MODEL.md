@@ -88,8 +88,14 @@ In scope:
   physical touch; UV-required requests default-deny unless explicitly opted in.
   Launch uses one instance/PSK, no cross-instance sync. UHID is experimental,
   local Linux-host functionality, not a remote browser authenticator. The
-  virtual device has no per-caller authorization: any local process able to
-  open its hidraw node acts as the configured identity (SR-06).
+  daemon refuses the CTAP profile: UHID reports carry no trustworthy caller
+  credentials, and no authorization/consent backend is installed. The adapter
+  requires an explicit owner group and per-ceremony approval before vault access;
+  absent or denied approval cannot create credentials or sign assertions (SR-06).
+  Future enablement requires a reviewed credential-bearing broker or trusted
+  out-of-band consent backend, root/group-only hidraw access without extra ACL
+  grants, and live Linux qualification. A claimed RP, hash or channel ID cannot
+  establish caller identity; a group name alone is not authorization.
 
 Out of scope (accepted):
 

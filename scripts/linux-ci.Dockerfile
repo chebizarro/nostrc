@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # gnostr-appimage.yml (Gnostr, grotto, nostr-gtk)
     libpeas-2-dev librsvg2-dev libgdk-pixbuf-2.0-dev \
     # signet-ci.yml
-    libmicrohttpd-dev libcbor-dev python3-jsonschema python3-yaml \
+    libmicrohttpd-dev libcbor-dev python3-jsonschema python3-yaml python3-venv \
     # fipsd YAML configuration (fips-ci.yml: orchestrator adds libyaml-dev)
     libyaml-dev \
     # fips-gateway's nftables backend (optional: without it the executable

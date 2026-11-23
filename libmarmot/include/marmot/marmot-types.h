@@ -276,6 +276,12 @@ typedef struct {
 
     /** Group state */
     MarmotGroupState state;
+
+    /** A legacy group's MIP-01 marmot_group_data version (nostrc-x215):
+     *  1 means `image_key` is the group image's encryption key itself; 2 or
+     *  later, a seed the image key is derived from.  0: not known (an
+     *  adopted group, or a record stored before 0.14.1).  Since 0.14.1. */
+    uint16_t group_data_version;
 } MarmotGroup;
 
 /** Allocate and zero-initialize a MarmotGroup */
@@ -528,6 +534,8 @@ MARMOT_API MarmotPagination marmot_pagination_default(void);
  * Message processing result
  * ──────────────────────────────────────────────────────────────────────── */
 
+typedef struct MarmotMemberIdentity MarmotMemberIdentity;
+
 typedef enum {
     MARMOT_RESULT_APPLICATION_MESSAGE = 0,
     MARMOT_RESULT_COMMIT              = 1,
@@ -628,6 +636,18 @@ typedef struct {
         char **invalidated_message_ids;
         size_t invalidated_count;
     } convergence;
+
+    /** Since 0.14.1 (nostrc-8gbp): the roster immediately after this
+     *  deferred Commit applied, before any following deferred Commit.
+     *  Present only on COMMIT results returned by
+     *  marmot_clear_pending_commit_with_results(). Members are owned by
+     *  the result and freed by marmot_message_result(s)_free(). Empty is
+     *  a valid roster; `present` distinguishes it from no snapshot. */
+    struct {
+        bool present;
+        MarmotMemberIdentity *members;
+        size_t count;
+    } commit_roster;
 } MarmotMessageResult;
 
 /** MLS proposal types reported in MarmotMessageResult and
@@ -672,6 +692,10 @@ typedef struct {
 
 /** Free a MarmotMessageResult's owned data */
 MARMOT_API void marmot_message_result_free(MarmotMessageResult *result);
+
+/** Free each of `count` results and the array itself (NULL is a no-op).
+ *  Since 0.14.1. */
+MARMOT_API void marmot_message_results_free(MarmotMessageResult *results, size_t count);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Group creation result
