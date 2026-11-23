@@ -23,6 +23,7 @@
       "supported.apps.grotto.tests",
       "supported.apps.grotto.tests.display",
       "supported.apps.grotto.tests.display.private_bus",
+      "supported.apps.grotto.tests.display.private_bus.room_flow",
       "supported.apps.grotto.tests.private_bus",
       "supported.nips.nip5f.signer_endpoint"
     ],
@@ -346,6 +347,7 @@
       "supported.apps.grotto.tests",
       "supported.apps.grotto.tests.display",
       "supported.apps.grotto.tests.display.private_bus",
+      "supported.apps.grotto.tests.display.private_bus.room_flow",
       "supported.apps.grotto.tests.private_bus",
       "supported.groundhog.about",
       "supported.groundhog.about.display",
