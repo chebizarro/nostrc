@@ -32978,9 +32978,9 @@
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "cb0edf952b34a799ce95a339dd0d445f5b9c3f1edaa0882b9e632cb1ca0adb1b",
+      "source_sha256": "a4e6fafc1d320eb7566dc1260ee95faa2202a3a85e74e7c186a2fb23ee31b42f",
       "unsupported_reason": "MDK 0.8 image/driver/container lifecycle and complete live matrix custody remain unsupported; historical command/CTest smoke is not successful arbitrary-tree cleanup.",
-      "workflow_sha256": "4f2e4a07a08eb3dca33f8312707fbbc107f90eeaf2e272ad956291e544fd4537"
+      "workflow_sha256": "91e37a7763196f5ead4b8efd42ed88995fec5620cee57715b7345053e74f82c9"
     },
     ".github/workflows/marmot-mdk011-interop.yml:mdk011-adopted-matrix": {
       "matrix_source": "",
