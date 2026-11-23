@@ -109,14 +109,16 @@ Groundhog and its full nostr-gobject storage qualification require both
 providers is not a Groundhog gate. Configuration rejects Groundhog with either
 provider disabled rather than reporting success for an unlinked static archive.
 
-NIP-57's BOLT11 decoder comes from libnostr's pinned nostrdb backend. Enabling
-NIP-57 requires `LIBNOSTR_WITH_NOSTRDB=ON`; its tests must not silently disappear
-when the decoder is unavailable. There is no standalone decoder or storage
-fallback. For the supported core-only subset, use:
+NIP-57's BOLT11 decoder comes from libnostr's pinned nostrdb backend. On a fresh
+configure, `ENABLE_NIP57` defaults to `LIBNOSTR_WITH_NOSTRDB`. Enabling NIP-57
+without that backend is a configure error; there is no standalone decoder or
+storage fallback. If disabling the backend in an existing build directory, set
+`-DENABLE_NIP57=OFF` to override any cached `ON` value. For the supported
+core-only subset in a fresh build directory, use:
 
 ```sh
 cmake -S . -B build-core-only \
-  -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF -DENABLE_NIP57=OFF \
+  -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF \
   -DBUILD_GROUNDHOG=OFF -DBUILD_NOSTR_GTK=OFF -DBUILD_NOSTR_GOBJECT=OFF
 cmake --build build-core-only --target nostr
 ```
@@ -126,7 +128,8 @@ static nostr-gobject event-only consumer (such as the Windows signer) may omit
 storage objects, but that is not qualification of the full public storage API.
 Run the configure-contract regression explicitly with
 `python3 nips/nip57/tests/test_backend_configuration.py --build-root <scratch-dir>`;
-it exercises the real root configure entrypoint for each unsupported combination.
+it exercises the real root configure entrypoint for the supported default and
+unsupported combinations.
 
 ## Focused verification and evidence
 
