@@ -1,7 +1,7 @@
 prefix=${pcfiledir}/@LIBNOSTRGO_PC_PREFIX_RELATIVE@
 exec_prefix=${prefix}
-libdir=${exec_prefix}/@CMAKE_INSTALL_LIBDIR@
-includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+libdir=@LIBNOSTRGO_PC_LIBDIR@
+includedir=@LIBNOSTRGO_PC_INCLUDEDIR@
 
 Name: libnostrgo
 Description: Go-inspired concurrency primitives for C (formerly libgo)

@@ -13,6 +13,7 @@
 #include "subscription-private.h"
 #include "channel.h"
 #include "context.h"
+#include "hash_map.h"
 #include "select.h"
 #include "nostr/metrics.h"
 #include <pthread.h>
@@ -43,8 +44,40 @@ typedef struct PoolSubscriptionEntry {
     struct PoolSubscriptionEntry *next;
 } PoolSubscriptionEntry;
 
+struct NostrPoolSubscription {
+    atomic_int refs;
+    NostrSimplePool *pool;
+    bool closed;                     /* delivery_mutex + pool_mutex */
+    NostrFilters *filters;
+    NostrRelay **relays;             /* borrowed from pool */
+    size_t relay_count;
+    bool unique;
+    GoHashMap *seen;
+    char *seen_ring[4096];
+    size_t seen_pos;
+    NostrPoolEventFunc event;
+    NostrPoolStateFunc state;
+    void *data;
+    struct NostrPoolSubscription *next;
+};
+typedef struct PoolOwnedSub {
+    NostrSubscription *sub;
+    NostrPoolSubscription *owner;
+    struct PoolOwnedSub *next;
+} PoolOwnedSub;
+
+static void pool_handle_unref(NostrPoolSubscription *h) {
+    if (!h || atomic_fetch_sub(&h->refs, 1) != 1) return;
+    if (h->filters) nostr_filters_free(h->filters);
+    if (h->seen) go_hash_map_destroy(h->seen);
+    for (size_t i = 0; i < 4096; i++) free(h->seen_ring[i]);
+    free(h->relays);
+    free(h);
+}
+
 typedef struct PoolClosedBackoff {
     NostrRelay *relay; /* identity only, pool owns the relay */
+    NostrPoolSubscription *owner;
     uint64_t due_ms;
     unsigned next_ms;
     struct PoolClosedBackoff *next;
@@ -56,6 +89,7 @@ typedef struct PoolClosedBackoff {
 typedef struct PoolParked {
     NostrRelay *relay; /* identity only, pool owns the relay */
     NostrFilters *filters;
+    NostrPoolSubscription *owner;
     NostrPoolRecovery recovery;
     uint64_t connection_generation;
     uint64_t closed_sequence;
@@ -85,6 +119,11 @@ typedef struct PoolListen {
 #define POOL_WAIT_NO_DEADLINE_MS (24ull * 3600ull * 1000ull)
 
 typedef struct SubscriptionRegistry {
+    /* Serializes worker snapshots/delivery with handle close. Recursive so a
+     * callback may close itself. Never acquire this while holding pool_mutex. */
+    pthread_mutex_t delivery_mutex;
+    NostrPoolSubscription *handles;
+    PoolOwnedSub *owned_subs;
     PoolSubscriptionEntry *head;
     size_t count;
     pthread_mutex_t mutex;
@@ -97,6 +136,23 @@ typedef struct SubscriptionRegistry {
     PoolLink *link;       /* nostrc-7i6w */
     PoolListen *listens;  /* nostrc-7i6w: pool_mutex */
 } SubscriptionRegistry;
+
+/* Caller holds pool_mutex (or delivery_mutex while membership is stable). */
+static NostrPoolSubscription *pool_sub_owner(NostrSimplePool *pool, NostrSubscription *sub) {
+    for (PoolOwnedSub *b = pool->sub_registry->owned_subs; b; b = b->next)
+        if (b->sub == sub) return b->owner;
+    return NULL;
+}
+static bool pool_sub_active(NostrSimplePool *pool, NostrSubscription *sub) {
+    bool active = false;
+    pthread_mutex_lock(&pool->pool_mutex);
+    for (size_t i = 0; i < pool->subs_count; i++)
+        if (pool->subs[i] == sub) { active = true; break; }
+    pthread_mutex_unlock(&pool->pool_mutex);
+    return active;
+}
+
+static void pool_remove_sub_locked(NostrSimplePool *pool, size_t j);
 
 static void pool_link_unref(void *data) {
     PoolLink *link = data;
@@ -115,6 +171,13 @@ static SubscriptionRegistry *subscription_registry_new(void) {
     SubscriptionRegistry *reg = (SubscriptionRegistry *)malloc(sizeof(SubscriptionRegistry));
     if (!reg) return NULL;
     
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&reg->delivery_mutex, &attr);
+    pthread_mutexattr_destroy(&attr);
+    reg->handles = NULL;
+    reg->owned_subs = NULL;
     reg->closed_backoff = NULL;
     reg->closed_initial_ms = POOL_CLOSED_BACKOFF_INITIAL_MS;
     reg->closed_max_ms = POOL_CLOSED_BACKOFF_MAX_MS;
@@ -170,6 +233,19 @@ static void subscription_registry_free(SubscriptionRegistry *reg) {
     pthread_mutex_unlock(&reg->mutex);
     
     go_channel_free(reg->cleanup_queue);
+    while (reg->owned_subs) {
+        PoolOwnedSub *b = reg->owned_subs;
+        reg->owned_subs = b->next;
+        free(b);
+    }
+    while (reg->handles) {
+        NostrPoolSubscription *h = reg->handles;
+        reg->handles = h->next;
+        h->pool = NULL;
+        h->closed = true;
+        pool_handle_unref(h);
+    }
+    pthread_mutex_destroy(&reg->delivery_mutex);
     pthread_mutex_destroy(&reg->mutex);
     pool_link_unref(reg->link);
     free(reg);
@@ -218,6 +294,12 @@ static void pool_forget_relay_locked(NostrSimplePool *pool, NostrRelay *relay) {
             pool_parked_free(gone);
         } else p = &(*p)->next;
     }
+    pthread_mutex_lock(&reg->mutex);
+    for (PoolClosedBackoff **b = &reg->closed_backoff; *b;) {
+        if ((*b)->relay != relay) { b = &(*b)->next; continue; }
+        PoolClosedBackoff *gone = *b; *b = gone->next; free(gone);
+    }
+    pthread_mutex_unlock(&reg->mutex);
 }
 
 /* Caller holds pool_mutex. */
@@ -233,7 +315,7 @@ static void pool_clear_parked_locked(NostrSimplePool *pool) {
 static bool pool_has_parked_locked(NostrSimplePool *pool, NostrRelay *relay) {
     SubscriptionRegistry *reg = pool->sub_registry;
     for (PoolParked *p = reg ? reg->parked : NULL; p; p = p->next)
-        if (p->relay == relay) return true;
+        if (p->relay == relay && !p->owner) return true;
     return false;
 }
 
@@ -630,12 +712,12 @@ static uint64_t closed_backoff_now(void) {
  * One entry per pool relay. Returns the milliseconds until @relay may be
  * sent a REQ again (0: now; UINT64_MAX: refused, allocation failed).
  * Actions: 0 query, 1 a BACKOFF CLOSED, -1 EOSE, 2 relay removed. */
-static uint64_t pool_closed_backoff(NostrSimplePool *pool, NostrRelay *relay, int action) {
+static uint64_t pool_closed_backoff_for(NostrSimplePool *pool, NostrRelay *relay, NostrPoolSubscription *owner, int action) {
     SubscriptionRegistry *reg = pool->sub_registry;
     if (!reg) return 0;
     pthread_mutex_lock(&reg->mutex);
     PoolClosedBackoff **slot = &reg->closed_backoff;
-    while (*slot && (*slot)->relay != relay) slot = &(*slot)->next;
+    while (*slot && ((*slot)->relay != relay || (*slot)->owner != owner)) slot = &(*slot)->next;
     if (action == 2) { /* removal; do not retain a freed relay identity */
         if (*slot) { PoolClosedBackoff *old = *slot; *slot = old->next; free(old); }
         pthread_mutex_unlock(&reg->mutex); return 0;
@@ -648,7 +730,7 @@ static uint64_t pool_closed_backoff(NostrSimplePool *pool, NostrRelay *relay, in
             fprintf(stderr, "[pool] CLOSED backoff allocation failed; recovery refused\n");
             return UINT64_MAX;
         }
-        (*slot)->relay = relay; (*slot)->next_ms = reg->closed_initial_ms;
+        (*slot)->relay = relay; (*slot)->owner = owner; (*slot)->next_ms = reg->closed_initial_ms;
     }
     PoolClosedBackoff *b = *slot;
     uint64_t now = closed_backoff_now();
@@ -660,6 +742,9 @@ static uint64_t pool_closed_backoff(NostrSimplePool *pool, NostrRelay *relay, in
     }
     uint64_t remaining = !b->due_ms || now >= b->due_ms ? 0 : b->due_ms - now;
     pthread_mutex_unlock(&reg->mutex); return remaining;
+}
+static uint64_t pool_closed_backoff(NostrSimplePool *pool, NostrRelay *relay, int action) {
+    return pool_closed_backoff_for(pool, relay, NULL, action);
 }
 static unsigned pool_recovery_window(NostrSimplePool *pool) {
     SubscriptionRegistry *registry = pool->sub_registry;
@@ -707,6 +792,13 @@ static void pool_subscription_notify(NostrSimplePool *pool, NostrRelay *relay,
     middleware_generation = delivery->generation;
     middleware_live_since = delivery->live_since;
     middleware_info = info ? info : &fallback;
+    NostrPoolSubscription *h = pool_sub_owner(pool, sub);
+    if (h) {
+        atomic_fetch_add(&h->refs, 1);
+        if (!h->closed && h->state)
+            h->state(h, relay, state, reason, middleware_info, h->data);
+        pool_handle_unref(h);
+    }
     pthread_mutex_lock(&observer_mutex);
     for (PoolObserver *o = observers; o; o = o->next)
         if (o->pool == pool) { o->callback(relay, state, reason, o->data); break; }
@@ -858,6 +950,13 @@ void nostr_simple_pool_free(NostrSimplePool *pool) {
             free(l);
         }
         pthread_mutex_unlock(&pool->pool_mutex);
+        while (pool->sub_registry->handles) {
+            NostrPoolSubscription *h = pool->sub_registry->handles;
+            nostr_pool_subscription_close(h);
+            pool->sub_registry->handles = h->next;
+            h->pool = NULL;
+            pool_handle_unref(h);
+        }
         subscription_registry_free(pool->sub_registry);
         fprintf(stderr, "[pool] subscription registry freed\n");
     }
@@ -1076,6 +1175,7 @@ void nostr_simple_pool_add_relay(NostrSimplePool *pool, NostrRelay *relay) {
 bool nostr_simple_pool_remove_relay(NostrSimplePool *pool, const char *url) {
     if (!pool || !url || !*url) return false;
 
+    pthread_mutex_lock(&pool->sub_registry->delivery_mutex);
     pthread_mutex_lock(&pool->pool_mutex);
 
     for (size_t i = 0; i < pool->relay_count; i++) {
@@ -1089,6 +1189,18 @@ bool nostr_simple_pool_remove_relay(NostrSimplePool *pool, const char *url) {
             }
             pool->relay_count--;
             pool_forget_relay_locked(pool, relay);
+            for (NostrPoolSubscription *h = pool->sub_registry->handles; h; h = h->next)
+                for (size_t r = 0; r < h->relay_count;)
+                    if (h->relays[r] == relay) h->relays[r] = h->relays[--h->relay_count];
+                    else r++;
+            for (size_t j = 0; j < pool->subs_count;) {
+                NostrSubscription *sub = pool->subs[j];
+                if (!pool_sub_owner(pool, sub) || nostr_subscription_get_relay(sub) != relay) { j++; continue; }
+                nostr_subscription_unsubscribe(sub);
+                nostr_subscription_close(sub, NULL);
+                pool_remove_sub_locked(pool, j);
+                nostr_subscription_free(sub);
+            }
 
             // Resize array (or set to NULL if empty)
             if (pool->relay_count == 0) {
@@ -1107,11 +1219,13 @@ bool nostr_simple_pool_remove_relay(NostrSimplePool *pool, const char *url) {
             nostr_relay_disconnect(relay);
             nostr_relay_free(relay);
 
+            pthread_mutex_unlock(&pool->sub_registry->delivery_mutex);
             return true;
         }
     }
 
     pthread_mutex_unlock(&pool->pool_mutex);
+    pthread_mutex_unlock(&pool->sub_registry->delivery_mutex);
     return false;
 }
 
@@ -1341,13 +1455,14 @@ static int pool_seen(NostrSimplePool *pool, const char *id) {
 typedef struct {
     NostrIncomingEvent incoming;
     NostrSubscription *subscription; /* borrowed until this batch is delivered */
+    NostrPoolSubscription *owner; /* retained by this batch */
     uint64_t generation;
     int64_t live_since;
 } PoolIncomingEvent;
 
 static int batch_add(PoolIncomingEvent **batch, size_t *len, size_t *cap,
                      NostrEvent *ev, NostrRelay *relay, NostrSubscription *sub,
-                     const NostrOrderedDelivery *delivery) {
+                     const NostrOrderedDelivery *delivery, NostrPoolSubscription *owner) {
     if (*len == *cap) {
         size_t new_cap = *cap ? *cap * 2 : 64;
         PoolIncomingEvent *nb = realloc(*batch, new_cap * sizeof(PoolIncomingEvent));
@@ -1355,7 +1470,9 @@ static int batch_add(PoolIncomingEvent **batch, size_t *len, size_t *cap,
         *batch = nb;
         *cap = new_cap;
     }
+    if (owner) atomic_fetch_add(&owner->refs, 1);
     (*batch)[(*len)++] = (PoolIncomingEvent){
+        .owner = owner,
         .incoming = {.event = ev, .relay = relay}, .subscription = sub,
         .generation = delivery->generation, .live_since = delivery->live_since };
     return 1;
@@ -1374,6 +1491,28 @@ static void pool_deliver_batch(NostrSimplePool *pool, PoolIncomingEvent *batch,
     void (*event_ex_cb)(NostrIncomingEvent *, void *) = pool->event_middleware_ex;
     void *event_data = pool->event_middleware_data;
     pthread_mutex_unlock(&pool->pool_mutex);
+    size_t legacy_len = 0;
+    size_t total = *len;
+    for (size_t i = 0; i < total; i++) {
+        NostrPoolSubscription *h = batch[i].owner;
+        if (!h) { batch[legacy_len++] = batch[i]; continue; }
+        NostrSimplePool *prev_pool = middleware_pool;
+        NostrSubscription *prev_sub = middleware_subscription;
+        uint64_t prev_generation = middleware_generation;
+        int64_t prev_since = middleware_live_since;
+        middleware_pool = pool;
+        middleware_subscription = batch[i].subscription;
+        middleware_generation = batch[i].generation;
+        middleware_live_since = batch[i].live_since;
+        if (!h->closed && h->event) h->event(h, &batch[i].incoming, h->data);
+        else nostr_event_free(batch[i].incoming.event);
+        middleware_pool = prev_pool;
+        middleware_subscription = prev_sub;
+        middleware_generation = prev_generation;
+        middleware_live_since = prev_since;
+        pool_handle_unref(h);
+    }
+    *len = legacy_len;
     if (batch_cb) {
         NostrSimplePool *previous_pool = middleware_pool;
         NostrSubscription *previous_sub = middleware_subscription;
@@ -1423,17 +1562,40 @@ static void pool_collect_event(NostrSimplePool *pool, NostrSubscription *sub,
     NostrEvent *ev = delivery->event;
     char *eid = nostr_event_get_id(ev);
     pthread_mutex_lock(&pool->pool_mutex);
-    int seen = pool_seen(pool, eid);
-    bool has_middleware = pool->event_middleware_ex || pool->event_middleware || pool->batch_middleware;
+    NostrPoolSubscription *h = pool_sub_owner(pool, sub);
+    int seen = 0;
+    if (h && h->unique && eid) {
+        seen = go_hash_map_get_string(h->seen, eid) != NULL;
+        if (!seen) {
+            char *copy = strdup(eid);
+            if (copy) {
+                char **slot = &h->seen_ring[h->seen_pos];
+                if (*slot) { go_hash_map_remove_str(h->seen, *slot); free(*slot); }
+                *slot = copy;
+                h->seen_pos = (h->seen_pos + 1) % 4096;
+                go_hash_map_insert_str(h->seen, copy, (void *)(uintptr_t)1);
+            }
+        }
+    } else if (!h) seen = pool_seen(pool, eid);
+    bool has_middleware = h ? (!h->closed && h->event) :
+        (pool->event_middleware_ex || pool->event_middleware || pool->batch_middleware);
     pthread_mutex_unlock(&pool->pool_mutex);
     free(eid);
-    if (!seen && has_middleware && batch_add(batch, len, cap, ev, nostr_subscription_get_relay(sub), sub, delivery))
+    if (!seen && has_middleware && batch_add(batch, len, cap, ev, nostr_subscription_get_relay(sub), sub, delivery, h))
         return;
     nostr_event_free(ev);
 }
 
 /* Helper: remove subscription at index j from pool->subs (caller holds pool_mutex). */
 static void pool_remove_sub_locked(NostrSimplePool *pool, size_t j) {
+    for (PoolOwnedSub **b = &pool->sub_registry->owned_subs; *b; b = &(*b)->next) {
+        if ((*b)->sub == pool->subs[j]) {
+            PoolOwnedSub *gone = *b;
+            *b = gone->next;
+            free(gone);
+            break;
+        }
+    }
     for (size_t k = j + 1; k < pool->subs_count; k++)
         pool->subs[k - 1] = pool->subs[k];
     pool->subs_count--;
@@ -1469,6 +1631,7 @@ static void pool_park_locked(NostrSimplePool *pool, NostrRelay *relay,
         return;
     }
     p->relay = relay;
+    p->owner = pool_sub_owner(pool, sub);
     p->recovery = info->recovery;
     p->connection_generation = info->frame.connection_generation;
     p->closed_sequence = info->frame.sequence;
@@ -1488,7 +1651,7 @@ static void pool_drain_all(NostrSimplePool *pool,
         NostrSubscription *sub = subs[i];
         if (!sub) continue;
         size_t remaining = budget;
-        while (remaining) {
+        while (remaining && pool_sub_active(pool, sub)) {
             NostrOrderedDelivery delivery;
             NostrOrderedKind kind = nostr_subscription_next_ordered(sub, &delivery);
             if (kind == NOSTR_ORDERED_NONE || kind == NOSTR_ORDERED_STOP) break;
@@ -1498,19 +1661,23 @@ static void pool_drain_all(NostrSimplePool *pool,
                 continue;
             }
             pool_deliver_batch(pool, *batch, batch_len);
+            /* Event middleware may close this handle reentrantly. The snapshot
+             * retains the sub's storage, but its boundary is now retired. */
+            if (!pool_sub_active(pool, sub)) { free(delivery.reason); break; }
             NostrRelay *relay = nostr_subscription_get_relay(sub);
             /* nostrc-7i6w: decide this CLOSED's recovery from its own frame
              * stamp (wire order), not from when this worker gets to it. */
             NostrPoolCallbackInfo info = { .frame = delivery.frame };
             pthread_mutex_lock(&pool->pool_mutex);
-            bool reissuing = !pool->auto_unsub_on_eose;
+            NostrPoolSubscription *owner = pool_sub_owner(pool, sub);
+            bool reissuing = owner || !pool->auto_unsub_on_eose;
             pthread_mutex_unlock(&pool->pool_mutex);
             if (kind == NOSTR_ORDERED_CLOSED && reissuing)
                 info.recovery = nostr_simple_pool_classify_closed(delivery.reason, &delivery.frame);
             if (kind == NOSTR_ORDERED_EOSE) {
-                (void)pool_closed_backoff(pool, relay, -1);
+                (void)pool_closed_backoff_for(pool, relay, owner, -1);
             } else if (info.recovery == NOSTR_POOL_RECOVERY_BACKOFF) {
-                uint64_t delay = pool_closed_backoff(pool, relay, 1);
+                uint64_t delay = pool_closed_backoff_for(pool, relay, owner, 1);
                 info.retry_after_ms = delay == UINT64_MAX ? 0 : delay;
             }
             if (kind == NOSTR_ORDERED_EOSE)
@@ -1520,7 +1687,7 @@ static void pool_drain_all(NostrSimplePool *pool,
                                          &delivery, &info);
             free(delivery.reason);
             pthread_mutex_lock(&pool->pool_mutex);
-            if (kind == NOSTR_ORDERED_CLOSED || pool->auto_unsub_on_eose) {
+            if (kind == NOSTR_ORDERED_CLOSED || (!owner && pool->auto_unsub_on_eose)) {
                 for (size_t j = 0; j < pool->subs_count; j++) {
                     if (pool->subs[j] == sub) {
                         /* nostrc-7i6w: the pool keeps owning the closed REQ
@@ -1531,7 +1698,7 @@ static void pool_drain_all(NostrSimplePool *pool,
                         nostr_subscription_close(sub, NULL);
                         nostr_subscription_free(sub);
                         pool_remove_sub_locked(pool, j);
-                        subs[i] = NULL;
+                        /* Snapshot keeps its reference until delivery completes. */
                         break;
                     }
                 }
@@ -1554,7 +1721,8 @@ static void pool_drain_stopped(NostrSimplePool *pool) {
     pthread_mutex_lock(&pool->pool_mutex);
     size_t count = pool->subs_count;
     NostrSubscription **subs = count ? malloc(count * sizeof(*subs)) : NULL;
-    if (subs) memcpy(subs, pool->subs, count * sizeof(*subs));
+    if (subs) for (size_t i = 0; i < count; i++)
+        subs[i] = nostr_subscription_ref(pool->subs[i]);
     pthread_mutex_unlock(&pool->pool_mutex);
     if (!subs) return;
 
@@ -1569,6 +1737,7 @@ static void pool_drain_stopped(NostrSimplePool *pool) {
     pool_drain_all(pool, subs, count, SIZE_MAX, &batch, &len, &cap);
     pool_deliver_batch(pool, batch, &len);
     free(batch);
+    for (size_t i = 0; i < count; i++) nostr_subscription_unref(subs[i]);
     free(subs);
 }
 
@@ -1610,10 +1779,22 @@ static NostrSubscription *pool_prepare_subscription(NostrSimplePool *pool, Nostr
 /* Fires @filters on @relay and adds the subscription to pool->subs.
  * Called with pool_mutex held. */
 static bool pool_fire_locked(NostrSimplePool *pool, NostrRelay *relay,
-                             const NostrFilters *filters, const char *what) {
+                             const NostrFilters *filters, const char *what,
+                             NostrPoolSubscription *owner, bool recovery) {
     NostrSubscription *sub = pool_prepare_subscription(pool, relay, filters);
     if (!sub) return false;
-    nostr_subscription_set_duplicate_delivery(sub, !pool->dedup_unique);
+    /* A CLOSED during reconnect must not restore the original pre-recovery
+     * filters when AUTH accepts it later. Recompute from local time, never an
+     * event's timestamp, just like the relay's live-subscription refire. */
+    unsigned window = pool_recovery_window(pool);
+    if (recovery && window) {
+        int64_t since = (int64_t)time(NULL) - window;
+        for (size_t i = 0; i < sub->filters->count; i++)
+            sub->filters->filters[i].since = since;
+    }
+    PoolOwnedSub *binding = owner ? calloc(1, sizeof(*binding)) : NULL;
+    if (owner && !binding) { nostr_subscription_free(sub); return false; }
+    nostr_subscription_set_duplicate_delivery(sub, owner ? !owner->unique : !pool->dedup_unique);
     nostr_subscription_set_recovery_window(sub, pool_recovery_window(pool));
     Error *err = NULL;
     if (!nostr_subscription_fire(sub, &err)) {
@@ -1623,6 +1804,7 @@ static bool pool_fire_locked(NostrSimplePool *pool, NostrRelay *relay,
         if (err) free_error(err);
         nostr_subscription_close(sub, NULL);
         nostr_subscription_free(sub);
+        free(binding);
         return false;
     }
     NostrSubscription **grown = (NostrSubscription **)realloc(
@@ -1630,10 +1812,16 @@ static bool pool_fire_locked(NostrSimplePool *pool, NostrRelay *relay,
     if (!grown) {
         nostr_subscription_close(sub, NULL);
         nostr_subscription_free(sub);
+        free(binding);
         return false;
     }
     pool->subs = grown;
     pool->subs[pool->subs_count++] = sub;
+    if (binding) {
+        binding->sub = sub; binding->owner = owner;
+        binding->next = pool->sub_registry->owned_subs;
+        pool->sub_registry->owned_subs = binding;
+    }
     fprintf(stderr, "[simplepool] %s on %s\n", what, nostr_relay_get_url_const(relay));
     return true;
 }
@@ -1645,7 +1833,7 @@ static bool pool_parked_due(NostrSimplePool *pool, const PoolParked *p, uint64_t
         return true; /* every recovery reissues on a new connection */
     switch (p->recovery) {
     case NOSTR_POOL_RECOVERY_BACKOFF: {
-        uint64_t remaining = pool_closed_backoff(pool, p->relay, 0);
+        uint64_t remaining = pool_closed_backoff_for(pool, p->relay, p->owner, 0);
         if (remaining && remaining != UINT64_MAX && remaining < *wait_ms) *wait_ms = remaining;
         return remaining == 0;
     }
@@ -1683,23 +1871,20 @@ static uint64_t pool_reconcile_subs(NostrSimplePool *pool) {
 
     if (!pool) return wait_ms;
     pthread_mutex_lock(&pool->pool_mutex);
-    if (pool->auto_unsub_on_eose) {
-        pthread_mutex_unlock(&pool->pool_mutex);
-        return wait_ms;
-    }
+
     SubscriptionRegistry *reg = pool->sub_registry;
     for (PoolParked **pp = reg ? &reg->parked : NULL; pp && *pp;) {
         PoolParked *p = *pp;
         if (!nostr_relay_is_connected(p->relay) || !pool_parked_due(pool, p, &wait_ms) ||
             !pool_fire_locked(pool, p->relay, p->filters,
-                              nostr_simple_pool_recovery_name(p->recovery))) {
+                              nostr_simple_pool_recovery_name(p->recovery), p->owner, true)) {
             pp = &p->next;
             continue;
         }
         *pp = p->next;
         pool_parked_free(p);
     }
-    for (size_t i = 0; pool->filters_shared && i < pool->relay_count; i++) {
+    for (size_t i = 0; !pool->auto_unsub_on_eose && pool->filters_shared && i < pool->relay_count; i++) {
         NostrRelay *relay = pool->relays[i];
         if (!relay || !nostr_relay_is_connected(relay) || pool_has_parked_locked(pool, relay))
             continue;
@@ -1710,12 +1895,25 @@ static uint64_t pool_reconcile_subs(NostrSimplePool *pool) {
         }
         bool has_sub = false;
         for (size_t j = 0; j < pool->subs_count; j++) {
-            if (pool->subs[j] && nostr_subscription_get_relay(pool->subs[j]) == relay) {
+            if (pool->subs[j] && !pool_sub_owner(pool, pool->subs[j]) && nostr_subscription_get_relay(pool->subs[j]) == relay) {
                 has_sub = true;
                 break;
             }
         }
-        if (!has_sub) (void)pool_fire_locked(pool, relay, pool->filters_shared, "(re)subscribed");
+        if (!has_sub) (void)pool_fire_locked(pool, relay, pool->filters_shared, "(re)subscribed", NULL, false);
+    }
+    for (NostrPoolSubscription *h = reg ? reg->handles : NULL; h; h = h->next) {
+        if (h->closed) continue;
+        for (size_t r = 0; r < h->relay_count; r++) {
+            NostrRelay *relay = h->relays[r];
+            if (!nostr_relay_is_connected(relay)) continue;
+            bool exists = false;
+            for (PoolOwnedSub *b = reg->owned_subs; b; b = b->next)
+                if (b->owner == h && nostr_subscription_get_relay(b->sub) == relay) exists = true;
+            for (PoolParked *p = reg->parked; p; p = p->next)
+                if (p->owner == h && p->relay == relay) exists = true;
+            if (!exists) (void)pool_fire_locked(pool, relay, h->filters, "handle", h, false);
+        }
     }
     pthread_mutex_unlock(&pool->pool_mutex);
     return wait_ms;
@@ -1741,6 +1939,7 @@ void *simple_pool_thread_func(void *arg) {
             (void)go_channel_try_receive(pool->wake_ch, &dummy);
         }
 
+        pthread_mutex_lock(&pool->sub_registry->delivery_mutex);
         /* 2. nostrc-el92 / nostrc-7i6w: reissue held CLOSED REQs that are due
          * and fire the shared template on relays that (re)connected. */
         wait_ms = POOL_WAIT_NO_DEADLINE_MS;
@@ -1758,7 +1957,8 @@ void *simple_pool_thread_func(void *arg) {
         if (local_count > 0 && pool->subs) {
             local_subs = malloc(local_count * sizeof(NostrSubscription *));
             if (local_subs)
-                memcpy(local_subs, pool->subs, local_count * sizeof(NostrSubscription *));
+                for (size_t i = 0; i < local_count; i++)
+                    local_subs[i] = nostr_subscription_ref(pool->subs[i]);
         }
         pthread_mutex_unlock(&pool->pool_mutex);
 
@@ -1776,7 +1976,10 @@ void *simple_pool_thread_func(void *arg) {
         pool_deliver_batch(pool, batch, &batch_len);
 
         free(batch);
+        for (size_t i = 0; local_subs && i < local_count; i++)
+            nostr_subscription_unref(local_subs[i]);
         free(local_subs);
+        pthread_mutex_unlock(&pool->sub_registry->delivery_mutex);
 
         /* 6. Sleep until a producer, lifecycle change or relay listener
          * signals, or the next CLOSED backoff deadline. Never let select
@@ -1788,7 +1991,9 @@ void *simple_pool_thread_func(void *arg) {
         }
     }
 
+    pthread_mutex_lock(&pool->sub_registry->delivery_mutex);
     pool_drain_stopped(pool);
+    pthread_mutex_unlock(&pool->sub_registry->delivery_mutex);
     return NULL;
 }
 
@@ -1879,9 +2084,7 @@ void nostr_simple_pool_stop(NostrSimplePool *pool) {
             nostr_subscription_close(sub, NULL);
             nostr_subscription_free(sub);
         }
-        free(pool->subs);
-        pool->subs = NULL;
-        pool->subs_count = 0;
+        while (pool->subs_count) pool_remove_sub_locked(pool, pool->subs_count - 1);
     }
     pool_clear_parked_locked(pool); /* nostrc-7i6w: stop ends held REQs too */
     // Optionally disconnect relays on stop when NOSTR_SIMPLE_POOL_DISCONNECT=1
@@ -1936,7 +2139,10 @@ static void pool_subscribe_impl(NostrSimplePool *pool, const char **urls,
     }
     pool->filters_shared = owned;
     /* nostrc-7i6w: a new subscription supersedes held CLOSED REQs. */
-    pool_clear_parked_locked(pool);
+    for (PoolParked **p = &pool->sub_registry->parked; *p;) {
+        if ((*p)->owner) { p = &(*p)->next; continue; }
+        PoolParked *gone = *p; *p = gone->next; pool_parked_free(gone);
+    }
     // Create and fire subscriptions per relay
     for (size_t i = 0; i < pool->relay_count; i++) {
         NostrRelay *relay = pool->relays[i];
@@ -2117,4 +2323,139 @@ void nostr_simple_pool_get_brown_list_stats(NostrSimplePool *pool, NostrBrownLis
     memset(stats, 0, sizeof(NostrBrownListStats));
     if (!pool || !pool->brown_list) return;
     nostr_brown_list_get_stats(pool->brown_list, stats);
+}
+
+/* Independent subscriptions use the same relays, ordered worker and AUTH/CLOSED
+ * recovery machinery as the legacy template, but never replace that template. */
+NostrPoolSubscription *nostr_simple_pool_subscription_open(
+    NostrSimplePool *pool, const char **urls, size_t count, const NostrFilters *filters,
+    bool unique, NostrPoolEventFunc event, NostrPoolStateFunc state, void *data) {
+    if (!pool || !pool->sub_registry || !urls || !count || !filters || !filters->count)
+        return NULL;
+    NostrPoolSubscription *h = calloc(1, sizeof(*h));
+    if (!h) return NULL;
+    atomic_init(&h->refs, 1);
+    h->filters = pool_filters_copy(filters);
+    h->relays = calloc(count, sizeof(*h->relays));
+    h->seen = unique ? go_hash_map_create(4096) : NULL;
+    if (!h->filters || !h->relays || (unique && !h->seen)) {
+        pool_handle_unref(h); return NULL;
+    }
+    SubscriptionRegistry *reg = pool->sub_registry;
+    pthread_mutex_lock(&reg->delivery_mutex);
+    for (size_t i = 0; i < count; i++) {
+        NostrRelay *r = pool_register_relay(pool, urls[i], NULL);
+        if (!r) {
+            pthread_mutex_unlock(&reg->delivery_mutex);
+            pool_handle_unref(h); return NULL;
+        }
+        bool duplicate = false;
+        for (size_t j = 0; j < h->relay_count; j++)
+            if (h->relays[j] == r) duplicate = true;
+        if (!duplicate) h->relays[h->relay_count++] = r;
+    }
+    h->pool = pool; h->unique = unique;
+    h->event = event; h->state = state; h->data = data;
+    pthread_mutex_lock(&pool->pool_mutex);
+    atomic_fetch_add(&h->refs, 1); /* registry ownership */
+    h->next = reg->handles; reg->handles = h;
+    pthread_mutex_unlock(&pool->pool_mutex);
+    pthread_mutex_unlock(&reg->delivery_mutex);
+    pool_redial_wake(pool);
+    if (pool->wake_ch) (void)go_channel_try_send(pool->wake_ch, NULL);
+    return h;
+}
+
+void nostr_pool_subscription_close(NostrPoolSubscription *h) {
+    if (!h || !h->pool) return;
+    NostrSimplePool *pool = h->pool;
+    SubscriptionRegistry *reg = pool->sub_registry;
+    pthread_mutex_lock(&reg->delivery_mutex);
+    pthread_mutex_lock(&pool->pool_mutex);
+    if (!h->closed) {
+        h->closed = true;
+        for (size_t i = 0; i < pool->subs_count;) {
+            NostrSubscription *sub = pool->subs[i];
+            if (pool_sub_owner(pool, sub) != h) { i++; continue; }
+            nostr_subscription_unsubscribe(sub);
+            nostr_subscription_close(sub, NULL);
+            pool_remove_sub_locked(pool, i);
+            nostr_subscription_free(sub);
+        }
+        for (PoolParked **p = &reg->parked; *p;) {
+            if ((*p)->owner != h) { p = &(*p)->next; continue; }
+            PoolParked *gone = *p; *p = gone->next; pool_parked_free(gone);
+        }
+        pthread_mutex_lock(&reg->mutex);
+        for (PoolClosedBackoff **b = &reg->closed_backoff; *b;) {
+            if ((*b)->owner != h) { b = &(*b)->next; continue; }
+            PoolClosedBackoff *gone = *b; *b = gone->next; free(gone);
+        }
+        pthread_mutex_unlock(&reg->mutex);
+        nostr_filters_free(h->filters); h->filters = NULL;
+        if (h->seen) { go_hash_map_destroy(h->seen); h->seen = NULL; }
+        for (size_t i = 0; i < 4096; i++) { free(h->seen_ring[i]); h->seen_ring[i] = NULL; }
+        free(h->relays); h->relays = NULL; h->relay_count = 0;
+    }
+    pthread_mutex_unlock(&pool->pool_mutex);
+    pthread_mutex_unlock(&reg->delivery_mutex);
+}
+
+void nostr_pool_subscription_free(NostrPoolSubscription *h) {
+    if (!h) return;
+    nostr_pool_subscription_close(h);
+    if (h->pool) {
+        NostrSimplePool *pool = h->pool;
+        SubscriptionRegistry *reg = pool->sub_registry;
+        pthread_mutex_lock(&reg->delivery_mutex);
+        pthread_mutex_lock(&pool->pool_mutex);
+        NostrPoolSubscription **p = &reg->handles;
+        while (*p && *p != h) p = &(*p)->next;
+        if (*p) { *p = h->next; pool_handle_unref(h); }
+        h->pool = NULL;
+        pthread_mutex_unlock(&pool->pool_mutex);
+        pthread_mutex_unlock(&reg->delivery_mutex);
+    }
+    pool_handle_unref(h);
+}
+
+bool nostr_simple_pool_snapshot_relays(NostrSimplePool *pool,
+    NostrPoolRelaySnapshot **out, size_t *count) {
+    if (out) *out = NULL;
+    if (count) *count = 0;
+    if (!pool || !out || !count) return false;
+    pthread_mutex_lock(&pool->pool_mutex);
+    size_t n = pool->relay_count;
+    NostrPoolRelaySnapshot *items = n ? calloc(n, sizeof(*items)) : NULL;
+    if (n && !items) { pthread_mutex_unlock(&pool->pool_mutex); return false; }
+    for (size_t i = 0; i < n; i++) {
+        NostrRelay *r = pool->relays[i];
+        items[i].url = strdup(nostr_relay_get_url_const(r));
+        if (!items[i].url) {
+            pthread_mutex_unlock(&pool->pool_mutex);
+            nostr_simple_pool_snapshot_relays_free(items, n); return false;
+        }
+        items[i].connection_state = nostr_relay_get_connection_state(r);
+        (void)nostr_relay_get_auth_status(r, &items[i].auth);
+        items[i].reconnect_after_ms = nostr_relay_get_next_reconnect_ms(r);
+        items[i].browned = pool->brown_list_enabled && pool->brown_list &&
+            nostr_brown_list_should_skip(pool->brown_list, items[i].url);
+        SubscriptionRegistry *reg = pool->sub_registry;
+        uint64_t now = closed_backoff_now();
+        pthread_mutex_lock(&reg->mutex);
+        for (PoolClosedBackoff *b = reg->closed_backoff; b; b = b->next)
+            if (b->relay == r && b->due_ms > now &&
+                b->due_ms - now > items[i].closed_backoff_ms)
+                items[i].closed_backoff_ms = b->due_ms - now;
+        pthread_mutex_unlock(&reg->mutex);
+    }
+    pthread_mutex_unlock(&pool->pool_mutex);
+    *out = items; *count = n;
+    return true;
+}
+
+void nostr_simple_pool_snapshot_relays_free(NostrPoolRelaySnapshot *items, size_t count) {
+    if (!items) return;
+    for (size_t i = 0; i < count; i++) free(items[i].url);
+    free(items);
 }

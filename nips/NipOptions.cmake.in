@@ -207,6 +207,11 @@ if(ENABLE_NIP53)
     add_subdirectory(nips/nip53)
 endif()
 
+option(ENABLE_NIP78 "Enable nip78 (Application Data)" ON)
+if(ENABLE_NIP78)
+    add_subdirectory(nips/nip78)
+endif()
+
 option(ENABLE_NIP86 "Enable nip86 (Relay Management API)" ON)
 if(ENABLE_NIP86)
     add_subdirectory(nips/nip86)

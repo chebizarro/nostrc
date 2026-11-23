@@ -59,7 +59,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET grotto-daemon)
     target_include_directories(test-nostr-settings-panel-mount PRIVATE "${CMAKE_SOURCE_DIR}")
     target_compile_options(test-nostr-settings-panel-mount PRIVATE ${NSS_WARNINGS})
     target_compile_definitions(test-nostr-settings-panel-mount PRIVATE
-      W6_CONTROL_XML="${CMAKE_SOURCE_DIR}/apps/grotto/data/org.nostr.Grotto.Control1.xml")
+      W6_CONTROL_XML="${CMAKE_SOURCE_DIR}/gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml")
     target_link_libraries(test-nostr-settings-panel-mount PRIVATE nostr-settings-ui nostrc-test-bus)
     set(_w6_schemas "${CMAKE_CURRENT_BINARY_DIR}/mount-schemas")
     add_custom_command(OUTPUT "${_w6_schemas}/gschemas.compiled"
@@ -77,7 +77,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET grotto-daemon)
     if(COMMAND nostrc_describe_test)
       nostrc_describe_test(nostr-settings/panel-mount OWNER gnome.nostr_settings grotto.daemon
         TARGETS test-nostr-settings-panel-mount nostr-settings grotto-daemon nostr-settings-mount-schemas
-        INPUTS "${CMAKE_SOURCE_DIR}/apps/grotto/data/org.nostr.Grotto.Control1.xml"
+        INPUTS "${CMAKE_SOURCE_DIR}/gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml"
           "${CMAKE_SOURCE_DIR}/gnome/nostr-settings/data/org.nostr.Settings.gschema.xml"
         REQUIRES display private_bus)
     endif()

@@ -66,7 +66,8 @@
       "working_directory": "{source}",
       "environment": {},
       "runtime_inputs": [
-        "{source}/scripts/test-shell-extension.sh"
+        "{source}/scripts/test-shell-extension.sh",
+        "{source}/gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml"
       ],
       "build_targets": []
     },
@@ -125,7 +126,7 @@
         "test-grotto-panels-control1"
       ],
       "runtime_inputs": [
-        "{source}/apps/grotto/data/org.nostr.Grotto.Control1.xml"
+        "{source}/gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml"
       ],
       "requires": [
         "display",
@@ -151,23 +152,28 @@
           "grotto-panels/profile-panel",
           "grotto-panels/management-panels",
           "grotto-panels/no-secrets",
-          "grotto-panels/control1-service"
+          "grotto-panels/control1-service",
+          "grotto-panels/installed-control1"
         ],
         "grotto.linux": [
           "grotto-panels/smoke-host",
           "grotto-panels/profile-panel",
           "grotto-panels/management-panels",
           "grotto-panels/no-secrets",
-          "grotto-panels/control1-service"
+          "grotto-panels/control1-service",
+          "grotto-panels/installed-control1"
         ]
       },
       "build_targets": [
         "test-grotto-panels-smoke",
         "test-grotto-panels-control1",
-        "test-grotto-panels-admission"
+        "test-grotto-panels-admission",
+        "grotto-control-client"
       ],
       "runtime_inputs": [
-        "{source}/apps/grotto/data/org.nostr.Grotto.Control1.xml"
+        "{source}/gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml",
+        "{source}/gnome/grotto-panels/tests/test-installed-control1.sh",
+        "{source}/gnome/grotto-panels/tests/installed-control1.c"
       ],
       "requires": []
     },
@@ -8944,7 +8950,7 @@
         "{source}/apps/gnostr/src/nostr-config.h.in",
         "{source}/apps/gnostr/src/gnostr-build-info.h.in",
         "{source}/apps/grotto/daemon/grotto_control_xml.h.in",
-        "{source}/apps/grotto/data/org.nostr.Grotto.Control1.xml",
+        "{source}/gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml",
         "{source}/libnostr/include/nostr-config.h.in",
         "{source}/nostr-gtk/include/nostr-gtk-1.0/nostr-gtk-version.h.in",
         "{source}/libmarmot/include/marmot/marmot-version.h.in",
@@ -22355,6 +22361,90 @@
         "{source}/tests/fixtures/beads-reconcile.json"
       ],
       "build_targets": []
+    },
+    "supported.nips.nip78": {
+      "nodes": [
+        "execution.core",
+        "execution.grotto",
+        "execution.groundhog",
+        "nip78",
+        "nip78.test_inputs",
+        "nip44"
+      ],
+      "profiles": [
+        "core.linux",
+        "grotto.linux",
+        "grotto.linux.asan_ubsan",
+        "groundhog.linux",
+        "groundhog.mdk011",
+        "groundhog.mdk08"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "core.linux": [
+          "test_nip78",
+          "test_nip78_signer"
+        ],
+        "grotto.linux": [
+          "test_nip78",
+          "test_nip78_signer"
+        ],
+        "grotto.linux.asan_ubsan": [
+          "test_nip78",
+          "test_nip78_signer"
+        ],
+        "groundhog.linux": [
+          "test_nip78",
+          "test_nip78_signer"
+        ],
+        "groundhog.mdk011": [
+          "test_nip78",
+          "test_nip78_signer"
+        ],
+        "groundhog.mdk08": [
+          "test_nip78",
+          "test_nip78_signer"
+        ]
+      },
+      "build_targets": [
+        "test_nip78",
+        "test_nip78_signer"
+      ],
+      "runtime_inputs": []
+    },
+    "root.asan.nip78": {
+      "build_targets": [
+        "test_nip78",
+        "test_nip78_signer"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip78",
+          "test_nip78_signer"
+        ],
+        "core.linux.asan": [
+          "test_nip78",
+          "test_nip78_signer"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.core",
+        "nip78",
+        "nip78.test_inputs",
+        "nip44"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
     }
   },
   "coverage_gaps": [
@@ -22873,9 +22963,7 @@
       "id": "grotto.panels",
       "depends_on": [],
       "owner_paths": [
-        "gnome/grotto-panels",
-        "apps/grotto/src/grotto-panels-control1-service.c",
-        "apps/grotto/src/grotto-panels-control1-service.h"
+        "gnome/grotto-panels"
       ]
     },
     "gnostr.blossom": {
@@ -25296,6 +25384,23 @@
       ],
       "depends_on": [],
       "rationale": "Internal read-only beads/git reconciliation tool and fixture regression; no build or runtime component impact."
+    },
+    "nip78": {
+      "id": "nip78",
+      "depends_on": [
+        "libnostr"
+      ],
+      "owner_paths": [
+        "nips/nip78"
+      ],
+      "rationale": "Pure unsigned application data codec links libnostr; content is opaque and no crypto or transport dependency is required."
+    },
+    "nip78.test_inputs": {
+      "id": "nip78.test_inputs",
+      "depends_on": [],
+      "owner_paths": [
+        "nips/nip78/tests"
+      ]
     }
   },
   "path_rules": [
@@ -25362,24 +25467,6 @@
         "grotto.panels"
       ],
       "reason": "New isolated panel component: boundary, private-bus adapter and level-1 smoke host."
-    },
-    {
-      "exact": "apps/grotto/src/grotto-panels-control1-service.c",
-      "effect": "impact",
-      "nodes": [
-        "grotto.panels",
-        "grotto.gui"
-      ],
-      "reason": "Host-owned injected adapter; test the production source on a private bus."
-    },
-    {
-      "exact": "apps/grotto/src/grotto-panels-control1-service.h",
-      "effect": "impact",
-      "nodes": [
-        "grotto.panels",
-        "grotto.gui"
-      ],
-      "reason": "Host-owned injected adapter contract."
     },
     {
       "exact": "apps/gnostr/src/util/blossom.c",
@@ -29872,10 +29959,11 @@
       "reason": "Exact configure template/XML read by production producer regressions; preserve component ownership and select the actual contract consumer."
     },
     {
-      "exact": "apps/grotto/data/org.nostr.Grotto.Control1.xml",
+      "exact": "gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml",
       "nodes": [
         "grotto.panels",
         "grotto.gui",
+        "gnome.nostr_shell_extension",
         "selection.contract"
       ],
       "effect": "impact",
@@ -30337,7 +30425,8 @@
         "nip37",
         "nip51",
         "nip56",
-        "nip58"
+        "nip58",
+        "nip78"
       ],
       "reason": "Checked tag, address, JSON and unsigned-event helpers shared only by these codecs."
     },
@@ -30364,6 +30453,30 @@
       ],
       "effect": "impact",
       "reason": "Reconciliation implementation, executable regression and fixture select only their portable Python/Git check."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip78"
+      ],
+      "prefix": "nips/nip78",
+      "reason": "Portable codec ownership; reverse impact selects consumers without prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip78.test_inputs"
+      ],
+      "prefix": "nips/nip78/tests",
+      "reason": "Portable codec ownership; reverse impact selects consumers without prerequisite tests."
+    },
+    {
+      "prefix": "nips/nip78/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
     }
   ],
   "profiles": {
@@ -31857,6 +31970,21 @@
     }
   },
   "release_components": {
+    "grotto-control-client": {
+      "manifest_name": "grotto-control-client",
+      "package_jobs": [],
+      "publisher": "none",
+      "version_sources": [
+        {
+          "path": "gnome/grotto-panels/CMakeLists.txt",
+          "pattern": "set\\(GROTTO_CONTROL_CLIENT_VERSION ([0-9.]+)\\)"
+        },
+        {
+          "path": "gnome/grotto-panels/meson.build",
+          "pattern": "(?m)^control_client_version = '([0-9.]+)'"
+        }
+      ]
+    },
     "grotto-panels": {
       "manifest_name": "grotto-panels",
       "package_jobs": [],
@@ -32893,9 +33021,9 @@
         "core.macos.asan"
       ],
       "coverage_gap": "root_asan_execution_contract",
-      "source_sha256": "6b6ea3e2623d045ce3dd0c455073032ae4cf1a0ae7160b404a8c1bd852feb210",
+      "source_sha256": "573d787306b1960dff9ae6ec584e1d49ff87f0bb8047420341324814a8d166d4",
       "unsupported_reason": "Root Linux/macOS ASan profiles exist; three original exclusions, separate audit/fuzz invocations, ambient setup suffixes and complete postbuild/runtime union remain gaps.",
-      "workflow_sha256": "2900224461995fb0bbc204187867a88eab524929a1877bf008098722ea2ba7ba"
+      "workflow_sha256": "1aa10a57fe0f517998c5d7722585910980fc340bbe93af212f353e1c688ab4e2"
     },
     ".github/workflows/release-validation.yml:identity": {
       "matrix_source": "",

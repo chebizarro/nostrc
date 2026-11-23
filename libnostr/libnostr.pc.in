@@ -1,13 +1,12 @@
 prefix=${pcfiledir}/@LIBNOSTR_PC_PREFIX_RELATIVE@
 exec_prefix=${prefix}
-libdir=${exec_prefix}/@CMAKE_INSTALL_LIBDIR@
-includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@/nostr
+libdir=@LIBNOSTR_PC_LIBDIR@
+includedir=@LIBNOSTR_PC_INCLUDEDIR@/nostr
 
 Name: libnostr
 Description: Nostr protocol implementation for C (core + optional GLib integration)
 Version: @NOSTR_VERSION@
-Requires: @NOSTR_PKG_REQUIRES@
-Requires.private: @NOSTR_PKG_REQUIRES_PRIVATE@
-Libs: -L${libdir} -lnostr
+Requires: libnostrgo >= 0.3.1
+Libs: -L${libdir} -lnostr @NOSTR_PKG_LIBS_PUBLIC@
 Libs.private: @NOSTR_PKG_LIBS_PRIVATE@
-Cflags: -I${includedir}
+Cflags: -I${includedir} @NOSTR_PKG_CFLAGS@

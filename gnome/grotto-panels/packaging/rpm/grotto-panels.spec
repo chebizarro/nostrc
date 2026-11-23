@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 Name:           grotto-panels
-Version:        0.1.1
+Version:        0.1.2
 Release:        1%{?dist}
 Summary:        Public-metadata GTK management panel runtime
 License:        MIT
@@ -47,9 +47,14 @@ DESTDIR=%{buildroot} cmake --install build
 %files -f %{name}.lang
 %license gnome/grotto-panels/LICENSE
 %{_libdir}/libgrotto-panels-0.so.0*
+%{_libdir}/libgrotto-control-client-0.so.0*
+%{_datadir}/dbus-1/interfaces/org.nostr.Grotto.Control1.xml
 
 %files devel
 %{_includedir}/grotto-panels-0/
+%{_includedir}/grotto-control-client-0/
+%{_libdir}/libgrotto-control-client-0.so
+%{_libdir}/pkgconfig/grotto-control-client-0.pc
 %{_libdir}/libgrotto-panels-0.so
 %{_libdir}/pkgconfig/grotto-panels-0.pc
 %{_libdir}/cmake/GrottoPanels/

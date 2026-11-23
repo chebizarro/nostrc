@@ -1,3 +1,5 @@
+nostrc-9vzd3 (metadesk md-b970): libnostr stays 2.5.0 Unreleased; MINOR-class additive pool APIs fold into the existing unreleased minor: `NostrPoolSubscription`, `nostr_simple_pool_subscription_open`, `nostr_pool_subscription_close/free`, `NostrPoolRelaySnapshot`, `nostr_simple_pool_snapshot_relays/free`, and `nostr_relay_publish_and_wait_with_context`. Each handle owns its filters, callback lifetime, bounded event-ID dedup and CLOSED/AUTH recovery independently; relay snapshots own their URLs and copied state. Cancellation returns ECANCELED, cannot recall an admitted EVENT and does not let late OK change the cancelled outcome; duplicate pending same-ID waiters are rejected. PATCH-class fixes preserve recovery-window since through parked AUTH reissues and serialize disconnect completion with waiter retirement. Existing exported layouts and APIs retained, no numeric bump or published tag. nostr-gobject stays 3.1.0 Unreleased with no API/artifact change: callers already have access to its core pool; no new GTask/GIR ownership contract. New test targets/cases register ownership through CMake `nostrc_describe_test`.
+
 nostrc-s46kr: no component version bump. Performance-baseline measurements, pin-bump preflight/tests and documentation only; no shipped artifact, API, ABI, wire, CLI or configuration change. Immutable C performance reference, workload and tolerance retained.
 
 nostrc-u19cz.7 (wave26): libgo stays 0.3.0 Unreleased; MINOR-class additive POSIX `gof_io_register_owned_fd` folds into the existing unreleased minor wave. The owner controls all users and aliases, revokes with `gof_io_reset_fd` after quiescing users and before close/reuse or flag mutation, and may then omit per-call read/write nonblocking checks for that registration generation. No public layout or ABI break; Windows IOCP is unchanged. fipsd stays 0.1.1 (unreleased patch after 0.1.0): private TCP/TUN adoption and teardown wiring is PATCH-class, without wire, CLI, configuration or public API changes. No numeric version, published tag or release-column changes.
@@ -228,9 +230,9 @@ other components and all version/release/tag values are unchanged.
 
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
-| libnostr | `libnostr/` | 2.5.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
-| libjson (libnostr-json) | `libjson/` | 2.0.0 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
-| libgo | `libgo/` | 0.3.0 | Unreleased | — | `libgo/CMakeLists.txt` |
+| libnostr | `libnostr/` | 2.5.2 | Unreleased | — | `libnostr/CMakeLists.txt` |
+| libjson (libnostr-json) | `libjson/` | 2.0.2 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
+| libgo | `libgo/` | 0.3.1 | Unreleased | — | `libgo/CMakeLists.txt` |
 | libfips-core | `libfips-core/` | 0.1.0 | Unreleased | — | `libfips-core/CMakeLists.txt` (`declare_component_version`); nostrc-s50dj.6: no bump, additive host-interface APIs fold into the initial pre-release 0.1.0; no published release/tag change |
 | fipsd | `fipsd/` | 0.1.1 | 0.1.0 | `fipsd-v0.1.0` | `fipsd/CMakeLists.txt` (`declare_component_version`); nostrc-s50dj.6: no bump, private OS host adapters fold into initial pre-release 0.1.0 with unchanged skeleton CLI/output; no published release/tag change |
 | libfipsnative | `fipsd/src/native/client.c`, `fipsd/include/fips-native-client.h` | 0.1.0 | Unreleased | — | `fipsd/CMakeLists.txt` (`declare_component_version(fipsnative 0 1 0)`, SOVERSION 0), `fipsd/libfipsnative.pc.in`; nostrc-9nxwk.4: first declaration of the C client library for the native datagram API, pre-release 0.1.0; no published release/tag |
@@ -247,11 +249,12 @@ other components and all version/release/tag values are unchanged.
 | nostr-settings | `gnome/nostr-settings/` | 0.1.1 | Unreleased | — | `gnome/nostr-settings/CMakeLists.txt` (`NOSTR_SETTINGS_VERSION`), `gnome/nostr-settings/meson.build` (`project` version); W6 adds the previously missing manifest row, not a release; nostrc-u6v55.30 folds local CLI version/help and standalone Debian packaging corrections into unreleased 0.1.0 (no release/tag change); Debian 0.4.0-2 retains legacy bundle upgrade ordering |
 | nostr-share | `gnome/nostr-share/` | 0.1.0 | Unreleased | — | `gnome/nostr-share/CMakeLists.txt` (`NOSTR_SHARE_VERSION`) |
 | nostr-homed | `gnome/nostr-homed/` | 0.9.0 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in`; nostrc-h10m.10: MINOR 0.7.1 → 0.8.0 for opt-in require-encrypted policy, additive at_rest status and provisioning/PAM/panel warnings. libporthome was unchanged for h10m.10; detection and UI are homed-owned. h10m.12 version decisions follow below. |
-| grotto-panels | `gnome/grotto-panels/` | 0.1.1 | Unreleased | — | `gnome/grotto-panels/CMakeLists.txt` (`project` + `declare_component_version`), `gnome/grotto-panels/meson.build` (`project`); generated public `grotto-panels-version.h`, SONAME `libgrotto-panels-0.so.0`, pkg-config `grotto-panels-0`; duplicate package values: `gnome/grotto-panels/packaging/debian/changelog`, `gnome/grotto-panels/packaging/rpm/grotto-panels.spec`, `gnome/grotto-panels/packaging/archlinux/PKGBUILD` (pkgver); nostrc-u6v55.37 folds the additive display-name/icon resolver API into unreleased 0.1.0 (no version bump); nostrc-vthyc: no bump for test-only approval of presentation/model and sized-deallocation imports, retaining the closed secret/IPC boundary; nostrc-52nr1: PATCH-class explicit identity-selection correction for permission review and app-link pairing on newer GTK, folded into unreleased 0.1.0 with no public API/ABI change |
+| grotto-panels | `gnome/grotto-panels/` | 0.1.2 | Unreleased | — | `gnome/grotto-panels/CMakeLists.txt` (`project` + `declare_component_version`), `gnome/grotto-panels/meson.build` (`project`); generated public `grotto-panels-version.h`, SONAME `libgrotto-panels-0.so.0`, pkg-config `grotto-panels-0`; duplicate package values: `gnome/grotto-panels/packaging/debian/changelog`, `gnome/grotto-panels/packaging/rpm/grotto-panels.spec`, `gnome/grotto-panels/packaging/archlinux/PKGBUILD` (pkgver); nostrc-u6v55.37 folds the additive display-name/icon resolver API into unreleased 0.1.0 (no version bump); nostrc-vthyc: no bump for test-only approval of presentation/model and sized-deallocation imports, retaining the closed secret/IPC boundary; nostrc-52nr1: PATCH-class explicit identity-selection correction for permission review and app-link pairing on newer GTK, folded into unreleased 0.1.0 with no public API/ABI change |
+| grotto-control-client | `gnome/grotto-panels/` (separate transport DSO) | 0.1.0 | Unreleased | — | `gnome/grotto-panels/CMakeLists.txt` (`GROTTO_CONTROL_CLIENT_VERSION`), `gnome/grotto-panels/meson.build` (`control_client_version`); public `grotto-panels-control1-service.h`, SONAME `libgrotto-control-client-0.so.0`, pkg-config `grotto-control-client-0`. Initial installed extraction (nostrc-q6tu3 / md-crk7); Existing Grotto and Settings APIs/wire behavior unchanged, no bump for internal shared linkage; panels 0.1.2 is a PATCH packaging/relocatable-pkg-config correction (no widget API change). Runtime/SDK payloads remain in the existing panels packages. |
 | Grotto | `apps/grotto/` | 0.1.3 | 0.1.1-alpha1 (pre-release, 2026-11-07) | `grotto-v0.1.1-alpha1` | `apps/grotto/CMakeLists.txt` (`project` VERSION 0.1.3 + `GROTTO_PRERELEASE` → `GROTTO_VERSION_FULL`), `apps/grotto/meson.build` (`project` full version); About, CLI and daemon consume the full build version; duplicate package values: `apps/grotto/data/org.nostr.Grotto.metainfo.xml`, `apps/grotto/packaging/debian/changelog` (0.1.3~alpha1), `apps/grotto/packaging/rpm/grotto.spec` (upstream_version, Version, Release), `apps/grotto/packaging/archlinux/PKGBUILD` (_version), `flake.nix` (Grotto version), `apps/grotto/packaging/macos/create-dmg.sh`, `apps/grotto/packaging/windows/grotto.nsi`, `apps/grotto/packaging/windows/build-msys2.sh`, `snap/grotto/snapcraft.yaml`, `snap/grotto-daemon/snapcraft.yaml`; macOS Info.plist and this declaration use numeric base 0.1.3; nostrc-q61lq: no bump for test-only sizing-oracle coordinate correction (outer allocation versus content width); product layout/minimum unchanged in unreleased 0.1.2-alpha1; nostrc-lhmuu: no bump for test-only event-driven dismissal of earlier approval toasts and fresh mapped stale-notice assertions, folded into unreleased 0.1.2-alpha1; product focus, notification queue and approval behavior unchanged; nostrc-52nr1: PATCH-class Ubuntu 26.04 approval-dialog initial-focus correction folded into existing unreleased 0.1.2-alpha1 (no additional bump; no default approval action); nostrc-upfhz: PATCH 0.1.1 → 0.1.2 (full development version 0.1.2-alpha1) for the stale generated display catalogue; released/tag columns remain unchanged. grotto-panels stays in its unreleased 0.1.0 wave; Debian manuals are generated from `GROTTO_VERSION_FULL` using `apps/grotto/packaging/debian/grotto{,-daemon}.1.in`. nostrc-u6v55.74: owner-selected full prerelease **0.1.1-alpha1**, tagged `grotto-v0.1.1-alpha1` on 2026-11-07 (first Grotto pre-release); PATCH-class version/packaging corrections folded into this unreleased wave; grotto-panels stays 0.1.0 (no shipped change). |
 | nostr-signer-webext-host | `apps/grotto/native-host/` | 0.2.0 | Unreleased | — | `apps/grotto/native-host/CMakeLists.txt` (`NMH_VERSION`), `apps/grotto/native-host/main_native_host.c` (standalone fallback) |
 | Nostr Shell extension | `gnome/nostr-shell-extension/` | 0.5.0 | Unreleased | — | `gnome/nostr-shell-extension/metadata.json` (`version-name`) |
-| NIP-46 client/provider | `nips/nip46/` | 0.2.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer); nostrc-33n89: no bump: lands in unreleased 0.2.0 |
+| NIP-46 client/provider | `nips/nip46/` | 0.2.2 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer); nostrc-33n89: no bump: lands in unreleased 0.2.0 |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.2.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
 | libhanami | `libhanami/` | 0.8.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
 | libporthome | `libporthome/` | 0.7.1 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`); SV-A7 (nostrc-v04jd.5): PATCH for specific fail-closed `PORTHOME_ERR_EPOCH` from the PCS v1 manifest decoder for v2 nodes/nonzero chunk epochs; no wire change. libvault, libhanami and nostr-homed: no bump (unchanged callers/artifacts). |
@@ -262,6 +265,13 @@ other components and all version/release/tag values are unchanged.
 | vaultctl | `tools/vaultctl/` | 0.3.1 | Unreleased | — | `tools/vaultctl/CMakeLists.txt` (`declare_component_version`), `tools/vaultctl/main.c` (`--version`) |
 | libvault | `libvault/` | 0.7.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
 | libblossom | `libblossom/` | 0.3.2 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
+| nip04 | `nips/nip04/` | 0.1.1 | Unreleased | — | `nips/nip04/CMakeLists.txt` (`declare_component_version`; initial installed packaging contract) |
+| nip11 | `nips/nip11/` | 0.1.1 | Unreleased | — | `nips/nip11/CMakeLists.txt` (`declare_component_version`; initial installed packaging contract) |
+| nip17 | `nips/nip17/` | 0.1.1 | Unreleased | — | `nips/nip17/CMakeLists.txt` (`declare_component_version`; initial installed packaging contract) |
+| nip44 | `nips/nip44/` | 0.1.1 | Unreleased | — | `nips/nip44/CMakeLists.txt` (`declare_component_version`; initial installed packaging contract) |
+| nip51 | `nips/nip51/` | 0.1.1 | Unreleased | — | `nips/nip51/CMakeLists.txt` (`declare_component_version`; initial installed packaging contract) |
+| nip78 | `nips/nip78/` | 0.1.2 | Unreleased | — | `nips/nip78/CMakeLists.txt` (`project` VERSION mirrored into `declare_component_version`; shared NIP packaging helper) |
+| nip98 | `nips/nip98/` | 0.1.1 | Unreleased | — | `nips/nip98/CMakeLists.txt` (`declare_component_version`; initial installed packaging contract) |
 | nip59 (NIP-59 gift-wrap core) | `nips/nip59/` | 0.2.1 | Unreleased | — | `nips/nip59/CMakeLists.txt` (`project(nip59 VERSION ...)`, mirrored into `declare_component_version`; installed static archive and .pc, existing OBJECT target retained) |
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.1 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.2.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
@@ -851,6 +861,7 @@ export headers are still part of the owning package's build contract.
 | `nip49` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip49/CMakeLists.txt` |
 | `nip50` | Unversioned | No bump: inline-only public API; empty library translation unit has no exports; `nips/nip50/CMakeLists.txt` |
 | `nip51` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip51/CMakeLists.txt` |
+| `nip78` | 0.1.1 | PATCH 0.1.0 -> 0.1.1: shared NIP packaging helper, private Jansson dependency and installed version/export flags; `nips/nip78/CMakeLists.txt` (`project` + `declare_component_version`), `cmake/nip.pc.in` |
 | `nip52` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip52/CMakeLists.txt` |
 | `nip53` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip53/CMakeLists.txt` |
 | `nip54` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip54/CMakeLists.txt` |
@@ -1908,7 +1919,6 @@ Published **Latest release** and **Release tag** columns are unchanged.
 
 No bump: libgo 0.3.0, libjson 2.0.0, the FIPS component family and nostr-homed 0.9.0 (test/fixture or test-registration changes only), plus mock/test/selection/push-hook tooling. The shell extension itself is unchanged. Other manifest components have no owning shipped-source change. Relayd and NIP-29/NIP-49/NIP-5F receive PATCH-class corrections but have no authoritative numeric component version; no version or tag is invented. Integration-only fixture corrections require no separate bump.
 
-
 ## Bug-fix integration version pass
 
 Assessed `75634e1de..bug/integration`, including its combined-verification
@@ -1916,11 +1926,12 @@ corrections. The declared versions below are not released: the published origin
 tags still stop at the releases already recorded above, and there is no
 `libmarmot-v0.14.1` tag (nor any libmarmot release tag). Per the integration brief,
 fold these changes into the existing unreleased declarations, rather than adding
-another increment to the previous integration pass. All authoritative numeric
-sources and Declared version values therefore remain unchanged; Latest release
-and Release tag values are untouched.
+another increment to the previous integration pass. The table records the local
+lane decisions before merging origin/master. Where origin/master already chose a
+higher declaration, the main table retains it without adding another bump.
+Latest release and Release tag values are untouched.
 
-| Component | Declared (unchanged) | Highest impact folded into the unreleased version |
+| Component | Local lane declaration | Highest impact folded into the unreleased version |
 | --- | --- | --- |
 | libmarmot | 0.14.1 | MINOR, including pre-1.0 incompatibilities: appended `MarmotGroup.group_data_version`, new pending-Commit result/free APIs, the per-result `commit_roster` snapshot, `MARMOT_ERR_WELCOME_LEGACY_TREE` (-77), and `MarmotMessageOrder`/`marmot_inspect_message_order`; required persistence of `mls_send_hwm` outside snapshots; nostrdb group records v2 and SQLite's added column; Welcome rejects legacy unbound leaves (nostrc-x215, nostrc-8gbp, nostrc-l3n7, nostrc-ow0c, nostrc-3hzu). Consumers must rebuild and custom storage implementations must honor the new contract; see libmarmot/README.md. CMake and Meson remain 0.14.1. |
 | groundhog | 0.13.1 | MINOR: legacy MIP-01 image reading and schema v15, plus shipped relay, MLS, network, notification and UI corrections (including nostrc-x215, nostrc-ow0c, nostrc-er14x, nostrc-ctks). Existing CMake and package/metadata authorities remain aligned at 0.13.1. |
@@ -1937,5 +1948,57 @@ and Release tag values are untouched.
 | marmot-gobject, nostr-gtk | 1.5.2, 2.0.1 | No bump: no owning shipped-source changes in this range. |
 | libfips-core | 0.1.0 | No bump: fuzz fake-include correction only (nostrc-wvxnd). |
 | NIP-29 | Unversioned | ABI-incompatible public `nostr_group_t` growth for equal-time snapshot IDs (nostrc-odyg): consumers must rebuild. There is no authoritative numeric version in nips/nip29/CMakeLists.txt, so no version or release tag is invented. |
-| NIP-44, NIP-57 | Unversioned | PATCH-class installed pkg-config closure and early refusal of an unsupported nostrdb-disabled provider configuration (nostrc-s6tf, nostrc-s9nk). NIP-44's .pc follows its libnostr bundle version; neither component has an independent numeric version. |
+| NIP-44, NIP-57 | Unversioned on local base | PATCH-class installed pkg-config closure and early refusal of an unsupported nostrdb-disabled provider configuration (nostrc-s6tf, nostrc-s9nk). The merged NIP-44 .pc uses its independently declared SDK version below; NIP-57 stays unversioned. |
 | Test/CI/selection/packaging verification tooling | — | No bump: no independently shipped component change; prerequisite and compatibility builds do not create a version change in unchanged consumers. |
+
+## Installed NIP dependency closure (nostrc-56nz5 / metadesk md-fdi4)
+
+- nip04, nip11, nip17, nip44, nip51 and nip98: first declared version 0.1.0;
+  no source API or wire changes. nip17/nip51 retain OBJECT targets and ship archives.
+- nip46: PATCH 0.2.0 -> 0.2.1 for corrected header layout and installed libraries,
+  pkg-config and component discovery; core and GLib share the version.
+- libnostr: PATCH 2.5.0 -> 2.5.1 for the installed static dependency closure.
+- libjson: PATCH 2.0.0 -> 2.0.1 for the pkg-config private core dependency.
+- VersionHelpers: no standalone component version; publish declarations to the
+  caller as well as the cache so repeat configuration cannot erase versions.
+  nip19 remains 0.2.0: no source/API/ABI change, only restored declared metadata.
+- libgo: PATCH 0.3.0 -> 0.3.1 for absolute GNUInstallDirs metadata.
+- nip59: no bump; unchanged artifacts and public contracts.
+- Shared libraries use VERSION=SemVer and SOVERSION=major via apply_versioning,
+  like libnostr; static/OBJECT libraries have no SONAME. No release tags changed.
+
+nostrc-j4jlx (metadesk md-055m): nip78 starts at 0.1.0 Unreleased (new installed library/pkg-config/public unsigned build and owned parse APIs). nip17 remains unversioned: additive unsigned kind-10050 builder; signed API retained as wrapper, no authoritative numeric version to bump. libnostr and GNostr unchanged; no release or tag.
+
+N1/N2 integration: the unsigned nip17 builder is included in nip17's initial
+unreleased 0.1.0 installed contract above; the N2 note describes its original
+unversioned master base. No additional nip17 version bump or release tag.
+
+NIP-78 packaging integration (nostrc-56nz5): PATCH 0.1.0 -> 0.1.1 for the
+common install/.pc convention, private Jansson dependency, static export flags
+and installed version header. API, wire behavior and SOVERSION 0 unchanged.
+Other component versions and release tags unchanged by this integration.
+
+### Mixed static SDK / shared system dependency correction (nostrc-56nz5)
+
+PATCH: libnostr 2.5.1 -> 2.5.2, libnostr-json 2.0.1 -> 2.0.2,
+nip04/nip11/nip17/nip44/nip51/nip98 0.1.0 -> 0.1.1,
+nip46 (core + GLib) 0.2.1 -> 0.2.2, nip78 0.1.1 -> 0.1.2.
+Their installed pkg-config contract now recurses only through nostrc packages;
+external libraries use ordinary shared link flags instead of requiring their
+fully static implementation closure. No runtime API/ABI/wire changes; SONAMEs
+unchanged. libgo remains 0.3.1 (unchanged metadata). No release tags changed.
+
+The test-only test_relay_eose tool installs under the configured bindir instead
+of overwriting its build output (nostrc-kqzht). No independently versioned
+component/API change; BUILD_TESTING=OFF packages still omit the tool.
+
+External pkg-config fixture portability (nostrc-56nz5): no version bump. Test-only
+correction replaces implementation-specific static/sysroot output assertions
+with a compiled/runnable SDK-archives + shared-external-library consumer. Shipped
+metadata, headers, libraries and ABI policy are unchanged.
+
+Merge reconciliation: retain origin/master's installed SDK versions, panels
+0.1.2 and Control1 client 0.1.0; fold the local bug-lane changes into those
+unreleased versions. Grotto remains 0.1.3-alpha1 and its Debian runtime
+requires the exact revision of the panels SDK used for the build (minimum
+SDK version 0.1.2). No extra version bumps or release tags.

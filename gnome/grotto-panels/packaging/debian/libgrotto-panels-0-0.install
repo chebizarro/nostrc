@@ -1,2 +1,4 @@
 usr/lib/*/libgrotto-panels-0.so.*
+usr/lib/*/libgrotto-control-client-0.so.*
+usr/share/dbus-1/interfaces/org.nostr.Grotto.Control1.xml
 usr/share/locale/*/LC_MESSAGES/grotto-panels.mo

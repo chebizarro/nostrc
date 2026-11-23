@@ -38,7 +38,7 @@ SUPPORT_INPUTS = {
     "apps/gnostr/src/nostr-config.h.in",
     "apps/gnostr/src/gnostr-build-info.h.in",
     "apps/grotto/daemon/grotto_control_xml.h.in",
-    "apps/grotto/data/org.nostr.Grotto.Control1.xml",
+    "gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml",
     "libnostr/include/nostr-config.h.in",
     "libmarmot/include/marmot/marmot-version.h.in",
     "nostr-gtk/include/nostr-gtk-1.0/nostr-gtk-version.h.in",
