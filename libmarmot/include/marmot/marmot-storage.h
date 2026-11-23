@@ -214,7 +214,7 @@ typedef struct MarmotStorage {
      *
      * libmarmot never calls this.  The MLS state holds the sender ratchets
      * (since 0.8.0, nostrc-ai04), so a rollback within an epoch rewinds
-     * them.  Since 0.12.0 (nostrc-ow0c) that is safe for sending: every
+     * them.  Since 0.14.1 (nostrc-ow0c) that is safe for sending: every
      * operation that steps our sender ratchet first moves a state that is
      * behind the "mls_send_hwm" record past it, so no generation is used
      * twice -- provided the snapshot does not cover that record (see

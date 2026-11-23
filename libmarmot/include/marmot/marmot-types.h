@@ -280,7 +280,7 @@ typedef struct {
     /** A legacy group's MIP-01 marmot_group_data version (nostrc-x215):
      *  1 means `image_key` is the group image's encryption key itself; 2 or
      *  later, a seed the image key is derived from.  0: not known (an
-     *  adopted group, or a record stored before 0.12.0).  Since 0.12.0. */
+     *  adopted group, or a record stored before 0.14.1).  Since 0.14.1. */
     uint16_t group_data_version;
 } MarmotGroup;
 
@@ -637,7 +637,7 @@ typedef struct {
         size_t invalidated_count;
     } convergence;
 
-    /** Since 0.12.0 (nostrc-8gbp): the roster immediately after this
+    /** Since 0.14.1 (nostrc-8gbp): the roster immediately after this
      *  deferred Commit applied, before any following deferred Commit.
      *  Present only on COMMIT results returned by
      *  marmot_clear_pending_commit_with_results(). Members are owned by
@@ -694,7 +694,7 @@ typedef struct {
 MARMOT_API void marmot_message_result_free(MarmotMessageResult *result);
 
 /** Free each of `count` results and the array itself (NULL is a no-op).
- *  Since 0.12.0. */
+ *  Since 0.14.1. */
 MARMOT_API void marmot_message_results_free(MarmotMessageResult *results, size_t count);
 
 /* ──────────────────────────────────────────────────────────────────────────

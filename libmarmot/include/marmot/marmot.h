@@ -874,7 +874,7 @@ MARMOT_API MarmotError marmot_clear_pending_commit(Marmot *m,
  * that do not apply (refused, stale) are not reported.
  *
  * Returns: as marmot_clear_pending_commit(); nothing is returned on error.
- * Since 0.12.0.
+ * Since 0.14.1.
  */
 MARMOT_API MarmotError marmot_clear_pending_commit_with_results(Marmot *m,
                                          const MarmotGroupId *mls_group_id,
