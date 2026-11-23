@@ -1852,6 +1852,16 @@ static void connection_link_actions(void) {
   g_assert_cmpint(g_application_run(G_APPLICATION(app), 0, NULL), ==, 0);
   g_clear_object(&app); WAIT(apps_gone == 1);
 }
+static gboolean has_active_folder_breadcrumb(GtkWidget *widget) {
+  if (GTK_IS_TOGGLE_BUTTON(widget) && gtk_widget_get_mapped(widget) &&
+      gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget))) {
+    for (GtkWidget *parent = gtk_widget_get_parent(widget); parent; parent = gtk_widget_get_parent(parent))
+      if (g_str_equal(gtk_widget_get_css_name(parent), "pathbar")) return TRUE;
+  }
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child))
+    if (has_active_folder_breadcrumb(child)) return TRUE;
+  return FALSE;
+}
 static void backup_file_keyboard_activate(GApplication *application, gpointer data) {
   accounts_store_add(accounts_store_get_default(), npub, "My identity", NULL);
   g_settings_set_string(settings_manager_get_gsettings(settings_manager_get_default()), "default-identity", npub);
@@ -1881,10 +1891,13 @@ static void backup_file_keyboard_activate(GApplication *application, gpointer da
   guint before = encrypted_exports;
   gn_secure_entry_set_text(GN_SECURE_ENTRY(entry), "disposable passphrase"); return_from_input(GTK_WINDOW(window), entry);
   g_autoptr(GtkWindow) chooser = NULL; WAIT((chooser = find_file_chooser()) != NULL);
+  /* Mapping precedes the async folder and breadcrumb loads. Cancelling
+   * either on GTK 4.14 can leave a modal error or a late pathbar callback. */
+  WAIT(has_active_folder_breadcrumb(GTK_WIDGET(chooser)) && !gtk_widget_get_cursor(GTK_WIDGET(chooser)));
   g_assert_cmpuint(encrypted_exports, ==, before);
   g_assert_true(GTK_IS_DIALOG(chooser)); gtk_dialog_response(GTK_DIALOG(chooser), GTK_RESPONSE_CANCEL);
-  WAIT(gtk_widget_is_sensitive(save));
-  gtk_window_destroy(chooser); g_clear_object(&chooser);
+  WAIT(gtk_widget_is_sensitive(save) && !gtk_widget_get_mapped(GTK_WIDGET(chooser)));
+  g_clear_object(&chooser);
   wait_frames(GTK_WIDGET(window));
   adw_dialog_close(dialog); WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
   gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window); g_application_quit(application);
