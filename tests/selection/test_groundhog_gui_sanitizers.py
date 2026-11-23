@@ -34,6 +34,19 @@ class GroundhogGuiSanitizers(unittest.TestCase):
         self.assertEqual(env["LSAN_OPTIONS"],
                          "suppressions=/src/gnome/groundhog/tests/lsan.supp:print_suppressions=1")
 
+    def test_workflow_and_shared_profile_enroll_dependency_regressions(self):
+        config = self.adapter["configuration"](
+            ROOT / ".github/workflows/groundhog-ci.yml", str(ROOT),
+            ROOT / "tests/selection/inventory.json", "groundhog.linux.sanitizers",
+        )
+        registrations = {"libnostr_subscription_enqueue", "nostrdb_supersession_crowded",
+                         "nostrdb_supersession_increasing", "nostrdb_supersession_missing-d"}
+        self.assertLessEqual(registrations, set(config["GH_SAN_TESTS"]))
+        targets = config["GH_SAN_TARGETS"]
+        self.assertEqual(targets.count("test_subscription_enqueue"), 1)
+        self.assertEqual(targets.count("test_nostrdb_supersession"), 1)
+        self.assertTrue(registrations.isdisjoint(targets))
+
     def test_call_enrollment_maps_two_process_to_its_real_peer_executable(self):
         calls = {"groundhog-calls", "groundhog-call-capabilities", "groundhog-call-loopback",
                  "groundhog-call-media", "groundhog-call-media-two-process", "groundhog-call-settings",

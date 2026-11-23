@@ -437,6 +437,8 @@ jobs:
         groundhog-report-ui groundhog-draft-sync-gui groundhog-lists-ui
         groundhog-social-sync-gui groundhog-emoji groundhog-poll-ui groundhog-gtk-lsan
         nostrc-test-bus-selftest test_relay_teardown_leaks test_connection_recv_drain
+        libnostr_subscription_enqueue
+        nostrdb_supersession_crowded nostrdb_supersession_increasing nostrdb_supersession_missing-d
     steps:
       - name: Checkout with submodules
         uses: actions/checkout@v4
@@ -523,7 +525,7 @@ jobs:
           # groundhog itself: groundhog-background and groundhog-store-sqlite run it.
           targets=(groundhog)
           for test in $GROUNDHOG_SANITIZER_TESTS; do
-            case "$test" in groundhog-launch) targets+=(groundhog) ;; groundhog-call-media-two-process) targets+=(test-groundhog-call-media) ;; groundhog-*-gui) targets+=("test-${test%-gui}") ;; groundhog-*) targets+=("test-$test") ;; *) targets+=("$test") ;; esac
+            case "$test" in libnostr_subscription_enqueue) targets+=(test_subscription_enqueue) ;; nostrdb_supersession_crowded|nostrdb_supersession_increasing|nostrdb_supersession_missing-d) targets+=(test_nostrdb_supersession) ;; groundhog-launch) targets+=(groundhog) ;; groundhog-call-media-two-process) targets+=(test-groundhog-call-media) ;; groundhog-*-gui) targets+=("test-${test%-gui}") ;; groundhog-*) targets+=("test-$test") ;; *) targets+=("$test") ;; esac
           done
           cmake --build build-asan --parallel 2 --target "${targets[@]}"
 

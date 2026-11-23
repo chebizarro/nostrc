@@ -270,10 +270,16 @@ def _step(steps, needle, what):
     return found[0]
 
 
+# Literal case arms can map multiple CTest registrations to one executable.
+BUILD_NAME = r"[A-Za-z0-9_-]+"
+BUILD_ALIAS = rf"({BUILD_NAME}(?:\|{BUILD_NAME})*)\) targets\+=\(({BUILD_NAME})\) ;; "
 BUILD_SHAPE = [
     r"targets=\((?P<initial>[^)]*)\)",
     r'for test in \$%s; do' % TESTS_VAR,
-    r'case "\$test" in (groundhog-launch\) targets\+=\(groundhog\) ;; )?(groundhog-call-media-two-process\) targets\+=\(test-groundhog-call-media\) ;; )?(groundhog-\*-gui\) targets\+=\("test-\$\{test%-gui\}"\) ;; )?groundhog-\*\) targets\+=\("test-\$test"\) ;; \*\) targets\+=\("\$test"\) ;; esac',
+    r'case "\$test" in '
+    rf'(?P<aliases>(?:{BUILD_ALIAS})*)'
+    r'(?P<gui>groundhog-\*-gui\) targets\+=\("test-\$\{test%-gui\}"\) ;; )?'
+    r'groundhog-\*\) targets\+=\("test-\$test"\) ;; \*\) targets\+=\("\$test"\) ;; esac',
     r"done",
     r'cmake --build (?P<dir>\S+) --parallel \d+ --target "\$\{targets\[@\]\}"',
 ]
@@ -364,6 +370,8 @@ def job_config(text, source_root):
     if len(build) != len(BUILD_SHAPE):
         raise WorkflowError("the build step changed shape: %r" % build)
     initial = None
+    aliases = {}
+    gui_targets = False
     for command, shape in zip(build, BUILD_SHAPE):
         m = re.fullmatch(shape, command)
         if not m:
@@ -373,16 +381,20 @@ def job_config(text, source_root):
         if "dir" in m.groupdict() and m.group("dir") != build_dir:
             raise WorkflowError("the build step builds %s, configure makes %s"
                                 % (m.group("dir"), build_dir))
-    gui_targets = 'groundhog-*-gui)' in build_step["run"]
-    launch_target = 'groundhog-launch)' in build_step["run"]
+        if "aliases" in m.groupdict():
+            gui_targets = m.group("gui") is not None
+            for names, target in re.findall(BUILD_ALIAS, m.group("aliases")):
+                for name in names.split("|"):
+                    if name in aliases:
+                        raise WorkflowError("duplicate build target alias: " + name)
+                    aliases[name] = target
+    if ("groundhog-call-media-two-process" in tests and
+            aliases.get("groundhog-call-media-two-process") != "test-groundhog-call-media"):
+        raise WorkflowError("two-process call coverage requires its real media peer target mapping")
     targets = list(initial)
     for test in tests:
-        if launch_target and test == "groundhog-launch":
-            targets.append("groundhog")
-        elif test == "groundhog-call-media-two-process":
-            if 'groundhog-call-media-two-process)' not in build_step["run"]:
-                raise WorkflowError("two-process call coverage requires its real media peer target mapping")
-            targets.append("test-groundhog-call-media")
+        if test in aliases:
+            targets.append(aliases[test])
         elif test.startswith("groundhog-"):
             targets.append("test-" + (test.removesuffix("-gui") if gui_targets else test))
         else:

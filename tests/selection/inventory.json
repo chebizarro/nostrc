@@ -31124,7 +31124,7 @@
         "configure": {},
         "build": {},
         "test": {
-          "GROUNDHOG_SANITIZER_TESTS": "groundhog-identity groundhog-account groundhog-account-relays groundhog-dm-send groundhog-relay groundhog-relay-wire groundhog-relay-publish groundhog-relay-publish-wire groundhog-nip29 groundhog-conversations groundhog-dm-inbox groundhog-store-key groundhog-store-key-keyring groundhog-secret-service-sessions groundhog-nip46-credentials-keyring groundhog-store groundhog-store-sqlite groundhog-store-marmot groundhog-store-conversations groundhog-outbox groundhog-account-store groundhog-link-policy groundhog-background groundhog-notifier groundhog-inbox-setup groundhog-expiry groundhog-auth-policy groundhog-contact-directory groundhog-reactions groundhog-reaction-send groundhog-privacy-e2e groundhog-new-message groundhog-requests groundhog-privacy-summary groundhog-conversation-info groundhog-nip29-service groundhog-mls-service groundhog-privacy-mls groundhog-mls-kp-lifecycle groundhog-mls-kp-lifecycle-adopted groundhog-net groundhog-tls-resumption groundhog-group-ui groundhog-mls-ui groundhog-conversation-menu groundhog-multi-send groundhog-media groundhog-blossom groundhog-media-purge groundhog-relay-guard groundhog-media-cache-binding groundhog-attachments groundhog-mls-media groundhog-mls-files groundhog-mls-poll groundhog-voice groundhog-icons groundhog-message-reply groundhog-two-instance-acceptance groundhog-shell groundhog-account-ui groundhog-conversation-list groundhog-launch groundhog-bus-probe groundhog-two-instance groundhog-account-store-gui groundhog-conversation-view groundhog-background-gui groundhog-about-gui groundhog-preferences groundhog-onboarding groundhog-notifier-gui groundhog-composer groundhog-e2e-dm groundhog-requests-gui groundhog-conversation-info-gui groundhog-group-ui-gui groundhog-mls-ui-gui groundhog-conversation-menu-gui groundhog-voice-ui groundhog-attachment-ui groundhog-nip46-pair-dialog groundhog-report-ui groundhog-draft-sync-gui groundhog-lists-ui groundhog-social-sync-gui groundhog-emoji groundhog-poll-ui groundhog-gtk-lsan nostrc-test-bus-selftest test_relay_teardown_leaks test_connection_recv_drain",
+          "GROUNDHOG_SANITIZER_TESTS": "groundhog-identity groundhog-account groundhog-account-relays groundhog-dm-send groundhog-relay groundhog-relay-wire groundhog-relay-publish groundhog-relay-publish-wire groundhog-nip29 groundhog-conversations groundhog-dm-inbox groundhog-store-key groundhog-store-key-keyring groundhog-secret-service-sessions groundhog-nip46-credentials-keyring groundhog-store groundhog-store-sqlite groundhog-store-marmot groundhog-store-conversations groundhog-outbox groundhog-account-store groundhog-link-policy groundhog-background groundhog-notifier groundhog-inbox-setup groundhog-expiry groundhog-auth-policy groundhog-contact-directory groundhog-reactions groundhog-reaction-send groundhog-privacy-e2e groundhog-new-message groundhog-requests groundhog-privacy-summary groundhog-conversation-info groundhog-nip29-service groundhog-mls-service groundhog-privacy-mls groundhog-mls-kp-lifecycle groundhog-mls-kp-lifecycle-adopted groundhog-net groundhog-tls-resumption groundhog-group-ui groundhog-mls-ui groundhog-conversation-menu groundhog-multi-send groundhog-media groundhog-blossom groundhog-media-purge groundhog-relay-guard groundhog-media-cache-binding groundhog-attachments groundhog-mls-media groundhog-mls-files groundhog-mls-poll groundhog-voice groundhog-icons groundhog-message-reply groundhog-two-instance-acceptance groundhog-shell groundhog-account-ui groundhog-conversation-list groundhog-launch groundhog-bus-probe groundhog-two-instance groundhog-account-store-gui groundhog-conversation-view groundhog-background-gui groundhog-about-gui groundhog-preferences groundhog-onboarding groundhog-notifier-gui groundhog-composer groundhog-e2e-dm groundhog-requests-gui groundhog-conversation-info-gui groundhog-group-ui-gui groundhog-mls-ui-gui groundhog-conversation-menu-gui groundhog-voice-ui groundhog-attachment-ui groundhog-nip46-pair-dialog groundhog-report-ui groundhog-draft-sync-gui groundhog-lists-ui groundhog-social-sync-gui groundhog-emoji groundhog-poll-ui groundhog-gtk-lsan nostrc-test-bus-selftest test_relay_teardown_leaks test_connection_recv_drain libnostr_subscription_enqueue nostrdb_supersession_crowded nostrdb_supersession_increasing nostrdb_supersession_missing-d",
           "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1:verify_asan_link_order=0:malloc_context_size=64",
           "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1",
           "G_SLICE": "always-malloc",
@@ -31232,7 +31232,11 @@
           "groundhog-gtk-lsan",
           "nostrc-test-bus-selftest",
           "test_relay_teardown_leaks",
-          "test_connection_recv_drain"
+          "test_connection_recv_drain",
+          "libnostr_subscription_enqueue",
+          "nostrdb_supersession_crowded",
+          "nostrdb_supersession_increasing",
+          "nostrdb_supersession_missing-d"
         ],
         "GH_SAN_TARGETS": [
           "groundhog",
@@ -31318,7 +31322,9 @@
           "test-groundhog-gtk-lsan",
           "nostrc-test-bus-selftest",
           "test_relay_teardown_leaks",
-          "test_connection_recv_drain"
+          "test_connection_recv_drain",
+          "test_subscription_enqueue",
+          "test_nostrdb_supersession"
         ],
         "GH_SAN_CONFIGURE": [
           "-G",
@@ -31337,7 +31343,7 @@
         "GH_SAN_CONFIGURE_ENV": [],
         "GH_SAN_BUILD_ENV": [],
         "GH_SAN_ENV": [
-          "GROUNDHOG_SANITIZER_TESTS=groundhog-identity groundhog-account groundhog-account-relays groundhog-dm-send groundhog-relay groundhog-relay-wire groundhog-relay-publish groundhog-relay-publish-wire groundhog-nip29 groundhog-conversations groundhog-dm-inbox groundhog-store-key groundhog-store-key-keyring groundhog-secret-service-sessions groundhog-nip46-credentials-keyring groundhog-store groundhog-store-sqlite groundhog-store-marmot groundhog-store-conversations groundhog-outbox groundhog-account-store groundhog-link-policy groundhog-background groundhog-notifier groundhog-inbox-setup groundhog-expiry groundhog-auth-policy groundhog-contact-directory groundhog-reactions groundhog-reaction-send groundhog-privacy-e2e groundhog-new-message groundhog-requests groundhog-privacy-summary groundhog-conversation-info groundhog-nip29-service groundhog-mls-service groundhog-privacy-mls groundhog-mls-kp-lifecycle groundhog-mls-kp-lifecycle-adopted groundhog-net groundhog-tls-resumption groundhog-group-ui groundhog-mls-ui groundhog-conversation-menu groundhog-multi-send groundhog-media groundhog-blossom groundhog-media-purge groundhog-relay-guard groundhog-media-cache-binding groundhog-attachments groundhog-mls-media groundhog-mls-files groundhog-mls-poll groundhog-voice groundhog-icons groundhog-message-reply groundhog-two-instance-acceptance groundhog-shell groundhog-account-ui groundhog-conversation-list groundhog-launch groundhog-bus-probe groundhog-two-instance groundhog-account-store-gui groundhog-conversation-view groundhog-background-gui groundhog-about-gui groundhog-preferences groundhog-onboarding groundhog-notifier-gui groundhog-composer groundhog-e2e-dm groundhog-requests-gui groundhog-conversation-info-gui groundhog-group-ui-gui groundhog-mls-ui-gui groundhog-conversation-menu-gui groundhog-voice-ui groundhog-attachment-ui groundhog-nip46-pair-dialog groundhog-report-ui groundhog-draft-sync-gui groundhog-lists-ui groundhog-social-sync-gui groundhog-emoji groundhog-poll-ui groundhog-gtk-lsan nostrc-test-bus-selftest test_relay_teardown_leaks test_connection_recv_drain",
+          "GROUNDHOG_SANITIZER_TESTS=groundhog-identity groundhog-account groundhog-account-relays groundhog-dm-send groundhog-relay groundhog-relay-wire groundhog-relay-publish groundhog-relay-publish-wire groundhog-nip29 groundhog-conversations groundhog-dm-inbox groundhog-store-key groundhog-store-key-keyring groundhog-secret-service-sessions groundhog-nip46-credentials-keyring groundhog-store groundhog-store-sqlite groundhog-store-marmot groundhog-store-conversations groundhog-outbox groundhog-account-store groundhog-link-policy groundhog-background groundhog-notifier groundhog-inbox-setup groundhog-expiry groundhog-auth-policy groundhog-contact-directory groundhog-reactions groundhog-reaction-send groundhog-privacy-e2e groundhog-new-message groundhog-requests groundhog-privacy-summary groundhog-conversation-info groundhog-nip29-service groundhog-mls-service groundhog-privacy-mls groundhog-mls-kp-lifecycle groundhog-mls-kp-lifecycle-adopted groundhog-net groundhog-tls-resumption groundhog-group-ui groundhog-mls-ui groundhog-conversation-menu groundhog-multi-send groundhog-media groundhog-blossom groundhog-media-purge groundhog-relay-guard groundhog-media-cache-binding groundhog-attachments groundhog-mls-media groundhog-mls-files groundhog-mls-poll groundhog-voice groundhog-icons groundhog-message-reply groundhog-two-instance-acceptance groundhog-shell groundhog-account-ui groundhog-conversation-list groundhog-launch groundhog-bus-probe groundhog-two-instance groundhog-account-store-gui groundhog-conversation-view groundhog-background-gui groundhog-about-gui groundhog-preferences groundhog-onboarding groundhog-notifier-gui groundhog-composer groundhog-e2e-dm groundhog-requests-gui groundhog-conversation-info-gui groundhog-group-ui-gui groundhog-mls-ui-gui groundhog-conversation-menu-gui groundhog-voice-ui groundhog-attachment-ui groundhog-nip46-pair-dialog groundhog-report-ui groundhog-draft-sync-gui groundhog-lists-ui groundhog-social-sync-gui groundhog-emoji groundhog-poll-ui groundhog-gtk-lsan nostrc-test-bus-selftest test_relay_teardown_leaks test_connection_recv_drain libnostr_subscription_enqueue nostrdb_supersession_crowded nostrdb_supersession_increasing nostrdb_supersession_missing-d",
           "ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:verify_asan_link_order=0:malloc_context_size=64",
           "UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1",
           "G_SLICE=always-malloc",
@@ -32839,7 +32845,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "9f06d28a459453c784ab32cae60a7d81fbe336d776a3de1569252d08b66254d3",
       "unsupported_reason": "Ordinary and live MDK011 registrations are separate diagnostic profiles. Ordinary selection does not claim live Docker lifecycle coverage; the dedicated live lane preserves docker/display/private_bus and visibly refuses without guarded custody. Full legacy job union, runtime/header audits and original image custody remain unaccepted.",
-      "workflow_sha256": "57ed633a7d3ccb2638cdaaed6d53a6713ae0e3ace797de70b49fd73375a075a5"
+      "workflow_sha256": "15666529bca50b563567047bbbb7a202606b7fec3e2819a3d8bb7c9093989527"
     },
     ".github/workflows/groundhog-ci.yml:groundhog-sanitizers": {
       "matrix_source": "",
@@ -32847,9 +32853,9 @@
         "groundhog.linux.sanitizers"
       ],
       "coverage_gap": "groundhog_sanitizer_execution_contract",
-      "source_sha256": "f4926c3378988c8a0269cf77bafdcd8162ca4db0e1c1eecac22593078c45cccd",
+      "source_sha256": "9329e9a95f69ae28b1903dab82f69bd6399449407ca4562999d89a5af9f35f53",
       "unsupported_reason": "Ordinary Groundhog suite/MDK011 application configuration is authored but full registration/runtime/header closure and Docker image custody remain unaccepted.",
-      "workflow_sha256": "57ed633a7d3ccb2638cdaaed6d53a6713ae0e3ace797de70b49fd73375a075a5"
+      "workflow_sha256": "15666529bca50b563567047bbbb7a202606b7fec3e2819a3d8bb7c9093989527"
     },
     ".github/workflows/groundhog-release.yml:identity": {
       "matrix_source": "",
@@ -33431,7 +33437,7 @@
       "unsupported_reason": "The selected sanitizer runner executes affected checks; it is not unrestricted legacy sanitizer union or native attested profile acceptance.",
       "matrix_source": "",
       "source_sha256": "a63f12a9b4123906e2c1e458af3b84b23d3c1c8c5ea2ca003670f20e3fb5bbcc",
-      "workflow_sha256": "57ed633a7d3ccb2638cdaaed6d53a6713ae0e3ace797de70b49fd73375a075a5"
+      "workflow_sha256": "15666529bca50b563567047bbbb7a202606b7fec3e2819a3d8bb7c9093989527"
     },
     ".github/workflows/groundhog-release.yml:manual-broad": {
       "profiles": [],
