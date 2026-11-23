@@ -370,44 +370,63 @@ static const char *note_d(struct ndb_note *note, char packed[65]) {
   return ""; /* NIP-01: an absent d tag is the empty identifier */
 }
 
-/* Resolve replacements inside the iterator's existing read transaction. A
- * nested ndb_begin_query on the same thread is not supported by LMDB. This
- * also hides obsolete versions from explicit-id queries and search results. */
+/* The predicate runs before the result limit, so a one-slot query proves
+ * existence rather than truncating a list of possible coordinate matches. */
+static bool note_supersedes(void *ctx, struct ndb_note *other) {
+  struct ndb_note *note = ctx;
+  uint32_t kind = ndb_note_kind(note);
+  if (kind >= 30000 && kind < 40000) {
+    char packed[65], other_packed[65];
+    if (strcmp(note_d(note, packed), note_d(other, other_packed)) != 0) return false;
+  }
+  uint64_t time = ndb_note_created_at(note), other_time = ndb_note_created_at(other);
+  return other_time > time ||
+    (other_time == time && memcmp(ndb_note_id(other), ndb_note_id(note), 32) < 0);
+}
+
+/* Resolve replacements inside the iterator's existing read transaction; LMDB
+ * does not support a nested ndb_begin_query on the same thread. */
 static int note_is_current(struct ndb_txn *txn, struct ndb_note *note) {
   uint32_t kind = ndb_note_kind(note);
   bool addressable = kind >= 30000 && kind < 40000;
   if (!(kind == 0 || kind == 3 || (kind >= 10000 && kind < 20000) || addressable)) return 1;
-  char author[65], packed_d[65];
-  const char *d = addressable ? note_d(note, packed_d) : NULL;
-  id_to_hex(ndb_note_pubkey(note), author);
-  NostrFilter *coordinate = nostr_filter_new();
-  if (!coordinate) return -ENOMEM;
-  nostr_filter_add_author(coordinate, author);
-  nostr_filter_add_kind(coordinate, (int)kind);
-  coordinate->since = ndb_note_created_at(note);
-  if (addressable && *d) nostr_filter_tags_append(coordinate, "d", d, NULL);
   struct ndb_filter filter;
-  int rc = build_ndb_filter(coordinate, &filter);
-  nostr_filter_free(coordinate);
-  if (rc) return rc;
-  enum { COORDINATE_CAP = 256 };
-  struct ndb_query_result candidates[COORDINATE_CAP];
-  int count = 0;
-  int ok = ndb_query(txn, &filter, 1, candidates, COORDINATE_CAP, &count);
-  ndb_filter_destroy(&filter);
-  if (!ok) return -EIO;
-  for (int i = 0; i < count; i++) {
-    struct ndb_note *other = candidates[i].note;
-    char other_packed[65];
-    if (addressable && strcmp(d, note_d(other, other_packed)) != 0) continue;
-    uint32_t timestamp = ndb_note_created_at(other);
-    if (timestamp > ndb_note_created_at(note) ||
-        (timestamp == ndb_note_created_at(note) &&
-         memcmp(ndb_note_id(other), ndb_note_id(note), 32) < 0)) return 0;
+  if (!ndb_filter_init(&filter)) return -ENOMEM;
+  int ok = ndb_filter_start_field(&filter, NDB_FILTER_AUTHORS) &&
+           ndb_filter_add_id_element(&filter, ndb_note_pubkey(note));
+  if (ok) ndb_filter_end_field(&filter);
+  ok = ok && ndb_filter_start_field(&filter, NDB_FILTER_KINDS) &&
+       ndb_filter_add_int_element(&filter, kind);
+  if (ok) ndb_filter_end_field(&filter);
+  ok = ok && ndb_filter_start_field(&filter, NDB_FILTER_SINCE) &&
+       ndb_filter_add_int_element(&filter, ndb_note_created_at(note));
+  if (ok) ndb_filter_end_field(&filter);
+  char packed[65];
+  const char *d = addressable ? note_d(note, packed) : NULL;
+  if (d && *d) {
+    ok = ok && ndb_filter_start_tag_field(&filter, 'd') &&
+         ndb_filter_add_str_element(&filter, d);
+    if (ok) ndb_filter_end_field(&filter);
   }
-  /* Never serve a possibly obsolete version if the coordinate lookup was
-   * truncated. An explicit query error is preferable to false completeness. */
-  return count == COORDINATE_CAP ? -EOVERFLOW : 1;
+  /* A #d:[""] index lookup cannot find notes with no physical d tag.
+   * The predicate normalizes missing/empty d to the same coordinate and
+   * excludes every nonempty identifier, including on an author-wide scan. */
+  ok = ok && ndb_filter_start_field(&filter, NDB_FILTER_CUSTOM) &&
+       ndb_filter_add_custom_filter_element(&filter, note_supersedes, note);
+  if (ok) ndb_filter_end_field(&filter);
+  ok = ok && ndb_filter_start_field(&filter, NDB_FILTER_LIMIT) &&
+       ndb_filter_add_int_element(&filter, 1);
+  if (ok) ndb_filter_end_field(&filter);
+  ok = ok && ndb_filter_end(&filter);
+  struct ndb_query_result newer;
+  int count = 0;
+  int queried = ok ? ndb_query(txn, &filter, 1, &newer, 1, &count) : 0;
+  ndb_filter_destroy(&filter);
+  if (!ok) return -ENOMEM;
+  if (!queried) return -EIO;
+  /* A full result slot is the answer: skip the superseded note, never fail
+   * the enclosing REQ/COUNT because more replacements might exist. */
+  return count == 0;
 }
 
 static void* ndb_query_storage(NostrStorage *st, const NostrFilter *filters, size_t nfilters,
