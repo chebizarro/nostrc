@@ -36,8 +36,10 @@
 #include <nostr/nip04.h>
 #include <nostr/nip44/nip44.h>
 
-/* NIP-46 JSON-RPC framing: line-delimited JSON. */
-#define NIP5L_MAX_LINE 65536
+/* NIP-46 JSON-RPC framing: line-delimited JSON. Largest accepted request
+ * line; a signed event with a large tag list (e.g. a kind-3 follow list)
+ * still fits. */
+#define NIP5L_MAX_LINE (1024u * 1024u)
 #define NIP5L_MAX_CONNECTIONS 8
 
 /* Per-connection state. */
@@ -330,6 +332,38 @@ typedef struct {
   GSocketConnection *conn_ref;
 } Nip5lClientThreadData;
 
+/* Read one '\n'-terminated request into *out_line (without the newline).
+ * @pending carries bytes past the newline over to the next call, so pipelined
+ * requests are kept. A request longer than NIP5L_MAX_LINE fails with
+ * G_IO_STATUS_ERROR and *too_long set, before the daemon buffers more of it:
+ * g_io_channel_read_line had no limit, so one local client could grow the
+ * daemon's memory without bound by never sending a newline. */
+static GIOStatus nip5l_read_line_bounded(GIOChannel *ch, GString *pending,
+                                         gchar **out_line, gboolean *too_long,
+                                         GError **err) {
+  *out_line = NULL;
+  *too_long = FALSE;
+  gsize scanned = 0;
+  for (;;) {
+    const char *nl = memchr(pending->str + scanned, '\n', pending->len - scanned);
+    if (nl) {
+      gsize n = (gsize)(nl - pending->str);
+      if (n > NIP5L_MAX_LINE) { *too_long = TRUE; return G_IO_STATUS_ERROR; }
+      *out_line = g_strndup(pending->str, n);
+      g_string_erase(pending, 0, (gssize)(n + 1));
+      return G_IO_STATUS_NORMAL;
+    }
+    scanned = pending->len;
+    if (pending->len > NIP5L_MAX_LINE) { *too_long = TRUE; return G_IO_STATUS_ERROR; }
+    char chunk[4096];
+    gsize got = 0;
+    GIOStatus st = g_io_channel_read_chars(ch, chunk, sizeof(chunk), &got, err);
+    if (got > 0) g_string_append_len(pending, chunk, (gssize)got);
+    if (st == G_IO_STATUS_AGAIN) continue;
+    if (st != G_IO_STATUS_NORMAL) return st;
+  }
+}
+
 static gpointer nip5l_client_thread(gpointer data) {
   Nip5lClientThreadData *td = (Nip5lClientThreadData *)data;
   SignetNip5lServer *ns = td->ns;
@@ -337,15 +371,12 @@ static gpointer nip5l_client_thread(gpointer data) {
 
   GError *err = NULL;
   gchar *line = NULL;
-  gsize len = 0;
-  GIOStatus status;
+  gboolean too_long = FALSE;
+  GString *pending = g_string_new(NULL);
 
-  while ((status = g_io_channel_read_line(cs->channel, &line, &len, NULL, &err))
+  while (nip5l_read_line_bounded(cs->channel, pending, &line, &too_long, &err)
          == G_IO_STATUS_NORMAL) {
-    if (!line || len == 0) break;
-
-    /* Strip trailing newline. */
-    if (len > 0 && line[len - 1] == '\n') line[len - 1] = '\0';
+    if (!line) break;
 
     char *resp = nip5l_handle_message(ns, cs, line);
     g_free(line);
@@ -361,8 +392,15 @@ static gpointer nip5l_client_thread(gpointer data) {
     }
   }
 
+  if (too_long) {
+    const char *msg = "{\"error\":\"request too large\"}\n";
+    gsize written;
+    g_io_channel_write_chars(cs->channel, msg, -1, &written, NULL);
+    g_io_channel_flush(cs->channel, NULL);
+  }
   if (err) g_error_free(err);
   g_free(line);
+  g_string_free(pending, TRUE);
 
   g_mutex_lock(&ns->mu);
   ns->connections = g_list_remove(ns->connections, cs);
@@ -416,7 +454,9 @@ nip5l_on_incoming(GSocketService *service,
   GIOFlags channel_flags = g_io_channel_get_flags(cs->channel);
   g_io_channel_set_flags(cs->channel, channel_flags & ~G_IO_FLAG_NONBLOCK, NULL);
   g_io_channel_set_encoding(cs->channel, NULL, NULL);
-  g_io_channel_set_line_term(cs->channel, "\n", 1);
+  /* Unbuffered, so read_chars returns what each read(2) delivers instead of
+   * blocking to fill its buffer; nip5l_read_line_bounded does the framing. */
+  g_io_channel_set_buffered(cs->channel, FALSE);
 
   g_mutex_lock(&ns->mu);
   if (ns->stopping) {

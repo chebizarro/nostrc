@@ -32,6 +32,10 @@ test_challenge_transports_exe = executable('test_challenge_transports', 'test_ch
   link_with: signet_core, include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
 test('challenge_transports', test_challenge_transports_exe)
+test_nip5l_line_cap_exe = executable('test_nip5l_line_cap', 'test_nip5l_line_cap.c',
+  link_with: signet_core, include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
+test('nip5l_line_cap', test_nip5l_line_cap_exe, timeout: 60)
 test_http_routes_exe = executable('test_http_routes', 'test_http_routes.c',
   link_with: signet_core, include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
