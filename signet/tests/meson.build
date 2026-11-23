@@ -80,6 +80,15 @@ test_health_readiness_exe = executable('test_health_readiness',
   install: false,
 )
 
+test_ssh_agent_wire = executable('test_ssh_agent_wire',
+  'test_ssh_agent_wire.c',
+  link_with: signet_core,
+  include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
+  install: false,
+)
+
 test_replay = executable('test_replay_cache',
   'test_replay_cache.c',
   link_with: signet_core,
@@ -355,6 +364,7 @@ test('test_list_parity', find_program('sh'),
 test('signet_smoke', test_exe)
 test('health_readiness', test_health_readiness_exe)
 test('replay_cache', test_replay)
+test('ssh_agent_wire', test_ssh_agent_wire)
 test('policy_engine', test_policy)
 test('audit_logger', test_audit)
 test('bootstrap_contract', test_bootstrap_contract)
