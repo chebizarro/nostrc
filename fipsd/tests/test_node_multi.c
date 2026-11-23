@@ -175,12 +175,38 @@ static bool converged(void)
     for (size_t i = 0; i < count; ++i) json_decref(trees[i]);
     return ok;
 }
+/* Peer-only tree updates can publish without another state-change notice.
+ * Observe the same completed snapshots the convergence predicates read. */
+static bool await_change(uint64_t deadline)
+{
+    void *value = NULL;
+    GoSelectCase cases[NT_MAX_NODES + 1];
+    for (size_t i = 0; i < count; ++i)
+        cases[i] = (GoSelectCase){GO_SELECT_RECEIVE, fipsd_node_handlers_notices(nodes[i].h), NULL, &value};
+    cases[count] = (GoSelectCase){GO_SELECT_RECEIVE, fipsd_test_published, NULL, &value};
+    uint64_t now = nt_ms();
+    if (now >= deadline) return false;
+    GoSelectResult result = go_select_timeout(cases, count + 1, deadline - now);
+    if (result.selected_case < 0 || !value) return false;
+    if ((size_t)result.selected_case < count) {
+        nt_record(&nodes[result.selected_case], value);
+        fipsd_node_notice_free(value);
+    }
+    return true;
+}
+static void discard_publication(void)
+{
+    void *value;
+    (void)go_channel_try_receive(fipsd_test_published, &value);
+}
 static void await_tree(const char *phase, uint64_t start)
 {
-    while (!converged()) {
-        size_t owner; fipsd_node_notice *e = nt_next(nodes, count, start + TREE_BOUND_MS, &owner);
-        if (!e) { nt_print_trace(phase); fprintf(stderr, "%s: convergence deadline exceeded\n", phase); abort(); }
-        fipsd_node_notice_free(e);
+    for (;;) {
+        discard_publication();
+        if (converged()) break;
+        if (!await_change(start + TREE_BOUND_MS)) {
+            nt_print_trace(phase); fprintf(stderr, "%s: convergence deadline exceeded\n", phase); abort();
+        }
     }
     printf("%s: tree + adjacent filters %llu ms (bound %u ms)\n", phase, (unsigned long long)(nt_ms() - start), TREE_BOUND_MS);
     fflush(stdout);
@@ -230,10 +256,10 @@ static void await_bloom(uint64_t start)
 {
     /* A topology change and its exact directional aggregates are asynchronous.
      * Keep the ORIGINAL convergence deadline; do not retry application sends. */
-    while (!bloom_reachability()) {
-        size_t owner; fipsd_node_notice *e = nt_next(nodes, count, start + TREE_BOUND_MS, &owner);
-        if (!e) { nt_print_trace("exact directional bloom deadline"); abort(); }
-        fipsd_node_notice_free(e);
+    for (;;) {
+        discard_publication();
+        if (bloom_reachability()) break;
+        if (!await_change(start + TREE_BOUND_MS)) { nt_print_trace("exact directional bloom deadline"); abort(); }
     }
     printf("exact directional bloom: %llu ms (bound %u ms)\n", (unsigned long long)(nt_ms() - start), TREE_BOUND_MS);
 }
@@ -358,6 +384,7 @@ int main(int argc, char **argv)
         assert(nt_init_with_options(&nodes[i], NULL, names[i], NULL, yaml, &hc, 1, multi_options));
         assert(fipsd_runtime_register(runtime, fipsd_node_subsystem(nodes[i].node)) == 0);
     }
+    nt_watch_publications();
     assert(fipsd_runtime_start(runtime) == 0);
     for (size_t i = 0; i < count; ++i) {
         void *v = NULL; GoSelectCase bound = {GO_SELECT_RECEIVE, nt_socket_bound(nodes[i].transport), NULL, &v};
@@ -416,6 +443,7 @@ int main(int argc, char **argv)
     fipsd_runtime_shutdown(runtime); assert(fipsd_runtime_run(runtime) == FIPSD_RUN_OK);
     for (size_t i = 0; i < count; ++i) nt_drain(&nodes[i]);
     fipsd_runtime_destroy(runtime);
+    nt_unwatch_publications();
     for (size_t i = 0; i < count; ++i) nt_destroy(&nodes[i]);
     if (return_route) go_channel_free(return_route_done);
     go_channel_free(bloom_done);
