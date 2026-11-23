@@ -510,6 +510,25 @@ private constant (`0x01` = adopted), not the `MarmotGroupProfile` value.
 
 ## Changelog
 
+### 0.14.1 (unreleased): integration API and storage compatibility
+
+The bug-fix integration folds MINOR-class, pre-1.0 changes into the already
+unreleased 0.14.1 declaration; no libmarmot release tag exists.
+
+- **Rebuild consumers.** `MarmotGroup` appends `group_data_version`. New APIs
+  return deferred Commit results (`marmot_clear_pending_commit_with_results`,
+  `marmot_message_results_free`) and inspect scheduling metadata without message
+  admission (`MarmotMessageOrder`, `marmot_inspect_message_order`).
+- **Update custom storage backends.** Persist the group-data version and the
+  `mls_send_hwm` label. Snapshots must exclude both that high-water mark and
+  processed-message markers. Built-in SQLite storage adds a column on open;
+  nostrdb writes group record v2, which older readers cannot read.
+- **Legacy Welcome incompatibility.** Every imported ratchet-tree leaf is now
+  validated (nostrc-3hzu), including the account binding required by its group
+  profile. Legacy unbound leaves from <= 0.3.6 are rejected rather than admitted;
+  upgrade and refresh/re-add legacy members before inviting new members. Existing
+  compatibility exceptions of the adopted profile are not broadened.
+
 ### 0.14.0 (unreleased): hidden-by-default shared-library ABI
 
 The shared library now exports its declared `marmot_*` public API and hides
@@ -2399,8 +2418,7 @@ validated before a Commit is applied (§7.3, §12.4.2).
   But every leaf signed by ≤ 0.3.x -- the creator's leaf and each member's
   last commit leaf -- stays in the tree until that member commits again.
   RFC-conformant joiners (MDK/OpenMLS) validate every LeafNode of a Welcome
-  ratchet tree (§12.4.3.1) and reject such trees; libmarmot joiners will too
-  once `nostrc-3hzu` lands. **After upgrading, have each member self-update**
+  ratchet tree (§12.4.3.1) and reject such trees; libmarmot joiners now validate these leaves as well (`nostrc-3hzu`). **After upgrading, have each member self-update**
   so its leaf is re-signed. Trees persisted by ≤ 0.3.6 can also hold non-blank
   parents over empty copaths; the member's next Commit now blanks them, as
   receivers always did (§7.4/§7.5).

@@ -1907,3 +1907,35 @@ Published **Latest release** and **Release tag** columns are unchanged.
 | nostr-settings | 0.1.0 | 0.1.1 | PATCH: Correct shipped descriptions of cleaned media formats (nostrc-0c69). |
 
 No bump: libgo 0.3.0, libjson 2.0.0, the FIPS component family and nostr-homed 0.9.0 (test/fixture or test-registration changes only), plus mock/test/selection/push-hook tooling. The shell extension itself is unchanged. Other manifest components have no owning shipped-source change. Relayd and NIP-29/NIP-49/NIP-5F receive PATCH-class corrections but have no authoritative numeric component version; no version or tag is invented. Integration-only fixture corrections require no separate bump.
+
+
+## Bug-fix integration version pass
+
+Assessed `75634e1de..bug/integration`, including its combined-verification
+corrections. The declared versions below are not released: the published origin
+tags still stop at the releases already recorded above, and there is no
+`libmarmot-v0.14.1` tag (nor any libmarmot release tag). Per the integration brief,
+fold these changes into the existing unreleased declarations, rather than adding
+another increment to the previous integration pass. All authoritative numeric
+sources and Declared version values therefore remain unchanged; Latest release
+and Release tag values are untouched.
+
+| Component | Declared (unchanged) | Highest impact folded into the unreleased version |
+| --- | --- | --- |
+| libmarmot | 0.14.1 | MINOR, including pre-1.0 incompatibilities: appended `MarmotGroup.group_data_version`, new pending-Commit result/free APIs and `MarmotMessageOrder`/`marmot_inspect_message_order`; required persistence of `mls_send_hwm` outside snapshots; nostrdb group records v2 and SQLite's added column; Welcome rejects legacy unbound leaves (nostrc-x215, nostrc-8gbp, nostrc-l3n7, nostrc-ow0c, nostrc-3hzu). Consumers must rebuild and custom storage implementations must honor the new contract; see libmarmot/README.md. CMake and Meson remain 0.14.1. |
+| groundhog | 0.13.1 | MINOR: legacy MIP-01 image reading and schema v15, plus shipped relay, MLS, network, notification and UI corrections (including nostrc-x215, nostrc-ow0c, nostrc-er14x, nostrc-ctks). Existing CMake and package/metadata authorities remain aligned at 0.13.1. |
+| nip55l | 0.8.0 | MINOR: additive `nip55l_nip5f_serve_unidentified_full()` closure callback API, with lifetime-safe TCP capacity accounting (nostrc-fdg3); authoritative signer_ops.h macros stay 0.8.0. |
+| libnostr | 2.5.0 | PATCH: connection/subscription/refire/OK ownership, replaceable-record queries and installed static dependency closure (nostrc-b4g8, nostrc-gf4j, nostrc-3914, nostrc-kvjq, nostrc-btzb, nostrc-jmfq). |
+| libgo | 0.3.0 | PATCH: context reference ownership and blocking MPMC wakeups (nostrc-4zyo, nostrc-v624). |
+| nostr-gobject | 3.1.1 | PATCH: queued delivery, EOSE/CLOSED fencing and explicit-close ordering (nostrc-jjqw, nostrc-5595, nostrc-ue8f). CMake and Meson agree. |
+| signet | 0.10.0 | PATCH: replay rejection before crypto and re-fired/replaced REQ ownership (nostrc-qwwwr, nostrc-4np3z). CMake, Meson and both CLI version constants agree. |
+| fipsd | 0.1.1 | PATCH: Bloom send settlement uses the completed transport outcome (nostrc-61e1w). Its integration verification correction observes existing snapshot-publication pulses, without changing production code, convergence predicates or deadlines. |
+| Grotto | 0.1.3 (full 0.1.3-alpha1) | PATCH: TCP connection lifetime, retained backup navigation, pending retention input and Debian runtime SDK dependency (nostrc-fdg3, nostrc-cc6ja, nostrc-hmrgk, nostrc-u6v55.28). Integration's desktop-identity fixture alignment (nostrc-cg9ke) is test-only. All CMake/Meson/package authorities remain aligned. |
+| gnostr | 0.2.1 | PATCH: exclude non-chat MLS inner events (nostrc-ruwy); repaired test link closures (nostrc-taue) are test-only. |
+| nostr-homed | 0.9.0 | PATCH: the authority allocator excludes files-owned UIDs (nostrc-fuun). CMake and Meson agree; pkg-config is generated from the declared version. |
+| grotto-panels | 0.1.1 | No bump: only test fixture executable identities, test environment and boundary checks changed (nostrc-cg9ke, nostrc-vthyc). |
+| marmot-gobject, nostr-gtk | 1.5.2, 2.0.1 | No bump: no owning shipped-source changes in this range. |
+| libfips-core | 0.1.0 | No bump: fuzz fake-include correction only (nostrc-wvxnd). |
+| NIP-29 | Unversioned | ABI-incompatible public `nostr_group_t` growth for equal-time snapshot IDs (nostrc-odyg): consumers must rebuild. There is no authoritative numeric version in nips/nip29/CMakeLists.txt, so no version or release tag is invented. |
+| NIP-44, NIP-57 | Unversioned | PATCH-class installed pkg-config closure and early refusal of an unsupported nostrdb-disabled provider configuration (nostrc-s6tf, nostrc-s9nk). NIP-44's .pc follows its libnostr bundle version; neither component has an independent numeric version. |
+| Test/CI/selection/packaging verification tooling | — | No bump: no independently shipped component change; prerequisite and compatibility builds do not create a version change in unchanged consumers. |
