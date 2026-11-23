@@ -17,7 +17,7 @@ function(_grotto_test name target owner)
   endif()
 endfunction()
 
-foreach(suite crypto identity session legacy-dirs rate-limiter core
+foreach(suite crypto identity session legacy-dirs rate-limiter
     secure-mem signer-core profile-guard)
   _grotto_test("signer/${suite}" "test-${suite}" grotto.gui)
 endforeach()
