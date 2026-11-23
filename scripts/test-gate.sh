@@ -283,7 +283,7 @@ def command(argv, *, cwd=None, env=None, log=None, resource_root=None, private_d
                 pass
             active = None
         if code:
-            raise RuntimeError(f"command exited {code}: {Path(str(argv[0])).name}; log={log}")
+            raise shared.LegacyCommandExit(code, Path(str(argv[0])).name, log)
     finally:
         if log:
             stream.close()

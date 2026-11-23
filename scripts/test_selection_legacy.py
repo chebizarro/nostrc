@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
 
+import ctest_quarantine as quarantine
 import test_selection as selection
 
 
@@ -73,7 +74,7 @@ def ctest_regex(names):
     return "^(" + "|".join(escape(n) for n in sorted(names)) + ")$"
 
 
-def check_junit(path, expected, allowed_skips=()):
+def check_junit(path, expected, allowed_skips=(), *, quarantine_names=None):
     root = ET.parse(path).getroot()
     entries = list(root.iter("testcase"))
     cases = {case.attrib["name"]: case for case in entries}
@@ -83,9 +84,18 @@ def check_junit(path, expected, allowed_skips=()):
         raise RuntimeError("CTest result membership differs from selected fixture closure")
     outcomes = {}
     for name, case in cases.items():
-        if case.find("failure") is not None or case.find("error") is not None:
-            raise RuntimeError("CTest failed: " + name)
+        output = case.findtext("system-out", "") + case.findtext("system-err", "")
+        if quarantine_names is not None and quarantine.SANITIZER_REPORT.search(output):
+            raise RuntimeError("CTest sanitizer report: " + name)
+        failure = case.find("failure")
         skipped = case.find("skipped")
+        if failure is not None or case.find("error") is not None:
+            if (failure is not None and skipped is None and case.find("error") is None
+                    and case.get("status") == "fail" and quarantine_names
+                    and quarantine.matching_bead(quarantine_names, name, failure.get("message"), output)):
+                outcomes[name] = "quarantined_failure"
+                continue
+            raise RuntimeError("CTest failed: " + name)
         if skipped is not None:
             # The original probe emits this only after its precise refusal
             # assertions, then exits 77. Missing peers/disabled tests are not it.
@@ -99,6 +109,24 @@ def check_junit(path, expected, allowed_skips=()):
                 raise RuntimeError("selected test was not run: " + name)
             outcomes[name] = "passed"
     return outcomes
+
+
+def ctest_result(junit, closure, exit_code, allowed_skips=(), *, quarantine_names=None):
+    # CTest's test-failure exit code is 8. Never accept a wrapper/infrastructure
+    # error or an exit that disagrees with the fresh result's exact membership.
+    if exit_code not in {0, 8}:
+        raise RuntimeError(f"unexpected CTest exit: {exit_code}")
+    outcomes = check_junit(junit, closure, allowed_skips, quarantine_names=quarantine_names)
+    failed = sorted(name for name, outcome in outcomes.items() if outcome == "quarantined_failure")
+    if bool(failed) != (exit_code == 8):
+        raise RuntimeError("CTest exit disagrees with JUnit failures")
+    result = {"test_outcomes": outcomes}
+    if failed:
+        result.update(outcome="quarantined_failure", failed_executions=failed,
+                      quarantine_beads=sorted({quarantine_names[name] for name in failed}), sanitizer_reports=[])
+        for name in failed:
+            print(f"!! QUARANTINED FAILURE: {name} ({quarantine_names[name]}); output retained at {junit}", flush=True)
+    return result
 
 
 def _expand(value, source, build):
@@ -292,6 +320,7 @@ def run(policy, plan, source, directory, record, *, command, materialize, profil
                         execute([_expand(a, source, build) for a in check["command"]], "build",
                                 cwd=Path(_expand(check["working_directory"], source, build)),
                                 prefix=_prefix(set(check.get("requires", []))), environment=check.get("environment"))
+            ctest_evidence = {}
             names = sorted({name for check in checks if check["kind"] == "ctest" for name in check["ctest_tests"][profile_id]})
             if names:
                 path = execute(["ctest", "--test-dir", build, "-C", configuration, "--show-only=json-v1"])
@@ -310,15 +339,28 @@ def run(policy, plan, source, directory, record, *, command, materialize, profil
                 state["selected_tests"], state["fixture_closure"] = names, closure
                 junit = lane_dir / "ctest.xml"
                 resources = _signer_fixture(profile, source, build, lane_dir, state) if signer else contextlib.nullcontext([])
+                quarantine_names = None
+                if profile_id in {"grotto.linux", "grotto.linux.asan_ubsan"}:
+                    key = profile["platform"]
+                    if profile["instrumentation"] != "none":
+                        key += "-" + profile["instrumentation"].split("_", 1)[0]
+                    quarantine_names = quarantine.registry(source / quarantine.REGISTRY, key)
+                exit_code = 0
                 with resources as resource_args:
-                    execute(["ctest", "--test-dir", build, "-C", configuration, "--output-on-failure", "--no-tests=error",
-                             "--timeout", profile.get("timeout_seconds", 3600),
-                             "--parallel", profile.get("test_parallelism", profile.get("parallelism", 1)),
-                             "-R", ctest_regex(closure), "--output-junit", junit, *resource_args], prefix=prefix)
+                    try:
+                        execute(["ctest", "--test-dir", build, "-C", configuration, "--output-on-failure", "--no-tests=error",
+                                 "--timeout", profile.get("timeout_seconds", 3600),
+                                 "--parallel", profile.get("test_parallelism", profile.get("parallelism", 1)),
+                                 "-R", ctest_regex(closure), "--output-junit", junit, *resource_args], prefix=prefix)
+                    except selection.LegacyCommandExit as exc:
+                        if quarantine_names is None or exc.code != 8:
+                            raise
+                        exit_code = exc.code
                 allowed = {name for check in checks if isinstance(check.get("expected_outcome"), dict)
                            and check["expected_outcome"].get("case") == "mdk09_incompatibility"
                            for name in check["ctest_tests"][profile_id]}
-                state["test_outcomes"] = check_junit(junit, closure, allowed)
+                ctest_evidence = ctest_result(junit, closure, exit_code, allowed, quarantine_names=quarantine_names)
+                state["test_outcomes"] = ctest_evidence.pop("test_outcomes")
             for ident in lane["checks"]:
                 check = policy["checks"][ident]
                 if check["kind"] != "command":
@@ -328,12 +370,14 @@ def run(policy, plan, source, directory, record, *, command, materialize, profil
                 argv = [_expand(a, source, build) for a in check["command"]]
                 execute(argv, cwd=Path(_expand(check["working_directory"], source, build)),
                         prefix=_prefix(set(check.get("requires", []))), environment=check.get("environment"))
-            state["status"] = "passed"
+            state.update(ctest_evidence)
+            state["status"] = state.get("outcome", "passed")
         except (RuntimeError, OSError, ValueError, subprocess.SubprocessError, ET.ParseError) as exc:
             state["error"] = str(exc)
         finally:
             if lock is not None:
                 os.close(lock)
             selection.write_json(lane_dir / "legacy-result.json", state)
-    record["status"] = "failed" if any(lane["status"] != "passed" for lane in record["lanes"]) else "partial"
+    record["status"] = "failed" if any(lane["status"] not in {"passed", "quarantined_failure"}
+                                       for lane in record["lanes"]) else "partial"
     selection.write_json(directory / "legacy-result.json", record)

@@ -408,6 +408,7 @@ docker run --rm --init --name "$RUN_ID" --label "org.nostrc.gate.run=$RUN_ID" \
     -e NOSTRC_CTEST_QUARANTINE_PLATFORM="${NOSTRC_CTEST_QUARANTINE_PLATFORM:-}" \
     -e NOSTRC_CTEST_QUARANTINE_FILE=/work/src/scripts/grotto-ci-quarantine.tsv \
     -v "$SOURCE:/src:ro" -v "$SCRIPTS/linux-gate-smoke.sh:/gate/smoke.sh:ro" \
+    -v "$SCRIPTS/ctest_quarantine.py:/gate/ctest_quarantine.py:ro" \
     -v "$SCRIPTS/sanitizer-gate-ci.py:/gate/sanitizer-gate-ci.py:ro" \
     -v "$VOLUME:/work" -v nostrc-linux-gate-tests:/gate-lock "$IMAGE_ID" \
     bash -c 'JOBS="${JOBS:-$(nproc)}"; '"$CMD" &

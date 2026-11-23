@@ -22,6 +22,12 @@ SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+
 OUTCOMES = frozenset({"passed", "failed", "cancelled", "missing", "unexpected_skip", "expected_incompatibility", "quarantined_failure", "advisory_failure", "not_applicable"})
 
 
+class LegacyCommandExit(RuntimeError):
+    def __init__(self, code, program, log):
+        self.code = code
+        super().__init__(f"command exited {code}: {program}; log={log}")
+
+
 class ContractError(ValueError):
     """Malformed/uninterpretable contract; CLI exit 2."""
 

@@ -1,5 +1,10 @@
 # platform<TAB>exact CTest name<TAB>owning bead
 # Tests still execute. Only their known non-sanitizer failure is nonblocking.
+# GTK #8534: the assertion and SIGTRAP are checked by ctest_quarantine.py.
+linux	signer/ui-layout	nostrc-hmrgk
+linux	signer/ui-accessibility	nostrc-hmrgk
+linux-asan	signer/ui-layout	nostrc-hmrgk
+linux-asan	signer/ui-accessibility	nostrc-hmrgk
 linux	groundhog-nip29-service	nostrc-q1974
 linux	groundhog-mls-service	nostrc-pf4gd
 linux	groundhog-nip46-pair-nak	nostrc-otxhq

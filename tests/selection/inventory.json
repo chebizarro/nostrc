@@ -530,6 +530,8 @@
       "requirement": "blocking",
       "runtime_inputs": [
         "{source}/scripts/test-grotto-quarantine.py",
+        "{source}/scripts/ctest_quarantine.py",
+        "{source}/scripts/test_selection_legacy.py",
         "{source}/scripts/linux-gate-smoke.sh",
         "{source}/scripts/grotto-ci-quarantine.tsv"
       ],
@@ -653,6 +655,8 @@
       "requirement": "blocking",
       "runtime_inputs": [
         "{source}/scripts/test-grotto-quarantine.py",
+        "{source}/scripts/ctest_quarantine.py",
+        "{source}/scripts/test_selection_legacy.py",
         "{source}/scripts/linux-gate-smoke.sh",
         "{source}/scripts/grotto-ci-quarantine.tsv"
       ],
@@ -32784,9 +32788,9 @@
         "grotto.linux.asan_ubsan"
       ],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "af6d94857a66f3662e81b89d496bcf4a9aff950fd603d2239bbef1719978ede5",
+      "source_sha256": "45e55b32baffbc96350acbb46822513a99c7ea84d642a6f014c17a60869be109",
       "unsupported_reason": "Only fixed ubuntu-24.04 native/ASan configure and signer CTest selection projections are authored, with fresh Linux/aarch64 name-surface evidence (not x86_64 acceptance). Native uses the complete regex, including aliases and registered conditionals. Authored build2/test1 is supported. Default-all selector build attestation/coverage (.34), full audits/nonmember admission, native Go/nak baseline/quarantine, Meson/deb/shell extension steps, ubuntu-latest and TSan instrumented-GLib/nsync/linkage/advisory execution remain unsupported. No whole-job parity or nonmember approval is implied.",
-      "workflow_sha256": "c6f67345751b5da3872d564f2ab0ba234d720a4500bbf72c88e330909608567f",
+      "workflow_sha256": "2526bdada32d8021f2071830428313a63d460717b8d8356410274af544a6b751",
       "unimplemented_variants": [
         {
           "runner": "ubuntu-latest",

@@ -5,6 +5,7 @@ from pathlib import Path
 import platform
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -302,7 +303,8 @@ class GateEntrypointTests(PhysicalLegacyTests):
     def setUp(self):
         super().setUp()
         for relative in ("scripts/test-gate.sh", "scripts/test_selection.py", "scripts/test_selection_subset.py",
-                         "scripts/test_selection_macos_nip5f_tcp.py", "scripts/test_selection_legacy.py"):
+                         "scripts/test_selection_macos_nip5f_tcp.py", "scripts/test_selection_legacy.py",
+                         "scripts/ctest_quarantine.py"):
             target = self.source / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / relative, target)
@@ -327,13 +329,13 @@ class GateEntrypointTests(PhysicalLegacyTests):
     def git(self, *args):
         return subprocess.check_output(["git", "-C", str(self.source), *args], stderr=subprocess.PIPE).decode().strip()
 
-    def gate(self, *args):
+    def gate(self, *args, profile="linux", exit_code=0):
         evidence = Path(self.temp.name) / "evidence"
         result = subprocess.run(["bash", str(self.source / "scripts/test-gate.sh"), "--repo", str(self.source),
-                                 "--profile", "linux", *([] if "--plan" in args else ["--base", self.base]),
+                                 "--profile", profile, *([] if "--plan" in args else ["--base", self.base]),
                                  "--evidence-dir", str(evidence), *args],
                                 capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.returncode, exit_code, result.stdout + result.stderr)
         path = next(evidence.glob("*/adapter-receipt.json"))
         return json.loads(path.read_text()), path.parent
 
@@ -343,6 +345,70 @@ class GateEntrypointTests(PhysicalLegacyTests):
         self.assertEqual(record["status"], "partial")
         self.assertTrue(list(directory.glob("*/legacy-*/build/built")))
         self.assertEqual(len(self.git("worktree", "list").splitlines()), 1)
+
+    def test_grotto_named_quarantine_preserves_gate_failures(self):
+        native = "grotto.linux"
+        asan = "grotto.linux.asan_ubsan"
+        profile = self.p["profiles"].pop("linux")
+        self.p["profiles"].update({native: profile, asan: dict(profile, instrumentation="asan_ubsan")})
+        for check in self.p["checks"].values():
+            names = check["ctest_tests"].pop("linux")
+            names = ["signer/ui-layout" if name == "app.unit" else name for name in names]
+            check.update(profiles=[native, asan], ctest_tests={native: names, asan: names})
+        inventory = self.source / "tests/selection/inventory.json"
+        inventory.write_text(json.dumps(self.p))
+        registry = ROOT / "scripts/grotto-ci-quarantine.tsv"
+        # The fixture drives the real adapter on macOS too; only the fixture's
+        # platform column is translated, not the instrumentation suffix.
+        (self.source / "scripts/grotto-ci-quarantine.tsv").write_text(
+            registry.read_text().replace("linux", profile["platform"]))
+        (self.source / "probe.py").write_text('''import os, signal, sys
+from pathlib import Path
+from ctest_quarantine import GTK_ASSERTION
+
+name, mode = Path(sys.argv[1]).read_text().split()
+if name == sys.argv[2]:
+    print('unrelated assertion' if mode == 'different' else GTK_ASSERTION, flush=True)
+    if mode == 'sanitizer':
+        print('ERROR: AddressSanitizer: synthetic report', flush=True)
+    os.kill(os.getpid(), signal.SIGTRAP)
+''')
+        cmake = self.source / "CMakeLists.txt"
+        source = cmake.read_text()
+        for name in ("app.unit", "app.live"):
+            registration = "signer/ui-layout" if name == "app.unit" else name
+            source = source.replace(f"add_test(NAME {name} COMMAND ${{CMAKE_COMMAND}} -E true)",
+                f'add_test(NAME {registration} COMMAND "{sys.executable}" "${{CMAKE_SOURCE_DIR}}/probe.py" '
+                f'"${{CMAKE_SOURCE_DIR}}/app/source.c" {registration})')
+            source = source.replace(f'set_tests_properties({name} ', f'set_tests_properties({registration} ')
+            source += f'\nset_tests_properties({registration} PROPERTIES ENVIRONMENT "PYTHONPATH=${{CMAKE_SOURCE_DIR}}/scripts")\n'
+        cmake.write_text(source)
+        self.git("add", "-A")
+        self.git("commit", "-qm", "Grotto quarantine fixture")
+        self.base = self.git("rev-parse", "HEAD")
+        for profile_id, inputs, outcome, detail in (
+            (native, "signer/ui-layout known", 0, "quarantined_failure"),
+            (asan, "signer/ui-layout known", 0, "quarantined_failure"),
+            (native, "app.live known", 1, "CTest failed: app.live"),
+            (native, "signer/ui-layout different", 1, "CTest failed: signer/ui-layout"),
+            (asan, "signer/ui-layout sanitizer", 1, "CTest sanitizer report: signer/ui-layout"),
+        ):
+            with self.subTest(profile=profile_id, inputs=inputs):
+                (self.source / "app/source.c").write_text(inputs + "\n")
+                self.git("commit", "-qam", inputs, "--allow-empty")
+                record, directory = self.gate("--head", self.git("rev-parse", "HEAD"),
+                                              profile=profile_id, exit_code=outcome)
+                lane = record["executions"][0]["lanes"][0]
+                if outcome:
+                    self.assertEqual(lane["status"], "failed", lane)
+                    self.assertIn(detail, lane["error"])
+                else:
+                    self.assertEqual(lane["outcome"], detail, lane)
+                    self.assertEqual(lane["failed_executions"], ["signer/ui-layout"])
+                    self.assertEqual(lane["quarantine_beads"], ["nostrc-hmrgk"])
+                    self.assertEqual(lane["sanitizer_reports"], [])
+                self.assertEqual(len(list(directory.rglob("ctest.xml"))), 1)
+                shutil.rmtree(directory.parent)
 
     def test_saved_plan_keeps_ordinary_execution_and_exact_identity(self):
         plan = s.make_plan(self.p, [change("app/source.c")], head=self.head, base=self.base, context="local")

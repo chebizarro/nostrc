@@ -270,10 +270,10 @@ jobs:
             python3 scripts/test-grotto-quarantine.py
           fi
           regex='^(signer/|nip55l_|nostr_signer_webext_host_)'
-          required='signer/bunker signer/bunker-e2e signer/approval-controller signer/approval-integration signer/permissions signer/background signer/onboarding signer/clients signer/activity signer/ui-layout signer/desktop-contract signer/blueprint-drift signer/qr-scanner signer/trust-tiers signer/panel-inbox-model nip55l_approval_service nip55l_dbus_contract'
+          required='signer/bunker signer/bunker-e2e signer/approval-controller signer/approval-integration signer/permissions signer/background signer/onboarding signer/clients signer/activity signer/ui-layout signer/ui-accessibility signer/desktop-contract signer/blueprint-drift signer/qr-scanner signer/trust-tiers signer/panel-inbox-model nip55l_approval_service nip55l_dbus_contract'
           case "$MODE" in
             asan-ubsan)
-              required='signer/bunker signer/bunker-e2e signer/approval-controller signer/approval-integration signer/permissions signer/trust-tiers signer/onboarding signer/background signer/clients signer/activity nip55l_approval_service nip55l_cache_concurrency nip55l_dbus_contract'
+              required='signer/bunker signer/bunker-e2e signer/approval-controller signer/approval-integration signer/permissions signer/trust-tiers signer/onboarding signer/background signer/clients signer/activity signer/ui-layout signer/ui-accessibility nip55l_approval_service nip55l_cache_concurrency nip55l_dbus_contract'
               regex="^($(echo "$required" | tr ' ' '|'))$" ;;
             tsan)
               required='signer/bunker signer/bunker-e2e nip55l_approval_service nip55l_cache_concurrency'
@@ -311,10 +311,30 @@ jobs:
           missing = set(sys.argv[1].split()) - names
           assert not missing, f'Missing required suites: {sorted(missing)}'
           PY
+          # Required means registered and executed, including the named quarantine.
+          status=0
           dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' \
             ctest --test-dir build -j1 -R "$regex" --no-tests=error --output-on-failure \
-              --output-junit "$PWD/build/signer-ctest.xml" | tee build/signer-ctest.log
-          ! grep -E '\*\*\*Skipped|Not Run' build/signer-ctest.log
+              --output-junit "$PWD/build/signer-ctest.xml" > build/signer-ctest.log 2>&1 || status=$?
+          cat build/signer-ctest.log
+          if [[ "$MODE" == tsan ]]; then
+            [[ "$status" == 0 ]] || exit "$status"
+            if grep -E '\*\*\*Skipped|Not Run' build/signer-ctest.log; then exit 1; fi
+          else
+            platform=linux
+            if [[ "$MODE" == asan-ubsan ]]; then platform=linux-asan; fi
+            PYTHONPATH=scripts python3 - "$status" "$platform" <<'PY'
+          import json, sys
+          from pathlib import Path
+          from ctest_quarantine import REGISTRY, registry
+          from test_selection_legacy import ctest_result
+
+          names = [t['name'] for t in json.load(open('build/selected-tests.json'))['tests']]
+          result = ctest_result(Path('build/signer-ctest.xml'), names, int(sys.argv[1]),
+                                quarantine_names=registry(Path(REGISTRY), sys.argv[2]))
+          Path('build/signer-ctest.result.json').write_text(json.dumps(result, indent=2) + '\n')
+          PY
+          fi
       - name: Go toolchain for the real nak baseline test
         if: matrix.mode == 'native' && steps.gate.outputs.affected != 'true'
         uses: actions/setup-go@v5

@@ -140,6 +140,8 @@ rerun_status() {
     /^ *[0-9]+\/[0-9]+ Test +#[0-9]+: / && $4 == name {
       if ($(NF - 2) == "Passed") {
         status = "Passed"
+      } else if ($0 ~ /SIGTRAP\*\*\*/) {
+        status = "SIGTRAP"
       } else {
         status = $0
         sub(/^[^*]*\*\*\*/, "", status)
@@ -300,11 +302,10 @@ if [ -n "${NOSTRC_CTEST_QUARANTINE_PLATFORM:-}" ]; then
   [ -f "$quarantine" ] || { echo "Missing quarantine registry: $quarantine" >&2; exit 1; }
   remaining=""
   for test in $failed; do
-    bead="$(awk -F '\t' -v platform="$NOSTRC_CTEST_QUARANTINE_PLATFORM" -v name="$test" \
-      '$1 == platform && $2 == name && $3 ~ /^nostrc-[a-z0-9.]+$/ { print $3 }' "$quarantine")"
     status="$(rerun_status "$STATE_DIR/ctest.log" "$test")"
-    if [ -n "$bead" ] && [[ "$status" != *"Not Run"* && "$status" != *Skipped* && "$status" != "not run" ]] &&
-       ! has_report "$STATE_DIR/ctest.log" "$test"; then
+    bead="$(output_of "$STATE_DIR/ctest.log" "$test" | python3 "$(dirname "$0")/ctest_quarantine.py" \
+      "$quarantine" "$NOSTRC_CTEST_QUARANTINE_PLATFORM" "$test" "$status")"
+    if [ -n "$bead" ]; then
       printf '%s\t%s\t%s\t%s\n' "$RUN_ID" "$test" "$bead" "$kept" >> "$HISTORY/quarantined.tsv"
       echo "!! QUARANTINED FAILURE: $test ($bead); not disabled, output retained at $kept"
     else
