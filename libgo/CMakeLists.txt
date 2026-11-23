@@ -27,7 +27,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
-declare_component_version(LIBGO 0 3 0)
+declare_component_version(LIBGO 0 3 1)
 
 # Optional: enable more aggressive local optimizations for libgo
 include(CheckCCompilerFlag)
@@ -486,6 +486,14 @@ if(WIN32)
 endif()
 file(RELATIVE_PATH LIBNOSTRGO_PC_PREFIX_RELATIVE
   "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig" "${CMAKE_INSTALL_PREFIX}")
+set(LIBNOSTRGO_PC_LIBDIR "${CMAKE_INSTALL_LIBDIR}")
+if(NOT IS_ABSOLUTE "${LIBNOSTRGO_PC_LIBDIR}")
+  set(LIBNOSTRGO_PC_LIBDIR "\${exec_prefix}/${LIBNOSTRGO_PC_LIBDIR}")
+endif()
+set(LIBNOSTRGO_PC_INCLUDEDIR "${CMAKE_INSTALL_INCLUDEDIR}")
+if(NOT IS_ABSOLUTE "${LIBNOSTRGO_PC_INCLUDEDIR}")
+  set(LIBNOSTRGO_PC_INCLUDEDIR "\${prefix}/${LIBNOSTRGO_PC_INCLUDEDIR}")
+endif()
 configure_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/libnostrgo.pc.in"
   "${LIBNOSTRGO_PKGCONF}"

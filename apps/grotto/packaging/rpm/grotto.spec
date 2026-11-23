@@ -18,7 +18,7 @@ BuildRequires:  python3
 BuildRequires:  gettext
 BuildRequires:  pkgconfig(gtk4) >= 4.14
 BuildRequires:  pkgconfig(libadwaita-1) >= 1.5
-BuildRequires:  pkgconfig(grotto-panels-0) >= 0.1.0
+BuildRequires:  pkgconfig(grotto-panels-0) >= 0.1.2
 BuildRequires:  pkgconfig(glib-2.0) >= 2.80
 BuildRequires:  pkgconfig(json-glib-1.0)
 BuildRequires:  pkgconfig(libsoup-3.0)
@@ -43,7 +43,7 @@ BuildRequires:  appstream
 BuildRequires:  systemd-rpm-macros
 Requires:       gtk4 >= 4.14
 Requires:       libadwaita >= 1.5
-Requires:       grotto-panels >= 0.1.0
+Requires:       grotto-panels >= 0.1.2
 Requires:       glib2 >= 2.80
 Requires:       gstreamer1-plugins-base
 Requires:       gstreamer1-plugins-good
@@ -102,7 +102,6 @@ appstreamcli validate --no-net %{buildroot}%{_datadir}/metainfo/%{app_id}.metain
 %{_datadir}/applications/%{app_id}.desktop
 %{_datadir}/dbus-1/services/%{app_id}.service
 %{_datadir}/dbus-1/services/org.nostr.Signer.service
-%{_datadir}/dbus-1/interfaces/%{app_id}.Control1.xml
 %{_datadir}/glib-2.0/schemas/%{app_id}.gschema.xml
 %{_datadir}/icons/hicolor/*/apps/%{app_id}*
 %{_datadir}/metainfo/%{app_id}.metainfo.xml
@@ -120,6 +119,6 @@ appstreamcli validate --no-net %{buildroot}%{_datadir}/metainfo/%{app_id}.metain
 * Tue Oct 27 2026 Grotto Maintainers - 0.1.1-1
 - Fix the alternate Meson frontend's Groundhog executable-side link closure
 
-* Wed Oct 14 2026 Grotto Maintainers - 0.1.0-1
-- Fold native GUI/daemon packaging correction into unreleased 0.1.0
+* Wed Oct 14 2026 Grotto Maintainers - 0.1.2-1
+- Fold native GUI/daemon packaging correction into unreleased 0.1.2
 - Use canonical desktop/metainfo, activation, autostart template and network examples

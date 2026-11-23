@@ -1,0 +1,12 @@
+prefix=${pcfiledir}/@GROTTO_PC_PREFIX@
+exec_prefix=${prefix}
+libdir=@GROTTO_PC_LIBDIR@
+includedir=@GROTTO_PC_INCLUDEDIR@
+interfacesdir=@GROTTO_PC_DATADIR@/dbus-1/interfaces
+
+Name: Grotto Control1 Client
+Description: Control1 transport adapter for injected Grotto panels services
+Version: @GROTTO_CONTROL_CLIENT_VERSION@
+Requires: grotto-panels-0 >= 0.1.2
+Libs: -L${libdir} -lgrotto-control-client-0
+Cflags: -I${includedir}/grotto-control-client-0
