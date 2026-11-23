@@ -100,11 +100,15 @@ open_inner(NetHandle *handle, GError **error)
       gh_relay_publish_url_address_trusted(handle->publish, handle->url)
     : gh_relay_scope_is_signer_control(handle->scope) ||
       gh_relay_scope_url_address_trusted(handle->scope, handle->url);
+  gboolean fixture = FALSE;
+#ifdef GH_RELAY_NET_TEST_HOOKS
   g_autoptr(GUri) parsed = g_uri_parse(handle->url, G_URI_FLAGS_NONE, NULL);
-  /* Local cleartext relays are test fixtures only unless explicitly owned. */
-  gboolean fixture = g_strcmp0(g_getenv("NOSTRC_TEST_ISOLATION"), "1") == 0 &&
+  /* The testing executable is not installable. Production never consults
+   * this environment switch when deciding an untrusted relay's addresses. */
+  fixture = g_strcmp0(g_getenv("NOSTRC_TEST_ISOLATION"), "1") == 0 &&
     g_strcmp0(g_uri_get_scheme(parsed), "ws") == 0 &&
     gh_net_host_is_loopback(g_uri_get_host(parsed));
+#endif
   gboolean public_only = mode != GH_NET_MODE_TOR && !trusted && !fixture;
   if (mode != GH_NET_MODE_TOR && !public_only) {
     handle->inner_soup = FALSE;

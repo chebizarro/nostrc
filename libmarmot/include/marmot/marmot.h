@@ -868,7 +868,9 @@ MARMOT_API MarmotError marmot_clear_pending_commit(Marmot *m,
  * marmot_clear_pending_commit(), reporting the Commits it processes as
  * marmot_process_message() would have when they arrived: their committer
  * (commit.committer_pubkey_hex, commit.committer_leaf), departures, the
- * updated group, any convergence change (nostrc-8gbp).  Deferred Commits
+ * updated group, any convergence change, and commit_roster (the member
+ * identities immediately after that Commit, not the final batch roster;
+ * nostrc-8gbp). Deferred Commits
  * that do not apply (refused, stale) are not reported.
  *
  * Returns: as marmot_clear_pending_commit(); nothing is returned on error.

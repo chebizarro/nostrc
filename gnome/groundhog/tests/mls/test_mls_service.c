@@ -3231,6 +3231,96 @@ test_deferred_add_attributed(void)
   world_down(&w);
 }
 
+/* Build each snapshot through the real clear API. Report the two in one
+ * batch: the final roster alone cannot tell Bob's Add from Carol's Update.
+ * Transport/callback handoff is covered by deferred-add-attributed above. */
+static void
+test_deferred_batch_attribution(void)
+{
+  World w;
+  world_legacy_only = TRUE;
+  const guint keys[] = { ALICE, BOB, CAROL };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB], *carol = &w.apps[CAROL];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  accept_contact(alice, CAROL);
+  GhMlsGroup *ga = create_group(alice, "Deferred batch", (const guint[]){ BOB, CAROL }, 2);
+  GhMlsGroup *gb = join(bob, ALICE), *gc = join(carol, ALICE);
+  const gchar *admins[] = { hex[ALICE], hex[BOB], hex[CAROL], NULL };
+  OpWait promoted = { 0 };
+  gh_mls_service_set_admins_async(alice->service, ga, admins, NULL, on_changed, &promoted);
+  change(alice, &promoted);
+  spin_until(became_admin, gb, "Bob promoted");
+  spin_until(became_admin, gc, "Carol promoted");
+  wait_epoch(gb, (gint)gh_mls_group_get_epoch(ga));
+  wait_epoch(gc, (gint)gh_mls_group_get_epoch(ga));
+  g_autofree gchar *kp_id = inject_legacy_key_package(&w, STRANGER);
+  WireStored *kp = stored_by_id(&w.w, kp_id);
+  g_assert_nonnull(kp);
+  set_online(alice, FALSE);
+  set_online(bob, FALSE);
+  set_online(carol, FALSE);
+  const gchar *gid_hex = gh_mls_group_get_group_id(ga);
+  g_autofree guint8 *bytes = g_malloc(strlen(gid_hex) / 2);
+  g_assert_true(nostr_hex2bin(bytes, gid_hex, strlen(gid_hex) / 2));
+  MarmotGroupId gid = { bytes, strlen(gid_hex) / 2 };
+  Marmot *ma = gh_mls_service_get_marmot(alice->service);
+  Marmot *mb = gh_mls_service_get_marmot(bob->service);
+  Marmot *mc = gh_mls_service_get_marmot(carol->service);
+  MarmotGroupConfig cfg = { .name = "Unpublished local change" };
+  char *ours = NULL, *add = NULL, **welcomes = NULL;
+  size_t n_welcomes = 0;
+  g_assert_cmpint(marmot_update_group_metadata(ma, &gid, &cfg, &ours), ==, MARMOT_OK);
+  const char *kps[] = { kp->json };
+  g_assert_cmpint(marmot_add_members(mb, &gid, kps, 1, &welcomes, &n_welcomes, &add), ==, MARMOT_OK);
+  g_assert_cmpint(marmot_merge_pending_commit(mb, &gid), ==, MARMOT_OK);
+  MarmotMessageResult inbound = { 0 };
+  g_assert_cmpint(marmot_process_message(mc, add, &inbound), ==, MARMOT_OK);
+  marmot_message_result_free(&inbound);
+  g_assert_cmpint(marmot_process_message(ma, add, &inbound), ==, MARMOT_ERR_OWN_COMMIT_PENDING);
+  marmot_message_result_free(&inbound);
+  MarmotMessageResult *first = NULL, *second = NULL;
+  size_t n_first = 0, n_second = 0;
+  g_assert_cmpint(marmot_clear_pending_commit_with_results(ma, &gid, &first, &n_first), ==, MARMOT_OK);
+  g_assert_cmpuint(n_first, ==, 1);
+  free(ours);
+  ours = NULL;
+  g_assert_cmpint(marmot_update_group_metadata(ma, &gid, &cfg, &ours), ==, MARMOT_OK);
+  cfg.name = "Carol's later metadata update";
+  char *update = NULL;
+  g_assert_cmpint(marmot_update_group_metadata(mc, &gid, &cfg, &update), ==, MARMOT_OK);
+  g_assert_cmpint(marmot_merge_pending_commit(mc, &gid), ==, MARMOT_OK);
+  g_assert_cmpint(marmot_process_message(ma, update, &inbound), ==, MARMOT_ERR_OWN_COMMIT_PENDING);
+  marmot_message_result_free(&inbound);
+  g_assert_cmpint(marmot_clear_pending_commit_with_results(ma, &gid, &second, &n_second), ==, MARMOT_OK);
+  g_assert_cmpuint(n_second, ==, 1);
+  g_assert_cmpstr(first[0].commit.committer_pubkey_hex, ==, hex[BOB]);
+  g_assert_cmpstr(second[0].commit.committer_pubkey_hex, ==, hex[CAROL]);
+  g_assert_cmpuint(second[0].commit.updated_group->epoch, ==, first[0].commit.updated_group->epoch + 1);
+  MarmotMessageResult *batch = calloc(2, sizeof(*batch));
+  batch[0] = first[0];
+  batch[1] = second[0];
+  free(first);
+  free(second);
+  gh_mls_service_test_report_cleared(ga, batch, 2);
+  wait_members(ga, 4);
+  assert_identity(ga, STRANGER, GH_MLS_MEMBER_UNVERIFIED, BOB);
+  marmot_message_results_free(batch, 2);
+  for (size_t i = 0; i < n_welcomes; i++)
+    free(welcomes[i]);
+  free(welcomes);
+  free(ours);
+  free(add);
+  free(update);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  app_restart(alice);
+  ga = gh_mls_service_lookup(alice->service, room);
+  wait_members(ga, 4);
+  assert_identity(ga, STRANGER, GH_MLS_MEMBER_UNVERIFIED, BOB);
+  world_down(&w);
+}
+
 typedef struct {
   gboolean done;
   GhMlsMemberIdentity identity;
@@ -5288,6 +5378,7 @@ main(int argc, char **argv)
                   test_account_proof_enrollment);
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
   g_test_add_func("/groundhog/mls-service/deferred-add-attributed", test_deferred_add_attributed);
+  g_test_add_func("/groundhog/mls-service/deferred-batch-attribution", test_deferred_batch_attribution);
   g_test_add_func("/groundhog/mls-service/unproven-member-identity",
                   test_unproven_member_identity);
   g_test_add_func("/groundhog/mls-service/own-commit-echo-before-ok",

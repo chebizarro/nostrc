@@ -185,6 +185,7 @@ struct _GhMlsGroup {
   /* Member identities (nostrc-6ukh). */
   GHashTable *devices;       /* "account:signature key" (hex) -> Device */
   gboolean devices_loaded;   /* read once: a device new after that was just added */
+  gboolean devices_changed;  /* deferred roster changes not yet signaled by group_refresh */
   gchar *last_committer;     /* hex: whose Commit the next refresh follows, or NULL */
   guint32 last_committer_leaf; /* its leaf, the one leaf it renews (UINT32_MAX: none) */
   guint unverified;          /* accounts CHECKING or UNVERIFIED */
@@ -1508,13 +1509,9 @@ device_new(GhMlsGroup *group, const MarmotMemberIdentity *leaf, const gchar *acc
 /* Reads the group's devices from libmarmot; TRUE when what it shows changed.
  * Devices that left are forgotten in the store (W24 review N3). */
 static gboolean
-refresh_devices(GhMlsGroup *group)
+refresh_devices_from(GhMlsGroup *group, const MarmotMemberIdentity *leaves, size_t n)
 {
   GhMlsService *self = group->service;
-  MarmotMemberIdentity *leaves = NULL;
-  size_t n = 0;
-  if (marmot_get_group_member_identities(self->marmot, &group->gid, &leaves, &n) != MARMOT_OK)
-    return FALSE;
   gboolean changed = FALSE;
   GHashTable *next = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, device_free);
   for (size_t i = 0; i < n; i++) {
@@ -1545,7 +1542,6 @@ refresh_devices(GhMlsGroup *group)
     }
     g_hash_table_replace(next, key, device);
   }
-  free(leaves);
   GHashTableIter iter;
   gpointer value;
   g_hash_table_iter_init(&iter, group->devices);
@@ -1562,6 +1558,18 @@ refresh_devices(GhMlsGroup *group)
   g_clear_pointer(&group->last_committer, g_free);
   group->last_committer_leaf = G_MAXUINT32;
   sync_unverified(group);
+  return changed;
+}
+
+static gboolean
+refresh_devices(GhMlsGroup *group)
+{
+  MarmotMemberIdentity *leaves = NULL;
+  size_t n = 0;
+  if (marmot_get_group_member_identities(group->service->marmot, &group->gid, &leaves, &n) != MARMOT_OK)
+    return FALSE;
+  gboolean changed = refresh_devices_from(group, leaves, n);
+  free(leaves);
   return changed;
 }
 
@@ -2035,6 +2043,8 @@ group_refresh(GhMlsGroup *group)
     }
   }
   free(keys);
+  members_changed |= group->devices_changed;
+  group->devices_changed = FALSE;
   members_changed |= refresh_devices(group);
 
   /* nostrc-xrya: why the group is not active. libmarmot keeps who removed
@@ -3965,17 +3975,41 @@ round_report(Round *round)
     group->last_committer = g_strdup(group->service->account);
     group->last_committer_leaf = G_MAXUINT32;   /* our own leaf is proven */
   }
-  /* Deferred Commits compete at our pending epoch. The last applied result
-   * describes the selected branch, whose new devices the refresh will see. */
-  if (round->state == GH_MLS_COMMIT_CLEARED && round->n_applied) {
-    const MarmotMessageResult *selected = &round->applied[round->n_applied - 1];
-    g_free(group->last_committer);
-    group->last_committer = g_strdup(selected->commit.committer_pubkey_hex);
-    group->last_committer_leaf = selected->commit.committer_leaf;
+  /* Advance the device projection through each applied roster. Reading
+   * only libmarmot's final roster would credit all new devices to the last
+   * committer, including those another member added at an earlier epoch. */
+  if (round->state == GH_MLS_COMMIT_CLEARED) {
+    for (size_t i = 0; i < round->n_applied; i++) {
+      const MarmotMessageResult *applied = &round->applied[i];
+      if (applied->type != MARMOT_RESULT_COMMIT)
+        continue;
+      for (size_t k = 0; k < applied->commit.departed_count; k++)
+        if (g_strcmp0(applied->commit.departed_pubkey_hexes[k], group->service->account) != 0)
+          g_hash_table_add(group->leavers, g_strdup(applied->commit.departed_pubkey_hexes[k]));
+      g_free(group->last_committer);
+      group->last_committer = g_strdup(applied->commit.committer_pubkey_hex);
+      group->last_committer_leaf = applied->commit.committer_leaf;
+      if (applied->commit_roster.present)
+        group->devices_changed |= refresh_devices_from(
+          group, applied->commit_roster.members, applied->commit_roster.count);
+      if (applied->commit.routing_changed)
+        routing_retire(group, applied);
+    }
   }
   after_commit(group);
   complete_waiters(group, error);
 }
+
+#ifdef GH_MLS_TEST_HOOKS
+void
+gh_mls_service_test_report_cleared(GhMlsGroup *group, MarmotMessageResult *applied,
+                                   size_t count)
+{
+  Round round = { .group = group, .state = GH_MLS_COMMIT_CLEARED,
+                  .applied = applied, .n_applied = count };
+  round_report(&round);
+}
+#endif
 
 static void
 round_update(GhRelayPublish *publish, const GhRelayPublishResult *result, gpointer data)

@@ -534,6 +534,8 @@ MARMOT_API MarmotPagination marmot_pagination_default(void);
  * Message processing result
  * ──────────────────────────────────────────────────────────────────────── */
 
+typedef struct MarmotMemberIdentity MarmotMemberIdentity;
+
 typedef enum {
     MARMOT_RESULT_APPLICATION_MESSAGE = 0,
     MARMOT_RESULT_COMMIT              = 1,
@@ -634,6 +636,18 @@ typedef struct {
         char **invalidated_message_ids;
         size_t invalidated_count;
     } convergence;
+
+    /** Since 0.12.0 (nostrc-8gbp): the roster immediately after this
+     *  deferred Commit applied, before any following deferred Commit.
+     *  Present only on COMMIT results returned by
+     *  marmot_clear_pending_commit_with_results(). Members are owned by
+     *  the result and freed by marmot_message_result(s)_free(). Empty is
+     *  a valid roster; `present` distinguishes it from no snapshot. */
+    struct {
+        bool present;
+        MarmotMemberIdentity *members;
+        size_t count;
+    } commit_roster;
 } MarmotMessageResult;
 
 /** MLS proposal types reported in MarmotMessageResult and

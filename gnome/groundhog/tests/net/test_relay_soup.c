@@ -1092,11 +1092,11 @@ capture_soup_close(gpointer handle, gpointer data)
 }
 
 static void
-test_event_resets_backoff_without_eose(void)
+test_replayed_history_preserves_backoff(void)
 {
   WireRelay relay = { .serve = TRUE, .no_eose = TRUE, .close_on_connect = TRUE };
   relay_init(&relay);
-  g_autofree gchar *json = signed_json("live without EOSE");
+  g_autofree gchar *json = signed_json("stored history replay");
   wire_relay_inject(&relay, json);
   ScopeSeen seen = { 0 };
   gpointer handle = NULL;
@@ -1110,6 +1110,18 @@ test_event_resets_backoff_without_eose(void)
   relay.close_on_connect = FALSE;
   wait_at_least(&seen.events, 1);
   g_assert_cmpuint(seen.eoses, ==, 0);
+  g_assert_cmpuint(gh_relay_soup_scope_get_retry_seconds(handle), >=, 4);
+  /* Replaying the same stored EVENT on the next connection must not turn
+   * repeated pre-catch-up disconnects into a one-second retry loop. */
+  relay.no_eose = FALSE;
+  soup_websocket_connection_close(g_ptr_array_index(relay.connections,
+    relay.connections->len - 1), SOUP_WEBSOCKET_CLOSE_GOING_AWAY, NULL);
+  wait_at_least(&seen.disconnected, 3);
+  wait_at_least(&seen.eoses, 1);
+  g_assert_cmpuint(gh_relay_soup_scope_get_retry_seconds(handle), >=, 8);
+  g_autofree gchar *live = signed_json("new event after catch-up");
+  wire_relay_inject(&relay, live);
+  wait_at_least(&seen.events, 2);
   g_assert_cmpuint(gh_relay_soup_scope_get_retry_seconds(handle), ==, 1);
   gh_relay_scope_cancel(scope);
   gh_relay_scope_unref(scope);
@@ -1125,22 +1137,30 @@ test_direct_untrusted_socket_filter(void)
   Tripwire trip = { 0 };
   tripwire_init(&trip);
   const gchar *hosts[] = { "127.0.0.1", REBIND_HOST };
-  for (guint i = 0; i < G_N_ELEMENTS(hosts); i++) {
-    g_autofree gchar *url = g_strdup_printf("wss://%s:%u/relay", hosts[i], trip.port);
-    ScopeSeen seen = { 0 };
-    GhRelayScope *scope = open_scope(1, url, &seen);
-    wait_at_least(&seen.errors, 1);
-    g_assert_cmpuint(trip.accepted, ==, 0);
-    gh_relay_scope_cancel(scope);
-    gh_relay_scope_unref(scope);
-    PublishSeen sent = { 0 };
-    GhRelayPublish *publish = start_publish(url, "must never reach a private socket", &sent);
-    wait_at_least(&sent.done, 1);
-    g_assert_cmpuint(trip.accepted, ==, 0);
-    g_assert_cmpint(sent.outcome, ==, GH_RELAY_PUBLISH_CONNECTION_FAILED);
-    gh_relay_publish_unref(publish);
-    g_free(seen.last_error);
-    g_free(sent.message);
+#ifdef GH_NET_PRODUCTION_TESTS
+  g_assert_cmpstr(g_getenv("NOSTRC_TEST_ISOLATION"), ==, "1");
+  const gchar *schemes[] = { "ws", "wss" };
+#else
+  const gchar *schemes[] = { "wss" };
+#endif
+  for (guint scheme = 0; scheme < G_N_ELEMENTS(schemes); scheme++) {
+    for (guint i = 0; i < G_N_ELEMENTS(hosts); i++) {
+      g_autofree gchar *url = g_strdup_printf("%s://%s:%u/relay", schemes[scheme], hosts[i], trip.port);
+      ScopeSeen seen = { 0 };
+      GhRelayScope *scope = open_scope(1, url, &seen);
+      wait_at_least(&seen.errors, 1);
+      g_assert_cmpuint(trip.accepted, ==, 0);
+      gh_relay_scope_cancel(scope);
+      gh_relay_scope_unref(scope);
+      PublishSeen sent = { 0 };
+      GhRelayPublish *publish = start_publish(url, "must never reach a private socket", &sent);
+      wait_at_least(&sent.done, 1);
+      g_assert_cmpuint(trip.accepted, ==, 0);
+      g_assert_cmpint(sent.outcome, ==, GH_RELAY_PUBLISH_CONNECTION_FAILED);
+      gh_relay_publish_unref(publish);
+      g_free(seen.last_error);
+      g_free(sent.message);
+    }
   }
   gboolean resolved = FALSE;
   for (guint i = 0; i < dns_names->len; i++)
@@ -1896,7 +1916,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/net/isolation", test_isolation);
   g_test_add_func("/groundhog/net/upgrade-close-recovery", test_upgrade_close_recovery);
   g_test_add_func("/groundhog/net/direct-untrusted-socket-filter", test_direct_untrusted_socket_filter);
-  g_test_add_func("/groundhog/net/event-resets-backoff", test_event_resets_backoff_without_eose);
+  g_test_add_func("/groundhog/net/replayed-history-preserves-backoff", test_replayed_history_preserves_backoff);
   g_test_add_func("/groundhog/net/no-session-refuses", test_no_session_refuses);
   g_test_add_func("/groundhog/net/allow-local-network", test_allow_local_network);
   g_test_add_func("/groundhog/net/special-purpose-addresses", test_special_purpose_addresses);
