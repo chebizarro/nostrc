@@ -166,6 +166,17 @@ NOSTR_API void        nostr_relay_publish(NostrRelay *relay, NostrEvent *event);
  */
 NOSTR_API bool        nostr_relay_publish_and_wait(NostrRelay *relay, NostrEvent *event,
                                          uint64_t timeout_ms, Error **err);
+/* Cancellable EVENT publish/OK wait. @cancel is borrowed for the duration of
+ * this call; NULL preserves publish_and_wait behavior. Cancellation returns
+ * false with Error.code == ECANCELED. If cancel and OK are both observable at
+ * completion, cancellation wins; an already returned success is final.
+ * Cancellation cannot recall a queued/sent EVENT. Late OKs still reach the
+ * relay's ordinary OK callback but never change this call's cancelled outcome.
+ * OK correlation is by event ID, not by send attempt. Concurrent waiters for
+ * the same ID on one relay are rejected, not silently replaced.
+ * NIP-42 AUTH with cancellation uses the AUTH session API, not this helper. */
+NOSTR_API bool nostr_relay_publish_and_wait_with_context(NostrRelay *, NostrEvent *,
+    uint64_t timeout_ms, GoContext *cancel, Error **err);
 
 /**
  * nostr_relay_auth:

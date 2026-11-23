@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 cmake_minimum_required(VERSION 3.22)
-project(grotto-panels VERSION 0.1.1 LANGUAGES C)
+project(grotto-panels VERSION 0.1.2 LANGUAGES C)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/VersionHelpers.cmake")
@@ -55,8 +55,40 @@ write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/GrottoPanelsConfig
 install(EXPORT GrottoPanelsTargets NAMESPACE GrottoPanels:: DESTINATION ${_configdir})
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/GrottoPanelsConfig.cmake"
   "${CMAKE_CURRENT_BINARY_DIR}/GrottoPanelsConfigVersion.cmake" DESTINATION ${_configdir})
+file(RELATIVE_PATH GROTTO_PC_PREFIX "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig" "${CMAKE_INSTALL_PREFIX}")
+foreach(_dir LIBDIR INCLUDEDIR DATADIR)
+  file(RELATIVE_PATH _relative_dir "${CMAKE_INSTALL_PREFIX}" "${CMAKE_INSTALL_FULL_${_dir}}")
+  set(GROTTO_PC_${_dir} "\${prefix}/${_relative_dir}")
+endforeach()
 configure_file(grotto-panels-0.pc.in grotto-panels-0.pc @ONLY)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/grotto-panels-0.pc" DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+
+# Separate transport DSO: the widgets retain their audited no-IPC boundary.
+set(GROTTO_CONTROL_CLIENT_VERSION 0.1.0)
+add_library(grotto-control-client SHARED control-client/grotto-panels-control1-service.c)
+add_library(GrottoPanels::ControlClient ALIAS grotto-control-client)
+set_target_properties(grotto-control-client PROPERTIES OUTPUT_NAME grotto-control-client-0
+  VERSION ${GROTTO_CONTROL_CLIENT_VERSION} SOVERSION 0 EXPORT_NAME ControlClient C_VISIBILITY_PRESET hidden)
+target_compile_features(grotto-control-client PUBLIC c_std_11)
+target_compile_definitions(grotto-control-client PRIVATE GROTTO_CONTROL_CLIENT_COMPILATION GETTEXT_PACKAGE="grotto" ${_pins})
+target_include_directories(grotto-control-client PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/grotto-control-client-0>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/grotto-control-client-0>)
+target_link_libraries(grotto-control-client PUBLIC grotto-panels)
+if(Intl_FOUND)
+  target_link_libraries(grotto-control-client PRIVATE Intl::Intl)
+endif()
+if(COMMAND apply_sanitizers)
+  apply_sanitizers(grotto-control-client)
+endif()
+install(TARGETS grotto-control-client EXPORT GrottoPanelsTargets
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(FILES include/grotto-control-client-0/grotto-panels-control1-service.h
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/grotto-control-client-0)
+install(FILES data/org.nostr.Grotto.Control1.xml DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/interfaces)
+configure_file(grotto-control-client-0.pc.in grotto-control-client-0.pc @ONLY)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/grotto-control-client-0.pc" DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
 
 # Keep the shared domain independent of either hosting application's domain.
 find_program(GROTTO_PANELS_MSGFMT msgfmt REQUIRED)
@@ -132,12 +164,11 @@ if(BUILD_TESTING)
     COMMAND ${GROTTO_PANELS_COMPILE_SCHEMAS} "${CMAKE_CURRENT_BINARY_DIR}/test-schemas"
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../../apps/grotto/data/org.nostr.Grotto.gschema.xml" VERBATIM)
   add_custom_target(grotto-panels-test-schemas DEPENDS ${_panel_test_schema})
-  add_executable(test-grotto-panels-control1 tests/test-control1.c
-    ../../apps/grotto/src/grotto-panels-control1-service.c)
-  target_include_directories(test-grotto-panels-control1 PRIVATE ../../apps/grotto/src ../../tests/common)
-  target_link_libraries(test-grotto-panels-control1 PRIVATE grotto-panels nostrc-test-bus)
+  add_executable(test-grotto-panels-control1 tests/test-control1.c)
+  target_include_directories(test-grotto-panels-control1 PRIVATE ../../tests/common)
+  target_link_libraries(test-grotto-panels-control1 PRIVATE grotto-control-client nostrc-test-bus)
   target_compile_definitions(test-grotto-panels-control1 PRIVATE
-    GROTTO_CONTROL_XML_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../apps/grotto/data/org.nostr.Grotto.Control1.xml")
+    GROTTO_CONTROL_XML_PATH="${CMAKE_CURRENT_SOURCE_DIR}/data/org.nostr.Grotto.Control1.xml")
   target_compile_definitions(test-grotto-panels-control1 PRIVATE ${_pins})
   if(COMMAND apply_sanitizers)
     apply_sanitizers(test-grotto-panels-control1)
@@ -145,6 +176,16 @@ if(BUILD_TESTING)
   add_dependencies(test-grotto-panels-control1 grotto-panels-test-schemas)
   add_test(NAME grotto-panels/control1-service COMMAND test-grotto-panels-control1)
   set_tests_properties(grotto-panels/control1-service PROPERTIES TIMEOUT 30 ENVIRONMENT "G_DEBUG=fatal-warnings;GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}/test-schemas;GSETTINGS_BACKEND=memory")
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(NAME grotto-panels/installed-control1 COMMAND ${CMAKE_COMMAND} -E env
+      "CC=${CMAKE_C_COMPILER}"
+      "CFLAGS=${CMAKE_C_FLAGS} $<JOIN:$<TARGET_PROPERTY:grotto-control-client,COMPILE_OPTIONS>, >"
+      "LDFLAGS=${CMAKE_EXE_LINKER_FLAGS} $<JOIN:$<TARGET_PROPERTY:grotto-control-client,LINK_OPTIONS>, >"
+      bash
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test-installed-control1.sh"
+      "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_INSTALL_FULL_LIBDIR}")
+    set_tests_properties(grotto-panels/installed-control1 PROPERTIES TIMEOUT 30)
+  endif()
   if(COMMAND nostrc_describe_test)
     nostrc_describe_test(grotto-panels/smoke-host OWNER grotto.panels
       TARGETS test-grotto-panels-smoke INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan.supp")
@@ -156,6 +197,13 @@ if(BUILD_TESTING)
       INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test-boundaries.py")
     nostrc_describe_test(grotto-panels/control1-service OWNER grotto.panels
       TARGETS test-grotto-panels-control1
-      INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/../../apps/grotto/data/org.nostr.Grotto.Control1.xml")
+      INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/data/org.nostr.Grotto.Control1.xml")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      nostrc_describe_test(grotto-panels/installed-control1 OWNER grotto.panels
+        TARGETS grotto-control-client grotto-panels
+        INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test-installed-control1.sh"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/installed-control1.c"
+          "${CMAKE_CURRENT_SOURCE_DIR}/data/org.nostr.Grotto.Control1.xml")
+    endif()
   endif()
 endif()

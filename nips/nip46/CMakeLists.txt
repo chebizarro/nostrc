@@ -7,7 +7,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/VersionHelpers.cmake")
 endif()
 # One version for the NIP-46 core and optional GLib client/bunker layer.
-declare_component_version(nip46 0 2 0)
+declare_component_version(nip46 0 2 2)
 
 set(NIP46_INC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
@@ -42,11 +42,7 @@ if (NOSTR_WITH_GLIB AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/nip46_client
     nostr/nip46/glib-export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip46")
   target_include_directories(nostr_nip46_glib PUBLIC ${NIP46_INC} ${GIO_INCLUDE_DIRS})
   target_link_directories(nostr_nip46_glib PUBLIC ${GIO_LIBRARY_DIRS})
-  if (TARGET nostr_glib)
-    target_link_libraries(nostr_nip46_glib PUBLIC nostr_glib nostr_nip46_core ${GIO_LIBRARIES})
-  else()
-    target_link_libraries(nostr_nip46_glib PUBLIC nostr_nip46_core ${GIO_LIBRARIES})
-  endif()
+  target_link_libraries(nostr_nip46_glib PUBLIC nostr_nip46_core ${GIO_LIBRARIES})
 endif()
 
 # Deallocation-boundary checks compile the production message implementation
@@ -263,5 +259,15 @@ if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples/nostr-nip46-bunker.c)
 endif()
 
 # Install headers
-install(DIRECTORY ${NIP46_INC}/ DESTINATION include/nostr/nip46)
+install(DIRECTORY ${NIP46_INC}/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+  FILES_MATCHING PATTERN "*.h" PATTERN "*_g.h" EXCLUDE)
 
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcNipPackage.cmake")
+nostrc_install_nip(nostr_nip46_core nip46 "nostr >= 2.5.2" "nip04 >= 0.1.1 nip44 >= 0.1.1 libnostr-json >= 2.0.2")
+if(TARGET nostr_nip46_glib)
+  set(nip46-glib_VERSION "$CACHE{nip46_VERSION}")
+  set(nip46-glib_VERSION_HEADER "${nip46_VERSION_HEADER}")
+  set(nip46-glib_VERSION_HEADER_DIR "${nip46_VERSION_HEADER_DIR}")
+  nostrc_install_nip(nostr_nip46_glib nip46-glib "nip46 >= 0.2.2" "" EXTERNAL_PUBLIC gio-2.0)
+  install(FILES ${NIP46_INC}/nostr/nip46/nip46_client_g.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip46)
+endif()

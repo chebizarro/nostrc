@@ -28,7 +28,7 @@ include(GNUInstallDirs)
 
 option(GROTTO_USE_SYSTEM_PANELS "Use the installed grotto-panels runtime/SDK (native packages)" OFF)
 if(GROTTO_USE_SYSTEM_PANELS)
-  find_package(GrottoPanels 0.1 REQUIRED CONFIG)
+  find_package(GrottoPanels 0.1.2 REQUIRED CONFIG)
 elseif(NOT TARGET GrottoPanels::Panels)
   add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../gnome/grotto-panels"
     "${CMAKE_CURRENT_BINARY_DIR}/grotto-panels")
@@ -260,9 +260,8 @@ target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/ni
 # libnostr core for keys.h and crypto/bip39.h
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/libnostr/include)
 # Link against core to resolve owner APIs
-target_sources(${APP_SIGNER_BIN} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/grotto-panels-control1-service.c"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/grotto-connection-link.c")
-target_link_libraries(${APP_SIGNER_BIN} PRIVATE GrottoPanels::Panels nostr-publish nostrc::bud02 PkgConfig::GROTTO_SOUP)
+target_sources(${APP_SIGNER_BIN} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/grotto-connection-link.c")
+target_link_libraries(${APP_SIGNER_BIN} PRIVATE GrottoPanels::Panels GrottoPanels::ControlClient nostr-publish nostrc::bud02 PkgConfig::GROTTO_SOUP)
 target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB nostr_nip55l_core nip04)
 # Ensure library directories are passed to linker (macOS fix)
 target_link_directories(${APP_SIGNER_BIN} PRIVATE ${GLIB_LIBRARY_DIRS})
@@ -386,7 +385,7 @@ if(TARGET nostr_nip55l_service AND TARGET nostr_nip5f_core)
 option(ENABLE_TCP_IPC "Enable TCP IPC backend in grotto-daemon" OFF)
 
 # Control1 embeds this exact canonical XML; updates trigger reconfiguration.
-set(GROTTO_CONTROL_XML "${CMAKE_CURRENT_SOURCE_DIR}/data/org.nostr.Grotto.Control1.xml")
+set(GROTTO_CONTROL_XML "${CMAKE_CURRENT_SOURCE_DIR}/../../gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${GROTTO_CONTROL_XML}")
 file(READ "${GROTTO_CONTROL_XML}" GROTTO_CONTROL_XML_C)
 string(REPLACE "\\" "\\\\" GROTTO_CONTROL_XML_C "${GROTTO_CONTROL_XML_C}")
@@ -398,7 +397,6 @@ configure_file(daemon/grotto_control_xml.h.in grotto_control_xml.h @ONLY)
 nostrc_record_configure_output("${CMAKE_CURRENT_LIST_FILE}"
   "${CMAKE_CURRENT_SOURCE_DIR}/daemon/grotto_control_xml.h.in"
   "${CMAKE_CURRENT_BINARY_DIR}/grotto_control_xml.h")
-install(FILES "${GROTTO_CONTROL_XML}" DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/interfaces)
 add_library(grotto_control_core STATIC daemon/grotto_control.c daemon/grotto_clients.c
     src/key-migration-event.c daemon/session-lock.c)
 target_include_directories(grotto_control_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/daemon

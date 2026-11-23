@@ -13,7 +13,7 @@ cmake_minimum_required(VERSION 3.16)
 include(GNUInstallDirs)
 option(GROTTO_USE_SYSTEM_PANELS "Use the installed grotto-panels runtime/SDK (native packages)" OFF)
 if(GROTTO_USE_SYSTEM_PANELS)
-  find_package(GrottoPanels 0.1 REQUIRED CONFIG)
+  find_package(GrottoPanels 0.1.2 REQUIRED CONFIG)
 elseif(NOT TARGET GrottoPanels::Panels)
   add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../grotto-panels"
     "${CMAKE_CURRENT_BINARY_DIR}/grotto-panels")
@@ -73,7 +73,6 @@ endif()
 
 # ---- App ----
 add_library(nostr-settings-ui STATIC
-  "${CMAKE_CURRENT_LIST_DIR}/../../apps/grotto/src/grotto-panels-control1-service.c"
   src/ui/nss-grotto.c
   src/ui/nss-window.c
   src/ui/nss-widgets.c
@@ -86,7 +85,7 @@ add_library(nostr-settings-ui STATIC
 target_include_directories(nostr-settings-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
   PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../apps/grotto/src")
 target_compile_options(nostr-settings-ui PRIVATE ${NSS_WARNINGS})
-target_link_libraries(nostr-settings-ui PUBLIC nostr-settings-core PkgConfig::NSS_ADW GrottoPanels::Panels)
+target_link_libraries(nostr-settings-ui PUBLIC nostr-settings-core PkgConfig::NSS_ADW GrottoPanels::Panels GrottoPanels::ControlClient)
 add_executable(nostr-settings src/ui/main.c)
 target_compile_options(nostr-settings PRIVATE ${NSS_WARNINGS})
 target_link_libraries(nostr-settings PRIVATE nostr-settings-ui)

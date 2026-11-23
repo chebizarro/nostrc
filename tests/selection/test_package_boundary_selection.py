@@ -22,6 +22,14 @@ class PackageBoundarySelection(unittest.TestCase):
                            head="a" * 40, base="b" * 40, context="local")
         self.assertNotIn("gnome.shell_extension", plan["selected_checks"])
 
+    def test_control1_xml_selects_shell_extension_consumer(self):
+        path = "gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml"
+        plan = s.make_plan(self.policy, [change(path)], head="a" * 40,
+                           base="b" * 40, context="local")
+        self.assertIn("gnome.shell_extension", plan["selected_checks"])
+        self.assertIn("{source}/" + path,
+                      self.policy["checks"]["gnome.shell_extension"]["runtime_inputs"])
+
     def test_script_and_allowlist_edits_select_only_boundary_commands(self):
         paths = (
             "scripts/check-package-boundaries.sh",
