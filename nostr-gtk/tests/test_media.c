@@ -580,9 +580,14 @@ player_host_stream_and_properties(void)
   gn_video_player_set_loop(player, TRUE);
   g_assert_true(gtk_media_stream_get_loop(stream));
   gn_video_player_set_muted(player, TRUE);
-  g_assert_true(gtk_media_stream_get_muted(stream));
+  g_assert_true(gn_video_player_get_muted(player));
+  g_assert_false(gtk_media_stream_get_muted(stream));
+  gn_video_player_set_volume(player, 0.25);
+  g_assert_cmpfloat(gn_video_player_get_volume(player), ==, 0.25);
+  g_assert_cmpfloat(gtk_media_stream_get_volume(stream), ==, 1.0);
   gn_video_player_set_volume(player, 3.0);
   g_assert_cmpfloat(gn_video_player_get_volume(player), ==, 1.0);
+  gn_video_player_stop(player);
   gboolean autoplay = FALSE;
   g_object_set(player, "autoplay", TRUE, NULL);
   g_object_get(player, "autoplay", &autoplay, NULL);
@@ -591,6 +596,43 @@ player_host_stream_and_properties(void)
   gn_video_player_set_stream(player, NULL);
   g_assert_null(gn_video_player_get_stream(player));
   g_assert_false(gtk_media_stream_get_playing(stream));
+  g_object_unref(player);
+}
+
+typedef struct { GtkMediaFile parent; } DeferredMediaFile;
+typedef struct { GtkMediaFileClass parent; } DeferredMediaFileClass;
+G_DEFINE_TYPE(DeferredMediaFile, deferred_media_file, GTK_TYPE_MEDIA_FILE)
+static void deferred_media_file_init(DeferredMediaFile *self) { (void)self; }
+static void deferred_media_file_noop(GtkMediaFile *file) { (void)file; }
+static void deferred_media_file_class_init(DeferredMediaFileClass *klass) {
+  GTK_MEDIA_FILE_CLASS(klass)->open = deferred_media_file_noop;
+  GTK_MEDIA_FILE_CLASS(klass)->close = deferred_media_file_noop;
+}
+
+static void
+player_applies_audio_when_file_prepares(void)
+{
+  GnVideoPlayer *player = g_object_ref_sink(gn_video_player_new());
+  g_autoptr(GtkMediaStream) stream = g_object_new(deferred_media_file_get_type(), NULL);
+  g_autoptr(GFile) source = g_file_new_for_path("test-media-source");
+  gtk_media_file_set_file(GTK_MEDIA_FILE(stream), source);
+  gn_video_player_set_stream(player, stream);
+  gn_video_player_set_volume(player, 0.25);
+  gn_video_player_set_muted(player, TRUE);
+  g_assert_false(gtk_media_stream_get_muted(stream));
+  g_assert_cmpfloat(gtk_media_stream_get_volume(stream), ==, 1.0);
+  gtk_media_stream_stream_prepared(stream, TRUE, FALSE, FALSE, G_USEC_PER_SEC);
+  g_assert_true(gtk_media_stream_get_muted(stream));
+  g_assert_cmpfloat(gtk_media_stream_get_volume(stream), ==, 0.25);
+  gtk_media_stream_stream_unprepared(stream);
+  gn_video_player_set_volume(player, 0.5);
+  gtk_media_stream_stream_prepared(stream, TRUE, FALSE, FALSE, G_USEC_PER_SEC);
+  g_assert_cmpfloat(gtk_media_stream_get_volume(stream), ==, 0.5);
+  /* Some GTK backends keep prepared set even after destroying the pipeline. */
+  gtk_media_file_clear(GTK_MEDIA_FILE(stream));
+  g_assert_true(gtk_media_stream_is_prepared(stream));
+  gn_video_player_set_volume(player, 0.75);
+  g_assert_cmpfloat(gtk_media_stream_get_volume(stream), ==, 0.5);
   g_object_unref(player);
 }
 
@@ -624,5 +666,6 @@ main(int argc, char **argv)
   g_test_add_func("/media/viewer/streams-in-player", viewer_plays_streams_in_player);
   g_test_add_func("/media/player/consent", player_loads_only_with_consent);
   g_test_add_func("/media/player/host-stream", player_host_stream_and_properties);
+  g_test_add_func("/media/player/deferred-file-audio", player_applies_audio_when_file_prepares);
   return g_test_run();
 }

@@ -198,6 +198,22 @@ static void on_media_error(GtkMediaStream *stream, GParamSpec *pspec, gpointer u
   }
 }
 
+/* GTK's GStreamer GtkMediaFile can exist without a GstPlay (before
+ * opening, after clear, or on backend failure). Keep preferences on the
+ * player until the file backend reports it is ready. */
+static gboolean stream_has_source(GtkMediaStream *stream) {
+  if (!stream) return FALSE;
+  if (!GTK_IS_MEDIA_FILE(stream)) return TRUE;
+  GtkMediaFile *file = GTK_MEDIA_FILE(stream);
+  /* Clearing a GtkMediaFile can leave prepared/seekable set. */
+  return gtk_media_file_get_file(file) || gtk_media_file_get_input_stream(file);
+}
+
+static gboolean stream_can_update_audio(GtkMediaStream *stream) {
+  return stream_has_source(stream) && !gtk_media_stream_get_error(stream) &&
+      (!GTK_IS_MEDIA_FILE(stream) || gtk_media_stream_is_prepared(stream));
+}
+
 /* Media stream prepared callback - called when video metadata is available and ready to play */
 static void on_media_prepared(GtkMediaStream *stream, GParamSpec *pspec, gpointer user_data) {
   GnVideoPlayer *self = GN_VIDEO_PLAYER(user_data);
@@ -206,7 +222,11 @@ static void on_media_prepared(GtkMediaStream *stream, GParamSpec *pspec, gpointe
   if (!GN_IS_VIDEO_PLAYER(self) || self->disposed) return;
 
   gboolean prepared = gtk_media_stream_is_prepared(stream);
-  if (prepared) {
+  if (prepared && stream_can_update_audio(stream)) {
+    if (GTK_IS_MEDIA_FILE(stream)) {
+      gtk_media_stream_set_muted(stream, self->muted);
+      gtk_media_stream_set_volume(stream, self->volume);
+    }
     /* Cancel loading timeout since video is ready */
     cancel_loading_timeout(self);
 
@@ -348,7 +368,7 @@ static void on_seek_value_changed(GtkRange *range, gpointer user_data) {
   if (!self->seeking) return;
 
   GtkMediaStream *stream = self->stream;
-  if (!stream) return;
+  if (!stream_has_source(stream) || !gtk_media_stream_is_seekable(stream)) return;
 
   double value = gtk_range_get_value(range);
   gint64 duration = gtk_media_stream_get_duration(stream);
@@ -755,7 +775,7 @@ static void on_scroll_value_changed(GtkAdjustment *adjustment, gpointer user_dat
     self->is_visible_in_viewport = is_visible;
 
     GtkMediaStream *stream = self->stream;
-    if (!stream) return;
+    if (!stream_has_source(stream)) return;
 
     if (!is_visible) {
       /* Scrolled out of view - pause if playing */
@@ -823,9 +843,10 @@ release_stream(GnVideoPlayer *self)
       g_signal_handler_is_connected(G_OBJECT(stream), self->media_prepared_handler))
     g_signal_handler_disconnect(stream, self->media_prepared_handler);
   self->media_prepared_handler = 0;
-  gtk_media_stream_pause(stream);
+  if (stream_has_source(stream)) gtk_media_stream_pause(stream);
   if (self->owns_stream) {
-    gtk_media_stream_seek(stream, 0);
+    if (stream_has_source(stream) && gtk_media_stream_is_seekable(stream))
+      gtk_media_stream_seek(stream, 0);
     if (GTK_IS_MEDIA_FILE(stream)) gtk_media_file_clear(GTK_MEDIA_FILE(stream));
   }
   if (GTK_IS_PICTURE(self->picture)) gtk_picture_set_paintable(GTK_PICTURE(self->picture), NULL);
@@ -861,8 +882,10 @@ attach_stream(GnVideoPlayer *self, GtkMediaStream *stream, gboolean owned)
   self->media_prepared_handler = g_signal_connect(stream, "notify::prepared",
                                                   G_CALLBACK(on_media_prepared), self);
   gtk_media_stream_set_loop(stream, self->loop);
-  gtk_media_stream_set_muted(stream, self->muted);
-  gtk_media_stream_set_volume(stream, self->volume);
+  if (!GTK_IS_MEDIA_FILE(stream) && stream_can_update_audio(stream)) {
+    gtk_media_stream_set_muted(stream, self->muted);
+    gtk_media_stream_set_volume(stream, self->volume);
+  }
   /* LEGITIMATE TIMEOUT - Position slider update during playback (250ms).
    * nostrc-b0h: Audited - polling playback position is standard. Runs only
    * while there is a stream (nostrc-8xfib.4: no timer per idle card) and
@@ -1013,7 +1036,7 @@ static void
 gn_video_player_unmap(GtkWidget *widget)
 {
   GnVideoPlayer *self = GN_VIDEO_PLAYER(widget);
-  if (self->stream && !self->is_fullscreen) gtk_media_stream_pause(self->stream);
+  if (!self->is_fullscreen && stream_has_source(self->stream)) gtk_media_stream_pause(self->stream);
   GTK_WIDGET_CLASS(gn_video_player_parent_class)->unmap(widget);
 }
 
@@ -1280,7 +1303,7 @@ void gn_video_player_play(GnVideoPlayer *self) {
   g_return_if_fail(GN_IS_VIDEO_PLAYER(self));
 
   GtkMediaStream *stream = self->stream;
-  if (stream) {
+  if (stream_has_source(stream)) {
     gtk_media_stream_play(stream);
   }
   update_play_pause_icon(self);
@@ -1290,7 +1313,7 @@ void gn_video_player_pause(GnVideoPlayer *self) {
   g_return_if_fail(GN_IS_VIDEO_PLAYER(self));
 
   GtkMediaStream *stream = self->stream;
-  if (stream) {
+  if (stream_has_source(stream)) {
     gtk_media_stream_pause(stream);
   }
   update_play_pause_icon(self);
@@ -1300,7 +1323,7 @@ void gn_video_player_toggle_playback(GnVideoPlayer *self) {
   g_return_if_fail(GN_IS_VIDEO_PLAYER(self));
 
   GtkMediaStream *stream = self->stream;
-  if (!stream) return;
+  if (!stream_has_source(stream)) return;
 
   if (gtk_media_stream_get_playing(stream)) {
     gtk_media_stream_pause(stream);
@@ -1314,13 +1337,13 @@ void gn_video_player_stop(GnVideoPlayer *self) {
   g_return_if_fail(GN_IS_VIDEO_PLAYER(self));
 
   GtkMediaStream *stream = self->stream;
-  if (!stream) return;
+  if (!stream_has_source(stream)) return;
 
   /* Pause playback */
   gtk_media_stream_pause(stream);
 
-  /* Seek to beginning to show thumbnail/poster */
-  gtk_media_stream_seek(stream, 0);
+  /* Seek to beginning to show thumbnail/poster, if a backend is ready. */
+  if (gtk_media_stream_is_seekable(stream)) gtk_media_stream_seek(stream, 0);
 
   update_play_pause_icon(self);
   update_time_labels(self);
@@ -1449,7 +1472,7 @@ void gn_video_player_set_muted(GnVideoPlayer *self, gboolean muted) {
   g_return_if_fail(GN_IS_VIDEO_PLAYER(self));
   self->muted = muted;
 
-  if (self->stream) {
+  if (stream_can_update_audio(self->stream)) {
     gtk_media_stream_set_muted(self->stream, muted);
   }
   update_mute_icon(self);
@@ -1465,7 +1488,7 @@ void gn_video_player_set_volume(GnVideoPlayer *self, double volume) {
   g_return_if_fail(GN_IS_VIDEO_PLAYER(self));
   self->volume = CLAMP(volume, 0.0, 1.0);
 
-  if (self->stream) {
+  if (stream_can_update_audio(self->stream)) {
     gtk_media_stream_set_volume(self->stream, self->volume);
   }
 
