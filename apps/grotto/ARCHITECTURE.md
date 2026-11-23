@@ -17,7 +17,6 @@ The main GTK application that provides the user interface for managing Nostr ide
 
 - **Core Components**:
   - `AccountsStore`: Manages Nostr identities and their metadata
-  - `signer_grants`: Lists and revokes the signer daemon's remembered decisions (ListGrants/RevokeGrant)
   - UI Controllers: Handle user interactions and update the UI accordingly
 
 ### 2. Signer Daemon (`grotto-daemon`)
@@ -99,7 +98,6 @@ grotto/
 ├── packaging/       # Distribution packaging
 ├── src/             # Main application source
 │   ├── accounts_store.c  # Account management
-│   ├── signer_grants.c   # Remembered decisions (via the daemon)
 │   └── ui/          # User interface components
 └── tests/           # Unit and integration tests
 ```

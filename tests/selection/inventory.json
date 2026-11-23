@@ -371,7 +371,6 @@
           "signer/dbus",
           "signer/desktop-contract",
           "signer/panel-inbox-model",
-          "signer/hsm-provider",
           "signer/identity",
           "signer/identity-management",
           "signer/identity-model",
@@ -386,7 +385,6 @@
           "signer/session",
           "signer/session-lock",
           "signer/signer-core",
-          "signer/social-recovery",
           "signer/trust-tiers",
           "signer/ui",
           "signer/ui-accessibility",
@@ -19872,15 +19870,13 @@
           "signer/bunker-startup",
           "signer/core",
           "signer/crypto",
-          "signer/hsm-provider",
           "signer/identity",
           "signer/legacy-dirs",
           "signer/profile-guard",
           "signer/rate-limiter",
           "signer/secure-mem",
           "signer/session",
-          "signer/signer-core",
-          "signer/social-recovery"
+          "signer/signer-core"
         ],
         "core.linux.asan": [
           "signer/blueprint-drift",
@@ -19888,30 +19884,26 @@
           "signer/bunker-startup",
           "signer/core",
           "signer/crypto",
-          "signer/hsm-provider",
           "signer/identity",
           "signer/legacy-dirs",
           "signer/profile-guard",
           "signer/rate-limiter",
           "signer/secure-mem",
           "signer/session",
-          "signer/signer-core",
-          "signer/social-recovery"
+          "signer/signer-core"
         ],
         "grotto.linux.asan_ubsan": [
           "signer/blueprint-drift",
           "signer/bunker-startup",
           "signer/core",
           "signer/crypto",
-          "signer/hsm-provider",
           "signer/identity",
           "signer/legacy-dirs",
           "signer/profile-guard",
           "signer/rate-limiter",
           "signer/secure-mem",
           "signer/session",
-          "signer/signer-core",
-          "signer/social-recovery"
+          "signer/signer-core"
         ],
         "groundhog.linux": [
           "signer/blueprint-drift",
@@ -19919,15 +19911,13 @@
           "signer/bunker-startup",
           "signer/core",
           "signer/crypto",
-          "signer/hsm-provider",
           "signer/identity",
           "signer/legacy-dirs",
           "signer/profile-guard",
           "signer/rate-limiter",
           "signer/secure-mem",
           "signer/session",
-          "signer/signer-core",
-          "signer/social-recovery"
+          "signer/signer-core"
         ],
         "groundhog.mdk08": [
           "signer/blueprint-drift",
@@ -19935,15 +19925,13 @@
           "signer/bunker-startup",
           "signer/core",
           "signer/crypto",
-          "signer/hsm-provider",
           "signer/identity",
           "signer/legacy-dirs",
           "signer/profile-guard",
           "signer/rate-limiter",
           "signer/secure-mem",
           "signer/session",
-          "signer/signer-core",
-          "signer/social-recovery"
+          "signer/signer-core"
         ],
         "groundhog.mdk011": [
           "signer/blueprint-drift",
@@ -19951,15 +19939,13 @@
           "signer/bunker-startup",
           "signer/core",
           "signer/crypto",
-          "signer/hsm-provider",
           "signer/identity",
           "signer/legacy-dirs",
           "signer/profile-guard",
           "signer/rate-limiter",
           "signer/secure-mem",
           "signer/session",
-          "signer/signer-core",
-          "signer/social-recovery"
+          "signer/signer-core"
         ]
       },
       "build_targets": [
@@ -19967,15 +19953,13 @@
         "test-bunker-startup",
         "test-core",
         "test-crypto",
-        "test-hsm-provider",
         "test-identity",
         "test-legacy-dirs",
         "test-profile-guard",
         "test-rate-limiter",
         "test-secure-mem",
         "test-session",
-        "test-signer-core",
-        "test-social-recovery"
+        "test-signer-core"
       ],
       "runtime_inputs": []
     },
@@ -35162,7 +35146,6 @@
         "signer/dbus",
         "signer/desktop-contract",
         "signer/panel-inbox-model",
-        "signer/hsm-provider",
         "signer/identity",
         "signer/identity-management",
         "signer/identity-model",
@@ -35177,7 +35160,6 @@
         "signer/session",
         "signer/session-lock",
         "signer/signer-core",
-        "signer/social-recovery",
         "signer/trust-tiers",
         "signer/ui",
         "signer/ui-accessibility",
@@ -35626,7 +35608,6 @@
         "signer/dbus",
         "signer/desktop-contract",
         "signer/panel-inbox-model",
-        "signer/hsm-provider",
         "signer/identity",
         "signer/identity-management",
         "signer/identity-model",
@@ -35641,7 +35622,6 @@
         "signer/session",
         "signer/session-lock",
         "signer/signer-core",
-        "signer/social-recovery",
         "signer/trust-tiers",
         "signer/ui",
         "signer/ui-accessibility",
@@ -36091,7 +36071,6 @@
         "signer/dbus",
         "signer/desktop-contract",
         "signer/panel-inbox-model",
-        "signer/hsm-provider",
         "signer/identity",
         "signer/identity-management",
         "signer/identity-model",
@@ -36106,7 +36085,6 @@
         "signer/session",
         "signer/session-lock",
         "signer/signer-core",
-        "signer/social-recovery",
         "signer/trust-tiers",
         "signer/ui",
         "signer/ui-accessibility",

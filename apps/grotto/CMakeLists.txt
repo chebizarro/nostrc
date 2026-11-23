@@ -71,43 +71,6 @@ else()
   message(STATUS "libsecp256k1 not found - using libnostr for secp256k1 operations")
 endif()
 
-# Optional PKCS#11 support for hardware security modules (HSM)
-option(GROTTO_WITH_PKCS11 "Enable PKCS#11 HSM support" ON)
-if (GROTTO_WITH_PKCS11)
-  pkg_check_modules(P11KIT QUIET IMPORTED_TARGET p11-kit-1)
-  if (P11KIT_FOUND)
-    message(STATUS "p11-kit found - PKCS#11 HSM support enabled")
-  else()
-    message(STATUS "p11-kit not found - PKCS#11 HSM support disabled (mock provider only)")
-  endif()
-endif()
-
-# Optional hidapi for hardware wallet support (Ledger, Trezor)
-option(GROTTO_WITH_HW_WALLET "Enable hardware wallet support (Ledger/Trezor)" ON)
-if (GROTTO_WITH_HW_WALLET)
-  pkg_check_modules(HIDAPI QUIET IMPORTED_TARGET hidapi)
-  if (NOT HIDAPI_FOUND)
-    # Try platform-specific variants
-    if (APPLE)
-      pkg_check_modules(HIDAPI QUIET IMPORTED_TARGET hidapi)
-    elseif(WIN32)
-      pkg_check_modules(HIDAPI QUIET IMPORTED_TARGET hidapi)
-    else()
-      # Linux: try hidapi-libusb or hidapi-hidraw
-      pkg_check_modules(HIDAPI QUIET IMPORTED_TARGET hidapi-libusb)
-      if (NOT HIDAPI_FOUND)
-        pkg_check_modules(HIDAPI QUIET IMPORTED_TARGET hidapi-hidraw)
-      endif()
-    endif()
-  endif()
-  if (HIDAPI_FOUND)
-    message(STATUS "hidapi found - Hardware wallet support enabled (Ledger/Trezor)")
-  else()
-    message(STATUS "hidapi not found - Hardware wallet support disabled")
-    message(STATUS "  Install hidapi: brew install hidapi (macOS), apt install libhidapi-dev (Linux)")
-  endif()
-endif()
-
 # Pairing link QR generation is required on the supported native Linux GUI.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   pkg_check_modules(QRENCODE REQUIRED IMPORTED_TARGET libqrencode)
@@ -340,20 +303,6 @@ if (SECP256K1_FOUND)
   target_compile_definitions(${APP_SIGNER_BIN} PRIVATE HAVE_SECP256K1=1)
 endif()
 
-# Link p11-kit for PKCS#11 HSM support if available
-if (GROTTO_WITH_PKCS11 AND P11KIT_FOUND)
-  target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::P11KIT)
-  target_compile_definitions(${APP_SIGNER_BIN} PRIVATE GNOSTR_HAVE_PKCS11=1)
-  message(STATUS "grotto: PKCS#11 HSM support enabled")
-endif()
-
-# Link hidapi for hardware wallet support if available
-if (GROTTO_WITH_HW_WALLET AND HIDAPI_FOUND)
-  target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::HIDAPI)
-  target_compile_definitions(${APP_SIGNER_BIN} PRIVATE GNOSTR_HAVE_HIDAPI=1)
-  message(STATUS "grotto: Hardware wallet support enabled (Ledger/Trezor)")
-endif()
-
 # Link libqrencode for QR code generation if available
 if (QRENCODE_FOUND)
   target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::QRENCODE)
@@ -419,10 +368,10 @@ find_library(NSYNC_LIB nsync REQUIRED)
 target_link_libraries(grotto-daemon PRIVATE nostr_nip55l_service nostr_nip5f_core nip04 PkgConfig::GLIB ${NSYNC_LIB})
 
 # NIP-46 bunker mode (--bunker). bunker_service.c and its GTK-free closure
-# (settings, accounts, secret store, sessions, rate limiter, history) build
+# (settings, accounts, secret store, rate limiter, history) build
 # into a static library only for the headless daemon, which owns the gate.
 add_library(grotto_bunker_core STATIC
-  src/bunker_service.c src/pairing_uri.c src/accounts_store.c src/client_session.c
+  src/bunker_service.c src/pairing_uri.c src/accounts_store.c
   src/event_history.c src/gn-signer-error.c src/key_provider.c
   src/key_provider_secp256k1.c src/rate-limiter.c src/secret_store.c
   src/secure-delete.c src/secure-mem.c src/secure-memory.c

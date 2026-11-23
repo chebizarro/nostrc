@@ -56,7 +56,6 @@ Do not run whole-repository CTest for an ordinary Grotto change.
 
 - `src/`: Main application source code
   - `accounts_store.[ch]`: Account management
-  - `signer_grants.[ch]`: Remembered decisions, listed/revoked through the daemon
   - `ui/`: GTK UI components
     - `*.ui`: UI definitions in XML format
     - `*.c`: UI controller code

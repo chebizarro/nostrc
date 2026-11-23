@@ -269,38 +269,7 @@ set_tests_properties(signer/approval-dialog PROPERTIES
 )
 
 # ==============================================================================
-# Test: HSM provider (Hardware Security Module abstraction)
-# Issue: nostrc-n30
-# ==============================================================================
-add_executable(test-hsm-provider
-    test_hsm_provider.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/hsm_provider.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/hsm_provider_mock.c
-)
-target_include_directories(test-hsm-provider PRIVATE
-    ${SIGNER_INCLUDE_DIRS}
-)
-target_link_libraries(test-hsm-provider PRIVATE
-    ${SIGNER_TEST_LIBS}
-    nostr_gobject
-)
-# Link nip19 for npub encoding
-if(TARGET nip19)
-    target_link_libraries(test-hsm-provider PRIVATE nip19)
-endif()
-target_link_directories(test-hsm-provider PRIVATE ${SIGNER_TEST_LINK_DIRS})
-target_compile_features(test-hsm-provider PRIVATE c_std_11)
-apply_test_sanitizers(test-hsm-provider)
-
-add_test(NAME signer/hsm-provider COMMAND test-hsm-provider)
-set_tests_properties(signer/hsm-provider PROPERTIES
-    TIMEOUT 30
-    LABELS "signer;hsm;security;unit"
-    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/grotto"
-)
-
-# ==============================================================================
-# Test: Core signer modules (secret_store, backup-recovery, session, relay, delegation)
+# Test: Core signer modules (secret_store, backup-recovery, session, relay)
 # Uses mock implementations to test core functionality without external dependencies
 # Issue: nostrc-ddh
 # ==============================================================================
@@ -314,7 +283,7 @@ apply_test_sanitizers(test-core)
 add_test(NAME signer/core COMMAND test-core)
 set_tests_properties(signer/core PROPERTIES
     TIMEOUT 60
-    LABELS "signer;core;unit;secret_store;backup;session;relay;delegation"
+    LABELS "signer;core;unit;secret_store;backup;session;relay"
     ENVIRONMENT "GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/grotto"
 )
 
@@ -356,28 +325,6 @@ if(GST_FOUND AND ZBAR_FOUND AND QRENCODE_FOUND)
   set_tests_properties(signer/qr-scanner PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 LABELS "signer;ui;camera" ENVIRONMENT "${_UI_TEST_ENV}")
 endif()
 
-# Test: Social Recovery (Shamir's Secret Sharing)
-# Issue: nostrc-e9a
-# ==============================================================================
-add_executable(test-social-recovery
-    test-social-recovery.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/social-recovery.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/secure-mem.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/backup-recovery.c
-)
-target_include_directories(test-social-recovery PRIVATE ${SIGNER_INCLUDE_DIRS})
-target_link_libraries(test-social-recovery PRIVATE ${SIGNER_TEST_LIBS} nostr_gobject)
-target_link_directories(test-social-recovery PRIVATE ${SIGNER_TEST_LINK_DIRS})
-target_compile_features(test-social-recovery PRIVATE c_std_11)
-apply_test_sanitizers(test-social-recovery)
-
-add_test(NAME signer/social-recovery COMMAND test-social-recovery)
-set_tests_properties(signer/social-recovery PROPERTIES
-    TIMEOUT 60
-    LABELS "signer;social-recovery;security;unit"
-    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/grotto"
-)
-
 # ==============================================================================
 # Test: Signer Core functionality (key generation, signing, NIP-44, event workflow)
 # Comprehensive tests for core cryptographic and signing operations
@@ -408,7 +355,7 @@ set_tests_properties(signer/signer-core PROPERTIES
 # All signer tests target (convenience)
 # ==============================================================================
 add_custom_target(signer-tests
-    DEPENDS test-crypto test-identity test-session test-dbus test-rate-limiter test-ui test-approval-dialog test-hsm-provider test-core test-secure-mem test-social-recovery test-signer-core
+    DEPENDS test-crypto test-identity test-session test-dbus test-rate-limiter test-ui test-approval-dialog test-core test-secure-mem test-signer-core
     COMMENT "Building all grotto tests"
 )
 

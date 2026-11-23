@@ -26,9 +26,6 @@ class GnostrSigner < Formula
   depends_on "openssl@3"
   depends_on "libsecret"
 
-  # Optional for PKCS#11 HSM support
-  depends_on "p11-kit" => :optional
-
   def install
     # Set up environment for OpenSSL
     ENV["OPENSSL_ROOT_DIR"] = Formula["openssl@3"].opt_prefix
