@@ -602,8 +602,7 @@ test_expiry_ex1_outbox(void)
   GhAccountRelays *relays = gh_account_relays_new(a.accounts, a.settings, &scope_transport, scopes);
   FakeResolver *resolver = g_object_new(FAKE_TYPE_RESOLVER, NULL);
   FakeMonitor *network = g_object_new(FAKE_TYPE_MONITOR, NULL);
-  GhDmSender *sender = gh_dm_sender_new(a.accounts, relays, GH_INBOX_RESOLVER(resolver),
-                                        &pub_transport, publishes);
+  GhDmSender *sender = gh_dm_sender_new(a.accounts, relays, GH_INBOX_RESOLVER(resolver));
   GhClock *clock = gh_clock_new_fake(T0 * G_USEC_PER_SEC);
   g_autofree gchar *data_dir = g_dir_make_tmp("groundhog-expiry-XXXXXX", NULL);
   g_assert_nonnull(data_dir);

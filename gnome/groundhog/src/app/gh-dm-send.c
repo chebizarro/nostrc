@@ -1,46 +1,23 @@
 #include "gh-dm-send.h"
-#include "gh-auth-policy.h"
-#include "gh-clock.h"
 #include "gh-identity.h"
 #include "gh-nip17-envelope.h"
-#include "gh-signer.h"
-#include "nostr/nip59/nip59.h"
 
 #include <nostr-event.h>
-#include <stdlib.h>
 #include <string.h>
 
 #define MAX_TARGETS 16 /* the relay publish's own bound */
-#define ROOM_SPACING_MAX_S 3 /* charter §4.5 S4: a room's wraps U(0, 3) s apart */
-
-typedef enum { MODE_SEND, MODE_SEAL, MODE_PUBLISH } Mode;
-
 struct _GhDmSender {
   GObject parent_instance;
   GhAccountController *accounts; /* NULL once disposed */
   GhAccountRelays *account_relays;
   GhInboxResolver *inboxes;
-  GhRelayPublishTransport transport;
-  gpointer transport_data;
-  gboolean custom_transport;
-  guint publish_deadline; /* 0: the publish default */
   GHashTable *inflight;   /* GhDmSend (owned) until done */
-  GhClock *clock;         /* S4 spacing; the system clock unless set */
 };
-
-/* A room recipient's wrap waiting for its S4 turn (nostrc-yp69). */
-typedef struct {
-  GhDmSend *self;         /* not a reference: finish() removes the timeout */
-  GhDmSendLeg *leg;       /* borrowed from self->status */
-  guint id;               /* the GhClock timeout; 0 once it ran */
-} Spaced;
 
 struct _GhDmSend {
   GObject parent_instance;
   GhDmSender *sender; /* owned while in flight, NULL once done */
   GhDmSendStatus status;
-  Mode mode;
-  gchar *content;     /* wiped once sealed */
   gchar *rumor;       /* seal_rumor: the caller's stored rumor; wiped once sealed */
   gboolean has_outer; /* the rumor expires: outer holds its layers' expirations */
   GhNip17RoomExpiration outer;
@@ -53,9 +30,6 @@ struct _GhDmSend {
   GSource *generation_cancel;
   gulong relays_handler;
   void (*after_relays)(GhDmSend *self);
-  GHashTable *publishes; /* GhRelayPublish (owned) -> GhDmSendLeg (borrowed) */
-  GhClock *clock;        /* the sender's, for the S4 timeouts */
-  GPtrArray *spaced;     /* Spaced, room wraps still waiting */
 };
 
 enum { SIGNAL_CHANGED, N_SIGNALS };
@@ -71,7 +45,6 @@ relay_outcome_free(gpointer data)
 {
   GhDmRelayOutcome *outcome = data;
   g_free(outcome->url);
-  g_free(outcome->message);
   g_free(outcome);
 }
 
@@ -99,29 +72,6 @@ leg_free(gpointer data)
   g_free(leg);
 }
 
-static GhDmSendLeg *
-leg_copy(const GhDmSendLeg *src)
-{
-  if (!src)
-    return NULL;
-  GhDmSendLeg *leg = leg_new(src->pubkey);
-  leg->inbox = src->inbox;
-  leg->inbox_event_id = g_strdup(src->inbox_event_id);
-  leg->wrap_id = g_strdup(src->wrap_id);
-  leg->wrap_json = g_strdup(src->wrap_json);
-  leg->accepted = src->accepted;
-  leg->complete = src->complete;
-  for (guint i = 0; src->relays && i < src->relays->len; i++) {
-    const GhDmRelayOutcome *from = g_ptr_array_index(src->relays, i);
-    GhDmRelayOutcome *to = g_new0(GhDmRelayOutcome, 1);
-    *to = *from;
-    to->url = g_strdup(from->url);
-    to->message = g_strdup(from->message);
-    g_ptr_array_add(leg->relays, to);
-  }
-  return leg;
-}
-
 static void
 status_clear(GhDmSendStatus *status)
 {
@@ -131,81 +81,6 @@ status_clear(GhDmSendStatus *status)
   g_clear_pointer(&status->rumor_json, g_free);
   g_clear_pointer(&status->recipients, g_ptr_array_unref);
   g_clear_pointer(&status->self_copy, leg_free);
-}
-
-static void
-status_copy_into(GhDmSendStatus *dest, const GhDmSendStatus *src)
-{
-  *dest = *src;
-  dest->error_message = g_strdup(src->error_message);
-  dest->sender = g_strdup(src->sender);
-  dest->rumor_id = g_strdup(src->rumor_id);
-  dest->rumor_json = g_strdup(src->rumor_json);
-  dest->recipients = g_ptr_array_new_with_free_func(leg_free);
-  for (guint i = 0; src->recipients && i < src->recipients->len; i++)
-    g_ptr_array_add(dest->recipients, leg_copy(g_ptr_array_index(src->recipients, i)));
-  dest->self_copy = leg_copy(src->self_copy);
-}
-
-GhDmSendStatus *
-gh_dm_send_status_copy(const GhDmSendStatus *status)
-{
-  g_return_val_if_fail(status != NULL, NULL);
-  GhDmSendStatus *copy = g_new0(GhDmSendStatus, 1);
-  status_copy_into(copy, status);
-  return copy;
-}
-
-void
-gh_dm_send_status_free(GhDmSendStatus *status)
-{
-  if (!status)
-    return;
-  status_clear(status);
-  g_free(status);
-}
-
-static guint
-recipients_reached(const GhDmSendStatus *status)
-{
-  guint reached = 0;
-  for (guint i = 0; status->recipients && i < status->recipients->len; i++)
-    reached += ((GhDmSendLeg *)g_ptr_array_index(status->recipients, i))->accepted > 0;
-  return reached;
-}
-
-GhMessageStatus
-gh_dm_send_status_get_message_status(const GhDmSendStatus *status)
-{
-  g_return_val_if_fail(status != NULL, GH_MESSAGE_STATUS_NOT_SENT);
-  switch (status->result) {
-  case GH_DM_SEND_RESULT_CANCELLED:          return GH_MESSAGE_STATUS_CANCELLED;
-  case GH_DM_SEND_RESULT_NO_RECIPIENT_INBOX: return GH_MESSAGE_STATUS_CANNOT_SEND_NO_INBOX;
-  case GH_DM_SEND_RESULT_SENT:               return GH_MESSAGE_STATUS_SENT;
-  case GH_DM_SEND_RESULT_PARTIALLY_SENT:     return GH_MESSAGE_STATUS_PARTIALLY_SENT;
-  case GH_DM_SEND_RESULT_FAILED:
-  case GH_DM_SEND_RESULT_INBOX_UNKNOWN:      return GH_MESSAGE_STATUS_NOT_SENT;
-  case GH_DM_SEND_RESULT_SEALED:             return GH_MESSAGE_STATUS_SENDING;
-  case GH_DM_SEND_RESULT_PENDING:            break;
-  }
-  if (status->phase == GH_DM_SEND_PHASE_SEALING)
-    return GH_MESSAGE_STATUS_WAITING_FOR_SIGNER;
-  guint reached = recipients_reached(status);
-  guint total = status->recipients ? status->recipients->len : 0;
-  if (total && reached == total)
-    return GH_MESSAGE_STATUS_SENT;
-  return reached ? GH_MESSAGE_STATUS_PARTIALLY_SENT : GH_MESSAGE_STATUS_SENDING;
-}
-
-gboolean
-gh_dm_send_status_self_copy_stored(const GhDmSendStatus *status)
-{
-  g_return_val_if_fail(status != NULL, FALSE);
-  if (status->self_copy)
-    return status->self_copy->accepted > 0;
-  /* A note to self is its own copy. */
-  return status->recipients && status->recipients->len &&
-         ((GhDmSendLeg *)g_ptr_array_index(status->recipients, 0))->accepted > 0;
 }
 
 /* Validated, deduplicated targets from an inbox list; FALSE when none. */
@@ -221,50 +96,15 @@ leg_set_targets(GhDmSendLeg *leg, const gchar *const *urls)
       continue;
     GhDmRelayOutcome *outcome = g_new0(GhDmRelayOutcome, 1);
     outcome->url = g_strdup(urls[i]);
-    outcome->outcome = GH_RELAY_PUBLISH_PENDING;
     g_ptr_array_add(leg->relays, outcome);
   }
   return leg->relays->len > 0;
-}
-
-static GhDmRelayOutcome *
-leg_outcome(GhDmSendLeg *leg, const gchar *url)
-{
-  for (guint i = 0; i < leg->relays->len; i++) {
-    GhDmRelayOutcome *outcome = g_ptr_array_index(leg->relays, i);
-    if (g_strcmp0(outcome->url, url) == 0)
-      return outcome;
-  }
-  return NULL;
-}
-
-static void
-leg_mark_pending(GhDmSendLeg *leg, GhRelayPublishOutcome outcome, const gchar *message)
-{
-  for (guint i = 0; leg && i < leg->relays->len; i++) {
-    GhDmRelayOutcome *entry = g_ptr_array_index(leg->relays, i);
-    if (entry->outcome != GH_RELAY_PUBLISH_PENDING)
-      continue;
-    entry->outcome = outcome;
-    g_free(entry->message);
-    entry->message = g_strdup(message);
-  }
 }
 
 static GhDmSendLeg *
 first_recipient(GhDmSend *self)
 {
   return g_ptr_array_index(self->status.recipients, 0);
-}
-
-/* Room recipients whose inbox gave no target: nothing goes out for them. */
-static gboolean
-any_recipient_without_targets(const GhDmSendStatus *status)
-{
-  for (guint i = 0; i < status->recipients->len; i++)
-    if (((GhDmSendLeg *)g_ptr_array_index(status->recipients, i))->relays->len == 0)
-      return TRUE;
-  return FALSE;
 }
 
 /* ---- operation lifecycle ------------------------------------------------- */
@@ -309,41 +149,12 @@ wipe_string(gchar **text)
 }
 
 static void
-wipe_content(GhDmSend *self)
-{
-  wipe_string(&self->content);
-  wipe_string(&self->rumor);
-}
-
-/* Terminal transition; runs once. Every hook is released, and the inbox
- * lookup and any signer approval still pending are revoked via self->cancel. */
-static void
-clear_spaced(GhDmSend *self)
-{
-  for (guint i = 0; self->spaced && i < self->spaced->len; i++) {
-    Spaced *spaced = g_ptr_array_index(self->spaced, i);
-    if (spaced->id)
-      gh_clock_source_remove(self->clock, spaced->id);
-    spaced->id = 0;
-  }
-  if (self->spaced)
-    g_ptr_array_set_size(self->spaced, 0);
-}
-
-static void
 finish(GhDmSend *self, GhDmSendResult result, GhDmSendFailure failure,
        const gchar *message, gboolean emit)
 {
   if (is_done(self))
     return;
   g_object_ref(self);
-  clear_spaced(self);
-  GHashTableIter iter;
-  gpointer publish;
-  g_hash_table_iter_init(&iter, self->publishes);
-  while (g_hash_table_iter_next(&iter, &publish, NULL))
-    gh_relay_publish_cancel(publish);
-  g_hash_table_remove_all(self->publishes);
   destroy_source(&self->start);
   destroy_source(&self->caller_cancel);
   destroy_source(&self->generation_cancel);
@@ -352,14 +163,8 @@ finish(GhDmSend *self, GhDmSendResult result, GhDmSendFailure failure,
     self->relays_handler = 0;
   }
   g_cancellable_cancel(self->cancel);
-  wipe_content(self);
+  wipe_string(&self->rumor);
   GhDmSendStatus *status = &self->status;
-  if (result == GH_DM_SEND_RESULT_CANCELLED) {
-    for (guint i = 0; status->recipients && i < status->recipients->len; i++)
-      leg_mark_pending(g_ptr_array_index(status->recipients, i),
-                       GH_RELAY_PUBLISH_CANCELLED, NULL);
-    leg_mark_pending(status->self_copy, GH_RELAY_PUBLISH_CANCELLED, NULL);
-  }
   status->result = result;
   status->failure = failure;
   if (message && !status->error_message)
@@ -412,9 +217,6 @@ track(GhDmSend *self, GhDmSender *sender, GCancellable *cancellable)
 {
   self->status.account_generation = gh_account_controller_get_generation(sender->accounts);
   self->sender = g_object_ref(sender);
-  if (!sender->clock)
-    sender->clock = gh_clock_new_system();
-  self->clock = gh_clock_ref(sender->clock);
   g_hash_table_add(sender->inflight, g_object_ref(self));
   if (cancellable && g_cancellable_is_cancelled(cancellable)) {
     finish(self, GH_DM_SEND_RESULT_CANCELLED, GH_DM_SEND_FAILURE_NONE,
@@ -516,232 +318,6 @@ await_own_relays(GhDmSend *self, void (*next)(GhDmSend *self))
                                           G_CALLBACK(on_account_relays_changed), self);
 }
 
-/* ---- publishing ---------------------------------------------------------- */
-
-static void
-finalize_result(GhDmSend *self)
-{
-  GhDmSendStatus *status = &self->status;
-  for (guint i = 0; i < status->recipients->len; i++) {
-    GhDmSendLeg *leg = g_ptr_array_index(status->recipients, i);
-    if (leg->accepted > 0 && leg->accepted < leg->relays->len)
-      status->flags |= GH_DM_SEND_FLAG_RECIPIENT_PARTIAL;
-  }
-  GhDmSendLeg *copy = status->self_copy;
-  if (copy && copy->relays->len > 0) {
-    if (copy->accepted == 0)
-      status->flags |= GH_DM_SEND_FLAG_SELF_COPY_FAILED;
-    else if (copy->accepted < copy->relays->len)
-      status->flags |= GH_DM_SEND_FLAG_SELF_COPY_PARTIAL;
-  }
-  guint reached = recipients_reached(status);
-  if (reached == status->recipients->len)
-    finish(self, GH_DM_SEND_RESULT_SENT, GH_DM_SEND_FAILURE_NONE, NULL, TRUE);
-  else if (reached > 0)
-    finish(self, GH_DM_SEND_RESULT_PARTIALLY_SENT, GH_DM_SEND_FAILURE_NONE,
-           "Some recipients' inbox relays did not accept the message", TRUE);
-  else
-    finish(self, GH_DM_SEND_RESULT_FAILED, GH_DM_SEND_FAILURE_RELAYS,
-           "No recipient inbox relay accepted the message", TRUE);
-}
-
-static gboolean
-all_legs_complete(GhDmSend *self)
-{
-  for (guint i = 0; i < self->status.recipients->len; i++)
-    if (!((GhDmSendLeg *)g_ptr_array_index(self->status.recipients, i))->complete)
-      return FALSE;
-  return !self->status.self_copy || self->status.self_copy->complete;
-}
-
-static void
-check_published(GhDmSend *self)
-{
-  if (!is_done(self) && all_legs_complete(self))
-    finalize_result(self);
-}
-
-static void
-on_publish_update(GhRelayPublish *publish, const GhRelayPublishResult *result,
-                  gpointer data)
-{
-  GhDmSend *self = data;
-  if (is_done(self))
-    return;
-  if (!is_current(self)) {
-    finish_cancelled(self); /* a late OK from a revoked generation */
-    return;
-  }
-  GhDmSendLeg *leg = g_hash_table_lookup(self->publishes, publish);
-  GhDmRelayOutcome *outcome = leg ? leg_outcome(leg, result->url) : NULL;
-  if (!outcome || outcome->outcome != GH_RELAY_PUBLISH_PENDING)
-    return;
-  outcome->outcome = result->outcome;
-  outcome->prefix = result->prefix;
-  g_free(outcome->message);
-  outcome->message = g_strdup(result->message);
-  if (result->outcome == GH_RELAY_PUBLISH_ACCEPTED)
-    leg->accepted++;
-  if (result->outcome == GH_RELAY_PUBLISH_AUTH_REQUIRED)
-    self->status.flags |= GH_DM_SEND_FLAG_AUTH_REQUIRED;
-  emit_changed(self);
-}
-
-static void
-on_publish_done(GhRelayPublish *publish, const GhRelayPublishSummary *summary,
-                gpointer data)
-{
-  GhDmSend *self = data;
-  (void)summary;
-  if (is_done(self))
-    return;
-  if (!is_current(self)) {
-    finish_cancelled(self);
-    return;
-  }
-  GhDmSendLeg *leg = g_hash_table_lookup(self->publishes, publish);
-  if (!leg)
-    return;
-  leg->complete = TRUE;
-  check_published(self);
-}
-
-/* One GhRelayPublish (own connections) per wrap, carrying the stored signed
- * JSON unchanged to exactly the leg's targets that are still pending. The
- * NIP-42 identity of each URL is GhAuthPolicy's: a recipient's inbox relay
- * is RECIPIENT_WRAP (ephemeral, never the account), the self-copy and a note
- * to self go to the own inbox as SELF_WRAP (the account, on challenge). */
-static void
-start_leg(GhDmSend *self, GhDmSendLeg *leg)
-{
-  guint pending = 0;
-  for (guint i = 0; i < leg->relays->len; i++)
-    pending += ((GhDmRelayOutcome *)g_ptr_array_index(leg->relays, i))->outcome ==
-               GH_RELAY_PUBLISH_PENDING;
-  if (pending == 0) {
-    leg->complete = TRUE;
-    return;
-  }
-  GhDmSender *sender = self->sender;
-  g_autoptr(GError) error = NULL;
-  GhRelayPublish *publish = sender->custom_transport
-    ? gh_relay_publish_new_with_transport(self->status.account_generation, leg->wrap_json,
-                                          &sender->transport, sender->transport_data,
-                                          on_publish_update, on_publish_done, self, &error)
-    : gh_relay_publish_new(self->status.account_generation, leg->wrap_json,
-                           on_publish_update, on_publish_done, self, &error);
-  if (publish) {
-    g_hash_table_insert(self->publishes, publish, leg);
-    if (sender->publish_deadline)
-      gh_relay_publish_set_deadline(publish, sender->publish_deadline);
-    for (guint i = 0; i < leg->relays->len && !error; i++) {
-      GhDmRelayOutcome *target = g_ptr_array_index(leg->relays, i);
-      if (target->outcome != GH_RELAY_PUBLISH_PENDING ||
-          !gh_relay_publish_add_url(publish, target->url, &error))
-        continue;
-      g_autoptr(GError) auth_error = NULL;
-      GhAuthPurpose purpose = leg == self->status.self_copy || self->self_dm
-        ? GH_AUTH_PURPOSE_SELF_WRAP : GH_AUTH_PURPOSE_RECIPIENT_WRAP;
-      if (sender->accounts &&
-          !gh_auth_policy_apply_publish(gh_auth_policy_get_for_accounts(sender->accounts),
-                                        publish, purpose, target->url, &auth_error))
-        g_debug("Groundhog will not sign in to a message relay: %s", auth_error->message);
-    }
-    if (!error && gh_relay_publish_start(publish, &error))
-      return; /* outcomes arrive through the callbacks */
-    if (g_hash_table_contains(self->publishes, publish)) {
-      gh_relay_publish_cancel(publish);
-      g_hash_table_remove(self->publishes, publish);
-    }
-  }
-  leg_mark_pending(leg, GH_RELAY_PUBLISH_CONNECTION_FAILED,
-                   error ? error->message : "publish could not start");
-  leg->complete = TRUE;
-}
-
-static gboolean
-leg_has_pending(const GhDmSendLeg *leg)
-{
-  for (guint i = 0; i < leg->relays->len; i++)
-    if (((GhDmRelayOutcome *)g_ptr_array_index(leg->relays, i))->outcome ==
-        GH_RELAY_PUBLISH_PENDING)
-      return TRUE;
-  return FALSE;
-}
-
-static gboolean
-spaced_due(gpointer data)
-{
-  Spaced *spaced = data;
-  GhDmSend *self = spaced->self;
-  GhDmSendLeg *leg = spaced->leg; /* spaced may go with a finish below */
-  spaced->id = 0;
-  if (is_done(self))
-    return G_SOURCE_REMOVE;
-  g_object_ref(self);
-  if (!is_current(self)) {
-    finish_cancelled(self);
-  } else {
-    start_leg(self, leg);
-    if (!is_done(self)) {
-      emit_changed(self);
-      check_published(self);
-    }
-  }
-  g_object_unref(self);
-  return G_SOURCE_REMOVE;
-}
-
-/* Charter §4.5 S4 (nostrc-yp69): a room's recipient wraps go out in a random
- * order, U(0, 3) s apart (the first at once), so that a relay on several
- * recipients' lists does not get them back to back in "p" order; each
- * publish of a status draws its own. One wrap (a one-to-one message) goes
- * at once, and so does the self-copy. */
-static void
-begin_publish(GhDmSend *self)
-{
-  GhDmSendStatus *status = &self->status;
-  status->phase = GH_DM_SEND_PHASE_PUBLISHING;
-  g_object_ref(self); /* publish callbacks may finish (and release) the operation */
-  g_autoptr(GPtrArray) room = g_ptr_array_new();
-  for (guint i = 0; i < status->recipients->len && !is_done(self); i++) {
-    GhDmSendLeg *leg = g_ptr_array_index(status->recipients, i);
-    if (leg_has_pending(leg))
-      g_ptr_array_add(room, leg);
-    else
-      start_leg(self, leg); /* nothing to send: complete */
-  }
-  for (guint i = room->len; room->len > 1 && i-- > 1;) {
-    guint j = gh_clock_random_uniform(self->clock, i + 1);
-    gpointer swap = room->pdata[i];
-    room->pdata[i] = room->pdata[j];
-    room->pdata[j] = swap;
-  }
-  gint64 delay = 0;
-  for (guint k = 0; k < room->len && !is_done(self); k++) {
-    GhDmSendLeg *leg = g_ptr_array_index(room, k);
-    if (k > 0)
-      delay += gh_clock_random_range(self->clock, 0, ROOM_SPACING_MAX_S);
-    if (delay == 0) {
-      start_leg(self, leg);
-      continue;
-    }
-    Spaced *spaced = g_new0(Spaced, 1);
-    spaced->self = self;
-    spaced->leg = leg;
-    spaced->id = gh_clock_timeout_add(self->clock, (guint64)delay * 1000, spaced_due, spaced,
-                                      NULL);
-    g_ptr_array_add(self->spaced, spaced);
-  }
-  if (status->self_copy && !is_done(self))
-    start_leg(self, status->self_copy);
-  if (!is_done(self)) {
-    emit_changed(self);
-    check_published(self);
-  }
-  g_object_unref(self);
-}
-
 /* ---- sealing ------------------------------------------------------------- */
 
 /* Canonical NIP-01 id of a rumor or wrap, recomputed rather than trusted. */
@@ -814,11 +390,7 @@ envelope_done(GObject *source, GAsyncResult *result, gpointer data)
     g_object_unref(self);
     return;
   }
-  wipe_content(self);
-  if (self->mode == MODE_SEAL)
-    finish(self, GH_DM_SEND_RESULT_SEALED, GH_DM_SEND_FAILURE_NONE, NULL, TRUE);
-  else
-    begin_publish(self);
+  finish(self, GH_DM_SEND_RESULT_SEALED, GH_DM_SEND_FAILURE_NONE, NULL, TRUE);
   g_object_unref(self); /* the envelope callback's reference */
 }
 
@@ -842,17 +414,9 @@ begin_seal(GhDmSend *self)
   emit_changed(self);
   if (is_done(self))
     return;
-  if (self->rumor)
-    gh_nip17_envelope_seal_room_async(self->sender->accounts, self->rumor,
-                                      self->has_outer ? &self->outer : NULL, self->cancel,
-                                      envelope_done, g_object_ref(self));
-  else if (self->self_dm)
-    gh_nip17_envelope_build_self_async(self->sender->accounts, self->content, self->cancel,
-                                       envelope_done, g_object_ref(self));
-  else
-    gh_nip17_envelope_build_async(self->sender->accounts, first_recipient(self)->pubkey,
-                                  self->content, self->cancel, envelope_done,
-                                  g_object_ref(self));
+  gh_nip17_envelope_seal_room_async(self->sender->accounts, self->rumor,
+                                    self->has_outer ? &self->outer : NULL, self->cancel,
+                                    envelope_done, g_object_ref(self));
 }
 
 /* ---- recipient inbox ----------------------------------------------------- */
@@ -1022,104 +586,6 @@ add_recipients(GhDmSend *self, const gchar *const *recipients)
   return NULL;
 }
 
-/* One of content or rumor (seal_rumor) is set; outer only with a rumor. A
- * text to a room becomes its rumor at once (one rumor per message). */
-static GhDmSend *
-compose(GhDmSender *sender, const gchar *const *recipients, const gchar *content,
-        const gchar *rumor, const GhNip17RoomExpiration *outer, GCancellable *cancellable,
-        Mode mode)
-{
-  GhDmSend *self = g_object_new(GH_TYPE_DM_SEND, NULL);
-  GhDmSendStatus *status = &self->status;
-  self->mode = mode;
-  self->has_outer = outer != NULL;
-  if (outer)
-    self->outer = *outer;
-  status->sender = active_sender(sender);
-  gboolean text_ok = rumor || (content && *content && g_utf8_validate(content, -1, NULL));
-  const gchar *invalid = !status->sender ? "No active Groundhog account"
-                         : rumor && !recipients
-                           ? "Not a canonical NIP-17 rumor of the active account"
-                         : !text_ok ? "A hex recipient pubkey and UTF-8 text are required"
-                                    : add_recipients(self, recipients);
-  if (invalid) {
-    finish_invalid(self, invalid);
-    return self;
-  }
-  if (self->self_dm)
-    status->flags |= GH_DM_SEND_FLAG_SELF_DM;
-  else
-    status->self_copy = leg_new(status->sender);
-  if (!rumor && status->recipients->len > 1) {
-    g_autoptr(GError) error = NULL;
-    self->rumor = gh_nip17_rumor_new_room(status->sender, recipients, content,
-                                          g_get_real_time() / G_USEC_PER_SEC, 0, NULL, &error);
-    if (!self->rumor) {
-      finish_invalid(self, error->message);
-      return self;
-    }
-  } else {
-    self->content = g_strdup(content);
-    self->rumor = g_strdup(rumor);
-  }
-  if (!track(self, sender, cancellable))
-    return self;
-  await_own_relays(self, resolve);
-  return self;
-}
-
-GhDmSend *
-gh_dm_sender_send(GhDmSender *self, const gchar *recipient_pubkey_hex,
-                  const gchar *content, GCancellable *cancellable)
-{
-  g_return_val_if_fail(GH_IS_DM_SENDER(self), NULL);
-  const gchar *const recipients[] = { recipient_pubkey_hex, NULL };
-  return compose(self, recipients, content, NULL, NULL, cancellable, MODE_SEND);
-}
-
-GhDmSend *
-gh_dm_sender_send_room(GhDmSender *self, const gchar *const *recipients,
-                       const gchar *content, GCancellable *cancellable)
-{
-  g_return_val_if_fail(GH_IS_DM_SENDER(self), NULL);
-  return compose(self, recipients, content, NULL, NULL, cancellable, MODE_SEND);
-}
-
-GhDmSend *
-gh_dm_sender_seal(GhDmSender *self, const gchar *recipient_pubkey_hex,
-                  const gchar *content, GCancellable *cancellable)
-{
-  g_return_val_if_fail(GH_IS_DM_SENDER(self), NULL);
-  const gchar *const recipients[] = { recipient_pubkey_hex, NULL };
-  return compose(self, recipients, content, NULL, NULL, cancellable, MODE_SEAL);
-}
-
-GhDmSend *
-gh_dm_sender_seal_rumor(GhDmSender *self, const gchar *rumor_json, GCancellable *cancellable)
-{
-  return gh_dm_sender_seal_rumor_expiring(self, rumor_json, NULL, cancellable);
-}
-
-GhDmSend *
-gh_dm_sender_seal_rumor_expiring(GhDmSender *self, const gchar *rumor_json,
-                                 const GhNip17OuterExpiration *outer,
-                                 GCancellable *cancellable)
-{
-  g_return_val_if_fail(GH_IS_DM_SENDER(self), NULL);
-  g_autofree gchar *sender = active_sender(self);
-  g_autofree gchar *recipient = sender ? gh_nip17_rumor_get_recipient(rumor_json, sender) : NULL;
-  const gchar *const recipients[] = { recipient, NULL };
-  GhNip17RoomExpiration room = { 0 };
-  if (outer) {
-    room.n_recipients = recipient && g_strcmp0(recipient, sender) != 0 ? 1 : 0;
-    room.recipients[0] = outer->recipient;
-    room.self_copy = outer->self_copy;
-  }
-  /* An unusable rumor fails like an invalid recipient, before any lookup. */
-  return compose(self, recipient ? recipients : NULL, NULL, rumor_json, outer ? &room : NULL,
-                 cancellable, MODE_SEAL);
-}
-
 GhDmSend *
 gh_dm_sender_seal_room_rumor(GhDmSender *self, const gchar *rumor_json,
                              const GhNip17RoomExpiration *outer, GCancellable *cancellable)
@@ -1127,112 +593,26 @@ gh_dm_sender_seal_room_rumor(GhDmSender *self, const gchar *rumor_json,
   g_return_val_if_fail(GH_IS_DM_SENDER(self), NULL);
   g_autofree gchar *sender = active_sender(self);
   g_auto(GStrv) recipients = sender ? gh_nip17_rumor_dup_recipients(rumor_json, sender) : NULL;
-  return compose(self, (const gchar *const *)recipients, NULL, rumor_json, outer, cancellable,
-                 MODE_SEAL);
-}
-
-/* A stored wrap must be a signed gift wrap to exactly this leg's receiver,
- * with the id the status recorded. */
-static gboolean
-valid_wrap(const GhDmSendLeg *leg)
-{
-  if (!leg->wrap_json || !leg->wrap_id || !hex64(leg->pubkey))
-    return FALSE;
-  NostrEvent *wrap = nostr_event_new();
-  gchar id[65] = { 0 };
-  gboolean ok = wrap &&
-    nostr_event_deserialize_signed(wrap, leg->wrap_json, NULL) == NOSTR_EVENT_VALIDATION_OK &&
-    nostr_event_validate(wrap, id) == NOSTR_EVENT_VALIDATION_OK &&
-    g_strcmp0(id, leg->wrap_id) == 0 && nostr_nip59_validate_gift_wrap(wrap);
-  if (ok) {
-    char *p = nostr_nip59_get_recipient(wrap);
-    ok = g_strcmp0(p, leg->pubkey) == 0;
-    free(p);
+  GhDmSend *send = g_object_new(GH_TYPE_DM_SEND, NULL);
+  send->status.sender = g_steal_pointer(&sender);
+  const gchar *invalid = !send->status.sender ? "No active Groundhog account"
+                       : !recipients ? "Not a canonical NIP-17 rumor of the active account"
+                                     : add_recipients(send, (const gchar *const *)recipients);
+  if (invalid) {
+    finish_invalid(send, invalid);
+    return send;
   }
-  if (wrap)
-    nostr_event_free(wrap);
-  return ok;
-}
-
-/* Everything but ACCEPTED is pending again; ACCEPTED is never republished. */
-static void
-leg_reset_for_publish(GhDmSendLeg *leg)
-{
-  leg->accepted = 0;
-  leg->complete = FALSE;
-  for (guint i = 0; i < leg->relays->len; i++) {
-    GhDmRelayOutcome *target = g_ptr_array_index(leg->relays, i);
-    if (target->outcome == GH_RELAY_PUBLISH_ACCEPTED) {
-      leg->accepted++;
-      continue;
-    }
-    target->outcome = GH_RELAY_PUBLISH_PENDING;
-    target->prefix = GH_RELAY_OK_PREFIX_NONE;
-    g_clear_pointer(&target->message, g_free);
-  }
-}
-
-static gboolean
-publish_now(gpointer data)
-{
-  GhDmSend *self = data;
-  g_clear_pointer(&self->start, g_source_unref);
-  if (is_done(self))
-    return G_SOURCE_REMOVE;
-  if (!is_current(self))
-    finish_cancelled(self);
+  if (send->self_dm)
+    send->status.flags |= GH_DM_SEND_FLAG_SELF_DM;
   else
-    begin_publish(self);
-  return G_SOURCE_REMOVE;
-}
-
-GhDmSend *
-gh_dm_sender_publish(GhDmSender *sender, const GhDmSendStatus *sealed,
-                     GCancellable *cancellable)
-{
-  g_return_val_if_fail(GH_IS_DM_SENDER(sender), NULL);
-  g_return_val_if_fail(sealed != NULL, NULL);
-  GhDmSend *self = g_object_new(GH_TYPE_DM_SEND, NULL);
-  self->mode = MODE_PUBLISH;
-  GhDmSendStatus *status = &self->status;
-  status_clear(status);
-  status_copy_into(status, sealed);
-  status->phase = GH_DM_SEND_PHASE_PUBLISHING;
-  status->result = GH_DM_SEND_RESULT_PENDING;
-  status->failure = GH_DM_SEND_FAILURE_NONE;
-  g_clear_pointer(&status->error_message, g_free);
-  status->flags &= GH_DM_SEND_FLAG_SELF_DM;
-  g_autofree gchar *active = active_sender(sender);
-  gboolean valid = active && g_strcmp0(active, status->sender) == 0 &&
-                   status->recipients->len > 0 &&
-                   status->recipients->len <= GH_NIP17_MAX_SEND_RECIPIENTS;
-  guint reachable = 0;
-  for (guint i = 0; valid && i < status->recipients->len; i++) {
-    GhDmSendLeg *leg = g_ptr_array_index(status->recipients, i);
-    valid = valid_wrap(leg);
-    reachable += leg->relays->len > 0;
-    leg_reset_for_publish(leg);
-  }
-  /* A room recipient may have no target; someone must have one. */
-  valid = valid && reachable > 0;
-  if (valid && any_recipient_without_targets(status))
-    status->flags |= GH_DM_SEND_FLAG_RECIPIENT_NO_INBOX;
-  if (valid && status->self_copy) {
-    valid = valid_wrap(status->self_copy) &&
-            g_strcmp0(status->self_copy->pubkey, status->sender) == 0;
-    leg_reset_for_publish(status->self_copy);
-    if (status->self_copy->relays->len == 0)
-      status->flags |= GH_DM_SEND_FLAG_NO_OWN_INBOX;
-  }
-  if (!valid) {
-    finish_invalid(self, active ? "Not a sealed message of the active account"
-                                : "No active Groundhog account");
-    return self;
-  }
-  if (!track(self, sender, cancellable))
-    return self;
-  schedule(self, G_PRIORITY_DEFAULT, publish_now);
-  return self;
+    send->status.self_copy = leg_new(send->status.sender);
+  send->rumor = g_strdup(rumor_json);
+  send->has_outer = outer != NULL;
+  if (outer)
+    send->outer = *outer;
+  if (track(send, self, cancellable))
+    await_own_relays(send, resolve);
+  return send;
 }
 
 const GhDmSendStatus *
@@ -1270,11 +650,7 @@ static void
 gh_dm_send_finalize(GObject *object)
 {
   GhDmSend *self = GH_DM_SEND(object);
-  clear_spaced(self);
-  g_ptr_array_unref(self->spaced);
-  g_clear_pointer(&self->clock, gh_clock_unref);
   status_clear(&self->status);
-  g_hash_table_unref(self->publishes);
   g_clear_object(&self->cancel);
   g_main_context_unref(self->context);
   G_OBJECT_CLASS(gh_dm_send_parent_class)->finalize(object);
@@ -1296,51 +672,24 @@ gh_dm_send_init(GhDmSend *self)
 {
   self->context = g_main_context_ref_thread_default();
   self->cancel = g_cancellable_new();
-  self->publishes = g_hash_table_new_full(g_direct_hash, g_direct_equal,
-                                          (GDestroyNotify)gh_relay_publish_unref, NULL);
   self->status.phase = GH_DM_SEND_PHASE_RESOLVING;
   self->status.recipients = g_ptr_array_new_with_free_func(leg_free);
-  self->spaced = g_ptr_array_new_with_free_func(g_free);
 }
 
 /* ---- sender -------------------------------------------------------------- */
 
 GhDmSender *
 gh_dm_sender_new(GhAccountController *accounts, GhAccountRelays *account_relays,
-                 GhInboxResolver *inboxes, const GhRelayPublishTransport *transport,
-                 gpointer transport_data)
+                 GhInboxResolver *inboxes)
 {
   g_return_val_if_fail(GH_IS_ACCOUNT_CONTROLLER(accounts), NULL);
   g_return_val_if_fail(GH_IS_ACCOUNT_RELAYS(account_relays), NULL);
   g_return_val_if_fail(GH_IS_INBOX_RESOLVER(inboxes), NULL);
-  g_return_val_if_fail(!transport || (transport->open && transport->close), NULL);
   GhDmSender *self = g_object_new(GH_TYPE_DM_SENDER, NULL);
   self->accounts = g_object_ref(accounts);
   self->account_relays = g_object_ref(account_relays);
   self->inboxes = g_object_ref(inboxes);
-  if (transport) {
-    self->transport = *transport;
-    self->transport_data = transport_data;
-    self->custom_transport = TRUE;
-  }
   return self;
-}
-
-void
-gh_dm_sender_set_publish_deadline(GhDmSender *self, guint seconds)
-{
-  g_return_if_fail(GH_IS_DM_SENDER(self));
-  self->publish_deadline = seconds;
-}
-
-void
-gh_dm_sender_set_clock(GhDmSender *self, GhClock *clock)
-{
-  g_return_if_fail(GH_IS_DM_SENDER(self));
-  GhClock *old = self->clock;
-  self->clock = clock ? gh_clock_ref(clock) : NULL;
-  if (old)
-    gh_clock_unref(old);
 }
 
 static void
@@ -1366,7 +715,6 @@ gh_dm_sender_finalize(GObject *object)
 {
   GhDmSender *self = GH_DM_SENDER(object);
   g_hash_table_unref(self->inflight);
-  g_clear_pointer(&self->clock, gh_clock_unref);
   G_OBJECT_CLASS(gh_dm_sender_parent_class)->finalize(object);
 }
 
