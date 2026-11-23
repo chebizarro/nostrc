@@ -154,7 +154,6 @@ static void test_invalid_config(void) {
         g_assert_cmpint(bunker_service_get_state(service), ==, BUNKER_STATE_ERROR);
         g_assert_null(bunker_service_get_bunker_uri(service, "not-an-admission-token"));
     }
-    g_assert_false(bunker_service_handle_connect_uri(service, "nostrconnect://not-admission"));
     g_autoptr(GPtrArray) connections = bunker_service_list_connections(service);
     g_assert_cmpuint(connections->len, ==, 0);
     bunker_service_free(service);

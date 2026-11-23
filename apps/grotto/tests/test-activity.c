@@ -120,16 +120,16 @@ static void test_retention(ControlFixture *f, gconstpointer data) {
   }
   g_string_append(json, "]}"); g_assert_true(g_file_set_contents(path, json->str, json->len, NULL)); g_string_free(json, TRUE);
   g_autoptr(GnEventHistory) history = gn_event_history_new_activity(root); g_assert_true(gn_event_history_activity_healthy(history));
-  g_assert_cmpuint(gn_event_history_get_entry_count(history), ==, 10000);
+  g_assert_cmpuint(gn_event_history_activity_count(history), ==, 10000);
   g_autoptr(GVariant) snapshot = terminal_snapshot("SUCCEEDED");
   g_assert_cmpuint(gn_event_history_signed_today(history), ==, 0);
   g_assert_cmpuint(gn_event_history_record_activity(history, snapshot), ==, 10003);
-  gn_event_history_record_activity(history, snapshot); g_assert_cmpuint(gn_event_history_get_entry_count(history), ==, 10000);
+  gn_event_history_record_activity(history, snapshot); g_assert_cmpuint(gn_event_history_activity_count(history), ==, 10000);
   g_assert_cmpuint(gn_event_history_signed_today(history), ==, 2);
   g_autoptr(GVariant) denied = terminal_snapshot("DENIED"); gn_event_history_record_activity(history, denied);
   g_assert_cmpuint(gn_event_history_signed_today(history), ==, 2);
   gn_event_history_set_retention_days(history, 1);
-  g_assert_cmpuint(gn_event_history_get_entry_count(history), ==, 9999);
+  g_assert_cmpuint(gn_event_history_activity_count(history), ==, 9999);
   g_assert_cmpuint(gn_event_history_signed_today(history), ==, 2);
   g_autoptr(GVariant) rows = gn_event_history_list_activity(history, 0, 100); g_assert_cmpuint(g_variant_n_children(rows), ==, 100);
   g_assert_true(gn_event_history_clear_activity(history, NULL)); g_clear_object(&history);
@@ -156,7 +156,7 @@ static void record_past_cap(const gchar *contents) {
     guint64 sequence = gn_event_history_record_activity(history, snapshot);
     g_assert_cmpuint(sequence, ==, previous + 1); previous = sequence;
   }
-  g_assert_cmpuint(gn_event_history_get_entry_count(history), ==, 10000);
+  g_assert_cmpuint(gn_event_history_activity_count(history), ==, 10000);
   g_assert_false(gn_event_history_activity_healthy(history));
   g_autofree gchar *after = NULL; g_assert_true(g_file_get_contents(path, &after, NULL, NULL));
   g_assert_cmpstr(after, ==, contents);

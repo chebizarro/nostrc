@@ -93,38 +93,6 @@ gboolean gn_session_manager_authenticate(GnSessionManager *self,
                                          GError **error);
 
 /**
- * gn_session_manager_is_authenticated:
- * @self: A #GnSessionManager
- *
- * Checks if the session is currently authenticated.
- *
- * Returns: %TRUE if session is active and authenticated
- */
-gboolean gn_session_manager_is_authenticated(GnSessionManager *self);
-
-/**
- * gn_session_manager_get_state:
- * @self: A #GnSessionManager
- *
- * Gets the current session state.
- *
- * Returns: The current #GnSessionState
- */
-GnSessionState gn_session_manager_get_state(GnSessionManager *self);
-
-/**
- * gn_session_manager_get_timeout:
- * @self: A #GnSessionManager
- *
- * Gets the current auto-lock timeout in seconds.
- *
- * A value of 0 means auto-lock is disabled.
- *
- * Returns: Timeout in seconds, or 0 if disabled
- */
-guint gn_session_manager_get_timeout(GnSessionManager *self);
-
-/**
  * gn_session_manager_set_timeout:
  * @self: A #GnSessionManager
  * @seconds: Timeout in seconds, or 0 to disable
@@ -158,17 +126,6 @@ void gn_session_manager_lock(GnSessionManager *self, GnLockReason reason);
  * Returns: %TRUE if session is locked and requires authentication
  */
 gboolean gn_session_manager_is_locked(GnSessionManager *self);
-
-/**
- * gn_session_manager_extend:
- * @self: A #GnSessionManager
- *
- * Extends the session on user activity.
- *
- * Call this when user activity is detected to reset the inactivity
- * timer. If the session is not authenticated, this has no effect.
- */
-void gn_session_manager_extend(GnSessionManager *self);
 
 /**
  * gn_session_manager_get_remaining_time:

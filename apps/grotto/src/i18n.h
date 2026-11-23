@@ -31,34 +31,6 @@ void gn_i18n_init(void);
 const gchar *gn_i18n_get_language(void);
 
 /**
- * gn_i18n_set_language:
- * @lang: Language code (e.g., "ja", "es", "pt_BR", "id", "fa") or NULL for system default
- *
- * Sets the application language. Changes take effect on next app restart.
- */
-void gn_i18n_set_language(const gchar *lang);
-
-/**
- * gn_i18n_get_available_languages:
- *
- * Gets the list of available languages.
- *
- * Returns: (transfer full): A NULL-terminated array of language codes.
- *          Free with g_strfreev().
- */
-gchar **gn_i18n_get_available_languages(void);
-
-/**
- * gn_i18n_get_language_name:
- * @code: Language code (e.g., "ja")
- *
- * Gets the display name for a language code.
- *
- * Returns: (transfer none): The language name in its native script
- */
-const gchar *gn_i18n_get_language_name(const gchar *code);
-
-/**
  * gn_i18n_is_rtl:
  * @code: Language code (e.g., "fa")
  *

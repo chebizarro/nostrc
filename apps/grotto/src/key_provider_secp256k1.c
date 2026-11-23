@@ -77,21 +77,6 @@ hex_to_bin(const gchar *hex, guint8 *out, gsize expected_len)
   return TRUE;
 }
 
-static gchar *
-bin_to_hex(const guint8 *bin, gsize len)
-{
-  static const gchar hexd[] = "0123456789abcdef";
-  gchar *out = g_malloc(len * 2 + 1);
-
-  for (gsize i = 0; i < len; i++) {
-    out[i * 2] = hexd[(bin[i] >> 4) & 0x0F];
-    out[i * 2 + 1] = hexd[bin[i] & 0x0F];
-  }
-  out[len * 2] = '\0';
-
-  return out;
-}
-
 /* Secure version that uses secure memory */
 static gchar *
 bin_to_hex_secure(const guint8 *bin, gsize len)
@@ -112,41 +97,6 @@ bin_to_hex_secure(const guint8 *bin, gsize len)
 /* ============================================================================
  * GnKeyProvider interface implementation
  * ============================================================================ */
-
-static GnKeyType
-secp256k1_get_key_type(GnKeyProvider *self)
-{
-  (void)self;
-  return GN_KEY_TYPE_SECP256K1;
-}
-
-static const gchar *
-secp256k1_get_key_type_name(GnKeyProvider *self)
-{
-  (void)self;
-  return "secp256k1";
-}
-
-static gsize
-secp256k1_get_private_key_size(GnKeyProvider *self)
-{
-  (void)self;
-  return GN_SECP256K1_PRIVATE_KEY_SIZE;
-}
-
-static gsize
-secp256k1_get_public_key_size(GnKeyProvider *self)
-{
-  (void)self;
-  return GN_SECP256K1_PUBLIC_KEY_SIZE;
-}
-
-static gsize
-secp256k1_get_signature_size(GnKeyProvider *self)
-{
-  (void)self;
-  return GN_SECP256K1_SIGNATURE_SIZE;
-}
 
 static gboolean
 secp256k1_derive_public_key(GnKeyProvider  *self,
@@ -347,116 +297,6 @@ secp256k1_verify(GnKeyProvider  *self,
 #endif
 }
 
-static gboolean
-secp256k1_generate_private_key(GnKeyProvider  *self,
-                               guint8         *private_key_out,
-                               gsize          *private_key_len_out,
-                               GError        **error)
-{
-  GnKeyProviderSecp256k1 *provider = GN_KEY_PROVIDER_SECP256K1(self);
-
-#ifdef HAVE_SECP256K1
-  /* Generate random bytes */
-  GRand *rand = g_rand_new();
-  for (gsize i = 0; i < GN_SECP256K1_PRIVATE_KEY_SIZE; i++) {
-    private_key_out[i] = (guint8)g_rand_int_range(rand, 0, 256);
-  }
-  g_rand_free(rand);
-
-  /* Verify it's a valid secret key */
-  if (!secp256k1_ec_seckey_verify(provider->ctx, private_key_out)) {
-    /* Very rare - retry with different random bytes */
-    gn_secure_clear_buffer(private_key_out);
-    g_set_error(error, GN_KEY_PROVIDER_ERROR, GN_KEY_PROVIDER_ERROR_INTERNAL,
-                "Generated key failed validation");
-    return FALSE;
-  }
-
-  if (private_key_len_out) {
-    *private_key_len_out = GN_SECP256K1_PRIVATE_KEY_SIZE;
-  }
-
-  return TRUE;
-
-#else
-  /* Fallback using libnostr */
-  (void)provider;
-
-  gchar *sk_hex = nostr_key_generate_private();
-  if (!sk_hex) {
-    g_set_error(error, GN_KEY_PROVIDER_ERROR, GN_KEY_PROVIDER_ERROR_INTERNAL,
-                "Key generation failed");
-    return FALSE;
-  }
-
-  if (!hex_to_bin(sk_hex, private_key_out, GN_SECP256K1_PRIVATE_KEY_SIZE)) {
-    /* Securely clear before free */
-    gn_secure_clear_string(sk_hex);
-    g_set_error(error, GN_KEY_PROVIDER_ERROR, GN_KEY_PROVIDER_ERROR_INTERNAL,
-                "Failed to decode generated key");
-    return FALSE;
-  }
-
-  gn_secure_clear_string(sk_hex);
-
-  if (private_key_len_out) {
-    *private_key_len_out = GN_SECP256K1_PRIVATE_KEY_SIZE;
-  }
-
-  return TRUE;
-#endif
-}
-
-static gboolean
-secp256k1_is_valid_private_key(GnKeyProvider *self,
-                               const guint8  *private_key,
-                               gsize          private_key_len)
-{
-  GnKeyProviderSecp256k1 *provider = GN_KEY_PROVIDER_SECP256K1(self);
-
-  if (private_key_len != GN_SECP256K1_PRIVATE_KEY_SIZE) {
-    return FALSE;
-  }
-
-#ifdef HAVE_SECP256K1
-  return secp256k1_ec_seckey_verify(provider->ctx, private_key) == 1;
-#else
-  (void)provider;
-  /* Basic check: not all zeros or all ones */
-  gboolean all_zero = TRUE, all_one = TRUE;
-  for (gsize i = 0; i < private_key_len; i++) {
-    if (private_key[i] != 0x00) all_zero = FALSE;
-    if (private_key[i] != 0xFF) all_one = FALSE;
-  }
-  return !all_zero && !all_one;
-#endif
-}
-
-static gboolean
-secp256k1_is_valid_public_key(GnKeyProvider *self,
-                              const guint8  *public_key,
-                              gsize          public_key_len)
-{
-  GnKeyProviderSecp256k1 *provider = GN_KEY_PROVIDER_SECP256K1(self);
-
-  if (public_key_len != GN_SECP256K1_PUBLIC_KEY_SIZE) {
-    return FALSE;
-  }
-
-#ifdef HAVE_SECP256K1
-  secp256k1_xonly_pubkey xonly_pk;
-  return secp256k1_xonly_pubkey_parse(provider->ctx, &xonly_pk, public_key) == 1;
-#else
-  (void)provider;
-  /* Basic check: not all zeros */
-  gboolean all_zero = TRUE;
-  for (gsize i = 0; i < public_key_len; i++) {
-    if (public_key[i] != 0x00) all_zero = FALSE;
-  }
-  return !all_zero;
-#endif
-}
-
 /* ============================================================================
  * GObject lifecycle
  * ============================================================================ */
@@ -488,17 +328,9 @@ gn_key_provider_secp256k1_class_init(GnKeyProviderSecp256k1Class *klass)
 static void
 gn_key_provider_secp256k1_iface_init(GnKeyProviderInterface *iface)
 {
-  iface->get_key_type = secp256k1_get_key_type;
-  iface->get_key_type_name = secp256k1_get_key_type_name;
-  iface->get_private_key_size = secp256k1_get_private_key_size;
-  iface->get_public_key_size = secp256k1_get_public_key_size;
-  iface->get_signature_size = secp256k1_get_signature_size;
   iface->derive_public_key = secp256k1_derive_public_key;
   iface->sign = secp256k1_sign;
   iface->verify = secp256k1_verify;
-  iface->generate_private_key = secp256k1_generate_private_key;
-  iface->is_valid_private_key = secp256k1_is_valid_private_key;
-  iface->is_valid_public_key = secp256k1_is_valid_public_key;
 }
 
 static void
@@ -542,116 +374,3 @@ gn_key_provider_secp256k1_register(void)
 /* ============================================================================
  * Hex utility functions
  * ============================================================================ */
-
-gboolean
-gn_secp256k1_derive_pubkey_hex(const gchar  *private_key_hex,
-                               gchar       **public_key_hex_out,
-                               GError      **error)
-{
-  g_return_val_if_fail(private_key_hex != NULL, FALSE);
-  g_return_val_if_fail(public_key_hex_out != NULL, FALSE);
-
-  guint8 sk[GN_SECP256K1_PRIVATE_KEY_SIZE];
-  guint8 pk[GN_SECP256K1_PUBLIC_KEY_SIZE];
-  gsize pk_len;
-
-  if (!hex_to_bin(private_key_hex, sk, GN_SECP256K1_PRIVATE_KEY_SIZE)) {
-    g_set_error(error, GN_KEY_PROVIDER_ERROR, GN_KEY_PROVIDER_ERROR_INVALID_KEY,
-                "Invalid private key hex");
-    return FALSE;
-  }
-
-  GnKeyProvider *provider = GN_KEY_PROVIDER(gn_key_provider_secp256k1_get_default());
-  gboolean result = gn_key_provider_derive_public_key(provider, sk, sizeof(sk),
-                                                      pk, &pk_len, error);
-
-  gn_secure_clear_buffer(sk);
-
-  if (!result) {
-    return FALSE;
-  }
-
-  *public_key_hex_out = bin_to_hex(pk, pk_len);
-  return TRUE;
-}
-
-gboolean
-gn_secp256k1_sign_hash_hex(const gchar  *private_key_hex,
-                           const gchar  *hash_hex,
-                           gchar       **signature_hex_out,
-                           GError      **error)
-{
-  g_return_val_if_fail(private_key_hex != NULL, FALSE);
-  g_return_val_if_fail(hash_hex != NULL, FALSE);
-  g_return_val_if_fail(signature_hex_out != NULL, FALSE);
-
-  guint8 sk[GN_SECP256K1_PRIVATE_KEY_SIZE];
-  guint8 hash[32];
-  guint8 sig[GN_SECP256K1_SIGNATURE_SIZE];
-  gsize sig_len;
-
-  if (!hex_to_bin(private_key_hex, sk, GN_SECP256K1_PRIVATE_KEY_SIZE)) {
-    g_set_error(error, GN_KEY_PROVIDER_ERROR, GN_KEY_PROVIDER_ERROR_INVALID_KEY,
-                "Invalid private key hex");
-    return FALSE;
-  }
-
-  if (!hex_to_bin(hash_hex, hash, 32)) {
-    gn_secure_clear_buffer(sk);
-    g_set_error(error, GN_KEY_PROVIDER_ERROR, GN_KEY_PROVIDER_ERROR_INVALID_KEY,
-                "Invalid hash hex");
-    return FALSE;
-  }
-
-  GnKeyProvider *provider = GN_KEY_PROVIDER(gn_key_provider_secp256k1_get_default());
-  gboolean result = gn_key_provider_sign(provider, sk, sizeof(sk),
-                                         hash, sizeof(hash),
-                                         sig, &sig_len, error);
-
-  gn_secure_clear_buffer(sk);
-
-  if (!result) {
-    return FALSE;
-  }
-
-  *signature_hex_out = bin_to_hex(sig, sig_len);
-  return TRUE;
-}
-
-gboolean
-gn_secp256k1_verify_hex(const gchar  *public_key_hex,
-                        const gchar  *hash_hex,
-                        const gchar  *signature_hex,
-                        GError      **error)
-{
-  g_return_val_if_fail(public_key_hex != NULL, FALSE);
-  g_return_val_if_fail(hash_hex != NULL, FALSE);
-  g_return_val_if_fail(signature_hex != NULL, FALSE);
-
-  guint8 pk[GN_SECP256K1_PUBLIC_KEY_SIZE];
-  guint8 hash[32];
-  guint8 sig[GN_SECP256K1_SIGNATURE_SIZE];
-
-  if (!hex_to_bin(public_key_hex, pk, GN_SECP256K1_PUBLIC_KEY_SIZE)) {
-    g_set_error(error, GN_KEY_PROVIDER_ERROR, GN_KEY_PROVIDER_ERROR_INVALID_KEY,
-                "Invalid public key hex");
-    return FALSE;
-  }
-
-  if (!hex_to_bin(hash_hex, hash, 32)) {
-    g_set_error(error, GN_KEY_PROVIDER_ERROR, GN_KEY_PROVIDER_ERROR_INVALID_KEY,
-                "Invalid hash hex");
-    return FALSE;
-  }
-
-  if (!hex_to_bin(signature_hex, sig, GN_SECP256K1_SIGNATURE_SIZE)) {
-    g_set_error(error, GN_KEY_PROVIDER_ERROR, GN_KEY_PROVIDER_ERROR_INVALID_KEY,
-                "Invalid signature hex");
-    return FALSE;
-  }
-
-  GnKeyProvider *provider = GN_KEY_PROVIDER(gn_key_provider_secp256k1_get_default());
-  return gn_key_provider_verify(provider, pk, sizeof(pk),
-                                hash, sizeof(hash),
-                                sig, sizeof(sig), error);
-}

@@ -11,21 +11,20 @@
 #include <locale.h>
 #include <string.h>
 
-/* Supported languages with native names */
+/* Supported languages and text directions. */
 typedef struct {
   const gchar *code;
-  const gchar *name;
   gboolean rtl;
 } LanguageInfo;
 
 static const LanguageInfo supported_languages[] = {
-  { "en",    "English",      FALSE },
-  { "ja",    "日本語",        FALSE },
-  { "es",    "Español",      FALSE },
-  { "pt_BR", "Português (Brasil)", FALSE },
-  { "id",    "Bahasa Indonesia", FALSE },
-  { "fa",    "فارسی",         TRUE  },
-  { NULL,    NULL,           FALSE }
+  { "en", FALSE },
+  { "ja", FALSE },
+  { "es", FALSE },
+  { "pt_BR", FALSE },
+  { "id", FALSE },
+  { "fa", TRUE  },
+  { NULL, FALSE }
 };
 
 static gchar *current_language = NULL;
@@ -90,84 +89,6 @@ gn_i18n_get_language(void)
   }
 
   return "en";
-}
-
-void
-gn_i18n_set_language(const gchar *lang)
-{
-  g_free(current_language);
-  current_language = lang ? g_strdup(lang) : NULL;
-
-  if (lang) {
-    if (env_mutation_safe) {
-      /* Set environment variables for gettext */
-      g_setenv("LANGUAGE", lang, TRUE);
-      g_setenv("LC_ALL", lang, TRUE);
-      g_setenv("LC_MESSAGES", lang, TRUE);
-      g_setenv("LANG", lang, TRUE);
-
-      /* Re-bind text domain to pick up new language */
-      setlocale(LC_ALL, "");
-    } else {
-      g_message("i18n: language change to '%s' takes effect after a restart", lang);
-    }
-
-    /* Save preference */
-    SettingsManager *sm = settings_manager_get_default();
-    if (sm) {
-      settings_manager_set_language(sm, lang);
-    }
-
-    /* Apply RTL text direction if needed */
-    gn_i18n_apply_text_direction();
-
-    g_debug("i18n: language set to %s", lang);
-  } else {
-    /* Reset to system default */
-    if (env_mutation_safe) {
-      g_unsetenv("LANGUAGE");
-      setlocale(LC_ALL, "");
-    }
-
-    SettingsManager *sm = settings_manager_get_default();
-    if (sm) {
-      settings_manager_set_language(sm, "");
-    }
-
-    /* Apply text direction based on system setting */
-    gn_i18n_apply_text_direction();
-
-    g_debug("i18n: language reset to system default");
-  }
-}
-
-gchar **
-gn_i18n_get_available_languages(void)
-{
-  guint count = G_N_ELEMENTS(supported_languages) - 1; /* -1 for NULL terminator */
-  gchar **result = g_new0(gchar *, count + 1);
-
-  for (guint i = 0; i < count; i++) {
-    result[i] = g_strdup(supported_languages[i].code);
-  }
-  result[count] = NULL;
-
-  return result;
-}
-
-const gchar *
-gn_i18n_get_language_name(const gchar *code)
-{
-  if (!code)
-    return "System Default";
-
-  for (guint i = 0; supported_languages[i].code; i++) {
-    if (g_str_equal(supported_languages[i].code, code)) {
-      return supported_languages[i].name;
-    }
-  }
-
-  return code; /* Return code if name not found */
 }
 
 gboolean

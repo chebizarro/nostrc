@@ -1007,13 +1007,6 @@ gn_secure_entry_set_show_password(GnSecureEntry *self, gboolean show)
   g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_SHOW_PASSWORD]);
 }
 
-gboolean
-gn_secure_entry_get_show_password(GnSecureEntry *self)
-{
-  g_return_val_if_fail(GN_IS_SECURE_ENTRY(self), FALSE);
-  return self->show_password;
-}
-
 void
 gn_secure_entry_set_accessible_label(GnSecureEntry *self, const gchar *label)
 {
@@ -1039,13 +1032,6 @@ gn_secure_entry_set_placeholder_text(GnSecureEntry *self, const gchar *text)
   g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_PLACEHOLDER_TEXT]);
 }
 
-const gchar *
-gn_secure_entry_get_placeholder_text(GnSecureEntry *self)
-{
-  g_return_val_if_fail(GN_IS_SECURE_ENTRY(self), NULL);
-  return self->placeholder_text;
-}
-
 void
 gn_secure_entry_set_min_length(GnSecureEntry *self, guint min_length)
 {
@@ -1057,13 +1043,6 @@ gn_secure_entry_set_min_length(GnSecureEntry *self, guint min_length)
   self->min_length = MIN(min_length, MAX_PASSWORD_LENGTH);
   gn_secure_entry_update_indicators(self);
   g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_MIN_LENGTH]);
-}
-
-guint
-gn_secure_entry_get_min_length(GnSecureEntry *self)
-{
-  g_return_val_if_fail(GN_IS_SECURE_ENTRY(self), 0);
-  return self->min_length;
 }
 
 void
@@ -1086,13 +1065,6 @@ gn_secure_entry_set_timeout(GnSecureEntry *self, guint timeout_seconds)
   g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_TIMEOUT]);
 }
 
-guint
-gn_secure_entry_get_timeout(GnSecureEntry *self)
-{
-  g_return_val_if_fail(GN_IS_SECURE_ENTRY(self), 0);
-  return self->timeout_seconds;
-}
-
 GnPasswordStrength
 gn_secure_entry_get_strength(GnSecureEntry *self)
 {
@@ -1104,29 +1076,6 @@ gn_secure_entry_get_strength(GnSecureEntry *self)
   }
 
   return self->cached_strength;
-}
-
-const gchar *
-gn_secure_entry_get_strength_text(GnSecureEntry *self)
-{
-  g_return_val_if_fail(GN_IS_SECURE_ENTRY(self), "");
-  return get_strength_label(gn_secure_entry_get_strength(self));
-}
-
-gboolean
-gn_secure_entry_meets_requirements(GnSecureEntry *self)
-{
-  g_return_val_if_fail(GN_IS_SECURE_ENTRY(self), FALSE);
-
-  /* Check minimum length */
-  if (self->min_length > 0 && self->buffer_len < self->min_length)
-    return FALSE;
-
-  /* Check that there's actually content */
-  if (self->buffer_len == 0)
-    return FALSE;
-
-  return TRUE;
 }
 
 void
@@ -1154,13 +1103,6 @@ gn_secure_entry_set_show_strength_indicator(GnSecureEntry *self, gboolean show)
   g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_SHOW_STRENGTH_INDICATOR]);
 }
 
-gboolean
-gn_secure_entry_get_show_strength_indicator(GnSecureEntry *self)
-{
-  g_return_val_if_fail(GN_IS_SECURE_ENTRY(self), FALSE);
-  return self->show_strength_indicator;
-}
-
 void
 gn_secure_entry_set_show_caps_warning(GnSecureEntry *self, gboolean show)
 {
@@ -1172,13 +1114,6 @@ gn_secure_entry_set_show_caps_warning(GnSecureEntry *self, gboolean show)
   self->show_caps_warning = show;
   gn_secure_entry_update_indicators(self);
   g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_SHOW_CAPS_WARNING]);
-}
-
-gboolean
-gn_secure_entry_get_show_caps_warning(GnSecureEntry *self)
-{
-  g_return_val_if_fail(GN_IS_SECURE_ENTRY(self), FALSE);
-  return self->show_caps_warning;
 }
 
 void
@@ -1198,20 +1133,6 @@ gn_secure_entry_set_requirements_text(GnSecureEntry *self, const gchar *text)
 
   gn_secure_entry_update_indicators(self);
   g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_REQUIREMENTS_TEXT]);
-}
-
-const gchar *
-gn_secure_entry_get_requirements_text(GnSecureEntry *self)
-{
-  g_return_val_if_fail(GN_IS_SECURE_ENTRY(self), NULL);
-  return self->requirements_text;
-}
-
-void
-gn_secure_entry_reset_timeout(GnSecureEntry *self)
-{
-  g_return_if_fail(GN_IS_SECURE_ENTRY(self));
-  self->last_activity_time = g_get_monotonic_time();
 }
 
 gboolean

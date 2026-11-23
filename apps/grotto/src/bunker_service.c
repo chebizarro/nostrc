@@ -846,11 +846,6 @@ void bunker_service_set_state_callback(BunkerService *s, BunkerStateChangedCb cb
 void bunker_service_set_connection_callback(BunkerService *s, BunkerConnectionCb cb, gpointer data) { if (s) { s->conn_cb = cb; s->conn_cb_ud = data; } }
 void bunker_service_set_client_lookup(BunkerService *s, BunkerClientLookupCb cb, gpointer data) { if (s) { s->lookup = cb; s->lookup_ud = data; } }
 void bunker_service_set_no_approval_ui(BunkerService *s, gboolean no_ui) { if (s) s->no_ui = no_ui; }
-/* Retained source compatibility, deliberately not live authorisation paths. */
-void bunker_service_set_auto_approve_kinds(BunkerService *s, const gchar *const *kinds) { (void)s; (void)kinds; }
-void bunker_service_set_authorize_callback(BunkerService *s, BunkerAuthorizeCb cb, gpointer data) { (void)s; (void)cb; (void)data; }
-void bunker_service_authorize_response(BunkerService *s, const gchar *id, gboolean allow) { (void)s; (void)id; (void)allow; }
-void bunker_service_create_client_session(BunkerService *s, const gchar *pk, const gchar *name, gboolean persistent, gint64 ttl) { (void)s; (void)pk; (void)name; (void)persistent; (void)ttl; }
 void bunker_service_set_pairing_commit(BunkerService *s, BunkerPairingCommitCb cb, gpointer data) {
   if (s) { s->commit = cb; s->commit_ud = data; }
 }
@@ -1139,7 +1134,4 @@ GVariant *bunker_service_relay_status(BunkerService *s) {
     g_variant_builder_add(&rows, "{ss}", origin ? origin : fallback, state ? state : "STARTING");
   }
   return g_variant_ref_sink(g_variant_builder_end(&rows));
-}
-gboolean bunker_service_handle_connect_uri(BunkerService *s, const gchar *uri) {
-  (void)s; (void)uri; return FALSE; /* Legacy call cannot choose an identity or supply consent. */
 }

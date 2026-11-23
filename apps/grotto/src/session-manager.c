@@ -665,30 +665,6 @@ gn_session_manager_authenticate(GnSessionManager *self,
   return TRUE;
 }
 
-gboolean
-gn_session_manager_is_authenticated(GnSessionManager *self)
-{
-  g_return_val_if_fail(GN_IS_SESSION_MANAGER(self), FALSE);
-
-  return self->state == GN_SESSION_STATE_AUTHENTICATED;
-}
-
-GnSessionState
-gn_session_manager_get_state(GnSessionManager *self)
-{
-  g_return_val_if_fail(GN_IS_SESSION_MANAGER(self), GN_SESSION_STATE_LOCKED);
-
-  return self->state;
-}
-
-guint
-gn_session_manager_get_timeout(GnSessionManager *self)
-{
-  g_return_val_if_fail(GN_IS_SESSION_MANAGER(self), DEFAULT_SESSION_TIMEOUT_SEC);
-
-  return self->timeout_seconds;
-}
-
 void
 gn_session_manager_set_timeout(GnSessionManager *self, guint seconds)
 {
@@ -744,19 +720,6 @@ gn_session_manager_is_locked(GnSessionManager *self)
   g_return_val_if_fail(GN_IS_SESSION_MANAGER(self), TRUE);
 
   return self->state != GN_SESSION_STATE_AUTHENTICATED;
-}
-
-void
-gn_session_manager_extend(GnSessionManager *self)
-{
-  g_return_if_fail(GN_IS_SESSION_MANAGER(self));
-
-  if (self->state != GN_SESSION_STATE_AUTHENTICATED)
-    return;
-
-  self->last_activity = g_get_monotonic_time() / G_USEC_PER_SEC;
-
-  g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_REMAINING_TIME]);
 }
 
 guint
