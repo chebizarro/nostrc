@@ -251,6 +251,11 @@ if(NOSTR_HOMED_ENABLE_IDENTITY_CORE)
   target_link_libraries(nostr_identity_core PUBLIC SQLite3::SQLite3 OpenSSL::Crypto)
 
   if(NOSTR_HOMED_BUILD_TESTS)
+    add_executable(test_local_uid_collision tests/identity/test_local_uid_collision.c)
+    target_link_libraries(test_local_uid_collision PRIVATE nostr_identity_core)
+    add_test(NAME homed_local_uid_collision COMMAND test_local_uid_collision)
+    set_tests_properties(homed_local_uid_collision PROPERTIES
+      LABELS "nostr-homed;portable;identity" TIMEOUT 30)
     add_executable(test_identity_store tests/identity/test_identity_store.c)
     target_link_libraries(test_identity_store PRIVATE nostr_identity_core)
     add_executable(test_identity_config tests/identity/test_identity_config.c)

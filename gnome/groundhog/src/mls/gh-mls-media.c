@@ -823,6 +823,109 @@ gh_mls_media_open_picture(const MarmotGroupBlossomImage *image, GBytes *cipherte
   return wiped_bytes_take(pt, pt_len);
 }
 
+/* MIP-01 image encryption (not the adopted 0x8002 component):
+ * https://github.com/marmot-protocol/marmot/blob/master/01.md#image-encryption */
+MarmotGroup *
+gh_mls_media_load_legacy_picture(Marmot *marmot, const gchar *group_id_hex, GError **error)
+{
+  MarmotGroupId gid;
+  if (!gid_from_hex(group_id_hex, &gid, error)) return NULL;
+  MarmotGroup *group = NULL;
+  MarmotError err = marmot_get_group(marmot, &gid, &group);
+  marmot_group_id_free(&gid);
+  if (err != MARMOT_OK || !group) {
+    media_fail(err == MARMOT_OK ? MARMOT_ERR_GROUP_NOT_FOUND : err,
+                 "The group picture is not available", error);
+    return NULL;
+  }
+  gboolean any = group->image_hash || group->image_key || group->image_nonce;
+  if (any && (!group->image_hash || !group->image_key || !group->image_nonce ||
+              group->group_data_version == 0)) {
+    g_set_error_literal(error, GH_MLS_MEDIA_ERROR, GH_MLS_MEDIA_ERROR_UNSUPPORTED,
+                          "The older group picture has incomplete or unknown key metadata");
+    if (group->image_key) sodium_memzero(group->image_key, 32);
+    marmot_group_free(group);
+    return NULL;
+  }
+  return group;
+}
+
+gchar *
+gh_mls_media_legacy_picture_id(const MarmotGroup *group)
+{
+  if (!group || !group->image_hash || !group->image_key || !group->image_nonce ||
+      !group->group_data_version) return NULL;
+  crypto_hash_sha256_state state;
+  guint8 digest[32], version[] = { group->group_data_version >> 8, group->group_data_version };
+  static const gchar domain[] = "groundhog-mip01-picture-v1";
+  crypto_hash_sha256_init(&state);
+  crypto_hash_sha256_update(&state, (const guint8 *)domain, sizeof domain);
+  crypto_hash_sha256_update(&state, version, sizeof version);
+  crypto_hash_sha256_update(&state, group->image_hash, 32);
+  crypto_hash_sha256_update(&state, group->image_key, 32);
+  crypto_hash_sha256_update(&state, group->image_nonce, 12);
+  crypto_hash_sha256_final(&state, digest);
+  sodium_memzero(&state, sizeof state);
+  return hex_of(digest, sizeof digest);
+}
+
+GBytes *
+gh_mls_media_open_legacy_picture(const MarmotGroup *group, GBytes *ciphertext, GError **error)
+{
+  g_return_val_if_fail(group && ciphertext, NULL);
+  if (!group->group_data_version || !group->image_key || !group->image_hash ||
+      !group->image_nonce) {
+    g_set_error_literal(error, GH_MLS_MEDIA_ERROR, GH_MLS_MEDIA_ERROR_UNSUPPORTED,
+                          "The group picture's encryption version is not known");
+    return NULL;
+  }
+  gsize len;
+  const guint8 *ct = g_bytes_get_data(ciphertext, &len);
+  guint8 hash[32];
+  if (len < crypto_aead_chacha20poly1305_ietf_ABYTES ||
+      len > GH_MLS_MEDIA_PICTURE_MAX + crypto_aead_chacha20poly1305_ietf_ABYTES) goto damaged;
+  crypto_hash_sha256(hash, ct, len);
+  if (sodium_memcmp(hash, group->image_hash, 32) != 0) goto damaged;
+  guint8 key[32];
+  if (group->group_data_version == 1) {
+    memcpy(key, group->image_key, 32);
+  } else {
+    /* RFC 5869, one output block. HMAC pads the empty salt with zeros. */
+    guint8 salt[32] = { 0 }, prk[32], one = 1;
+    static const gchar info[] = "mip01-image-encryption-v2";
+    crypto_auth_hmacsha256(prk, group->image_key, 32, salt);
+    crypto_auth_hmacsha256_state hmac;
+    crypto_auth_hmacsha256_init(&hmac, prk, sizeof prk);
+    crypto_auth_hmacsha256_update(&hmac, (const guint8 *)info, sizeof info - 1);
+    crypto_auth_hmacsha256_update(&hmac, &one, 1);
+    crypto_auth_hmacsha256_final(&hmac, key);
+    sodium_memzero(&hmac, sizeof hmac);
+    sodium_memzero(prk, sizeof prk);
+  }
+  guint8 *plain = g_malloc(MAX(len - crypto_aead_chacha20poly1305_ietf_ABYTES, 1));
+  unsigned long long plain_len = 0;
+  int rc = crypto_aead_chacha20poly1305_ietf_decrypt(plain, &plain_len, NULL, ct, len,
+                                                   NULL, 0, group->image_nonce, key);
+  sodium_memzero(key, sizeof key);
+  if (rc == 0) return wiped_bytes_take(plain, plain_len);
+  sodium_memzero(plain, len - crypto_aead_chacha20poly1305_ietf_ABYTES);
+  g_free(plain);
+damaged:
+  g_set_error_literal(error, GH_MLS_MEDIA_ERROR, GH_MLS_MEDIA_ERROR_DAMAGED,
+                        "The encrypted group picture is damaged");
+  return NULL;
+}
+
+void
+gh_mls_media_fetch_picture_urls_async(GhBlossomClient *client, const guint8 hash[32],
+  const gchar *const *urls, GCancellable *cancellable, GAsyncReadyCallback callback,
+  gpointer user_data)
+{
+  g_return_if_fail(GH_IS_BLOSSOM_CLIENT(client) && hash);
+  fetch_start(client, urls ? g_strdupv((GStrv)urls) : g_new0(gchar *, 1),
+                hex_of(hash, 32), cancellable, callback, user_data);
+}
+
 GBytes *
 gh_mls_media_seal_picture(GBytes *file, const gchar *mime_hint, MarmotGroupBlossomImage *out,
                           GError **error)

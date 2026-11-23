@@ -337,6 +337,7 @@
       "grotto.quarantine_contract.native",
       "grotto.signer.asan_ubsan",
       "grotto.signer.native",
+      "nostrdb.supersession",
       "selection.contract",
       "supported.apps.blossom.cache",
       "supported.apps.grelay.tests",

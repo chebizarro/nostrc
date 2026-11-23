@@ -434,6 +434,17 @@ endif()
 if (ENABLE_TCP_IPC)
   target_compile_definitions(grotto-daemon PRIVATE GNOSTR_ENABLE_TCP_IPC=1)
 endif()
+if (BUILD_TESTING AND UNIX)
+  add_executable(grotto-test-ipc-tcp-lifetime tests/test-ipc-tcp-lifetime.c)
+  target_compile_definitions(grotto-test-ipc-tcp-lifetime PRIVATE GNOSTR_ENABLE_TCP_IPC=1)
+  target_include_directories(grotto-test-ipc-tcp-lifetime PRIVATE
+    ${CMAKE_SOURCE_DIR}/nips/nip55l/include ${CMAKE_SOURCE_DIR}/libnostr/include)
+  target_link_libraries(grotto-test-ipc-tcp-lifetime PRIVATE
+    nostr_nip55l_service nostr_nip5f_core PkgConfig::GLIB)
+  apply_sanitizers(grotto-test-ipc-tcp-lifetime)
+  add_test(NAME grotto/ipc-tcp-lifetime COMMAND grotto-test-ipc-tcp-lifetime)
+  set_tests_properties(grotto/ipc-tcp-lifetime PROPERTIES TIMEOUT 30)
+endif()
 endif() # approval gate and Unix socket transport
 
 # Compile GSettings schema for development/testing

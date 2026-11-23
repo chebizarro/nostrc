@@ -70,7 +70,7 @@ class RootProfileContracts(unittest.TestCase):
             return calls, exported
 
 
-    def test_build_audit_test_commands_and_only_existing_exclusions(self):
+    def test_build_audit_test_commands_have_no_legacy_exclusions(self):
         for runner, ident in ROOT_PROFILES.items():
             contract = self.policy["profiles"][ident]["workflow_contract"]
             for name, field in [("libnostr audit tests", "audit_command"), ("Test", "test_command")]:
@@ -79,7 +79,8 @@ class RootProfileContracts(unittest.TestCase):
             build = re.search(r"      - name: Build \(verbose\)\n        run: (.+)", self.workflow).group(1)
             calls, _ = self.capture(build, runner)
             self.assertEqual(calls, [[value.replace("{build}", "build") for value in contract["build_command"]]])
-            self.assertEqual(contract["ctest_exclude"], "test_json_envelope|concurrency_subscription_shutdown_asan|MockRelayUnit")
+            self.assertEqual(contract["ctest_exclude"], "")
+            self.assertNotIn("-E", contract["test_command"])
             self.assertNotIn("main_thread_latency", contract["ctest_exclude"])
             self.assertNotIn("GoChannelStressTest", contract["ctest_exclude"])
 

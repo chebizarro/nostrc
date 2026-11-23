@@ -105,12 +105,25 @@ account_auth(GhAuthPolicy *self, guint64 generation, GError **error)
   return self->auth;
 }
 
+static gboolean
+account_owned_destination(GhAuthPurpose purpose)
+{
+  return purpose == GH_AUTH_PURPOSE_OWN_INBOX_READ ||
+    purpose == GH_AUTH_PURPOSE_OWN_LIST_DISCOVERY ||
+    purpose == GH_AUTH_PURPOSE_OWN_LIST_PUBLISH ||
+    purpose == GH_AUTH_PURPOSE_SELF_WRAP || purpose == GH_AUTH_PURPOSE_PUBLIC_POST ||
+    purpose == GH_AUTH_PURPOSE_OWN_PRIVATE_SYNC_READ ||
+    purpose == GH_AUTH_PURPOSE_OWN_PRIVATE_SYNC_PUBLISH;
+}
+
 gboolean
 gh_auth_policy_apply_scope(GhAuthPolicy *self, GhRelayScope *scope, GhAuthPurpose purpose,
                            const gchar *url, GError **error)
 {
   g_return_val_if_fail(GH_IS_AUTH_POLICY(self), FALSE);
   g_return_val_if_fail(scope != NULL && url != NULL, FALSE);
+  if (!gh_relay_scope_set_url_address_trusted(scope, url, account_owned_destination(purpose), error))
+    return FALSE;
   GhRelayAuthMode mode = gh_auth_policy_decide(purpose);
   if (mode != GH_RELAY_AUTH_ACCOUNT)
     return gh_relay_scope_set_url_auth(scope, url, mode, error);
@@ -126,6 +139,8 @@ gh_auth_policy_apply_publish(GhAuthPolicy *self, GhRelayPublish *publish, GhAuth
 {
   g_return_val_if_fail(GH_IS_AUTH_POLICY(self), FALSE);
   g_return_val_if_fail(publish != NULL && url != NULL, FALSE);
+  if (!gh_relay_publish_set_url_address_trusted(publish, url, account_owned_destination(purpose), error))
+    return FALSE;
   GhRelayAuthMode mode = gh_auth_policy_decide(purpose);
   if (mode != GH_RELAY_AUTH_ACCOUNT)
     return gh_relay_publish_set_url_auth(publish, url, mode, error);

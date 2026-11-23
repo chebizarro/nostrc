@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 
 #include "signet/cli_secret_output.h"
+#include "secret_json.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -64,7 +65,7 @@ int signet_cli_write_secret_bytes(const char *path,
 
 int signet_cli_handle_delivery_result(const char *reply_json,
                                       const char *out_path) {
-  g_autoptr(JsonParser) p = json_parser_new();
+  g_autoptr(SignetSecretJsonParser) p = json_parser_new();
   if (!reply_json || !out_path ||
       !json_parser_load_from_data(p, reply_json, -1, NULL)) {
     fprintf(stderr, "signetctl: malformed credential delivery reply\n");

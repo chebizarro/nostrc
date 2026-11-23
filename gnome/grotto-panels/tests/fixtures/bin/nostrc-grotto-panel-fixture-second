@@ -1,0 +1,3 @@
+#!/bin/sh
+# Identity-only catalog fixture; tests never execute this command.
+exit 0

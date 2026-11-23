@@ -123,5 +123,17 @@ gboolean gh_mls_commit_record_answer(GhStore *store, Marmot *marmot,
 GPtrArray *gh_mls_commit_resume(GhStore *store, Marmot *marmot, MarmotStorage *storage,
                                 const gchar *account_pubkey, GError **error);
 
+/* As above, returning the deferred Commits applied by clearing ours, only
+ * after the outcome transaction commits. Free with marmot_message_results_free().
+ * On failure the outputs are empty: rolled-back results must never reach UI. */
+gboolean gh_mls_commit_record_answer_with_results(GhStore *store, Marmot *marmot,
+                                     MarmotStorage *storage,
+                                     const GhMlsCommitPublish *publish,
+                                     const gchar *relay_url, gboolean accepted,
+                                     const gchar *relay_message,
+                                     GhMlsCommitState *out_state,
+                                     MarmotMessageResult **out_results,
+                                     size_t *out_count, GError **error);
+
 G_END_DECLS
 #endif

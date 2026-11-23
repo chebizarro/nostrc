@@ -89,6 +89,7 @@ typedef struct peer_rec {
     fips_instant last_heard, last_tree_announce, established_at;
     uint64_t tree_sent, tree_received, frames_in, frames_out, bytes_in, bytes_out;
     uint64_t announce_sequence;
+    uint64_t bloom_inflight; /* sequence awaiting seal/send completion; zero means none */
     bool has_announce_counter;
     uint64_t announce_counter;
     fips_mmp_link_evidence evidence;
@@ -420,6 +421,7 @@ void hs_bloom_peer_removed(handlers *h, peer_rec *rec);
 void hs_bloom_filter_received(handlers *h, peer_rec *rec, const uint8_t *body, size_t len);
 void hs_bloom_roles(handlers *h);
 void hs_bloom_refresh(handlers *h, fips_instant now, bool force_all);
+void hs_bloom_complete(handlers *, peer_rec *, const fips_bloom_action *, bool sent, uint64_t epoch, uint64_t counter);
 void hs_bloom_rr(handlers *h, peer_rec *rec);
 const fips_bloom_filter *hs_bloom_peer_filter(handlers *h, const fips_node_addr *peer);
 bool hs_bloom_may_reach(handlers *h, const fips_node_addr *peer, const fips_node_addr *target);

@@ -21,6 +21,10 @@
 #include "gh-account-ui.h"
 #include "gh-inbox-status.h"
 #include "gh-onboarding-view.h"
+#ifdef GROUNDHOG_HAVE_NET_SESSION
+#include "gh-net-session.h"
+#include "../gh-test-port.h"
+#endif
 #include "gh-nip46-pair-dialog.h"
 #include "../app/gh-test-signer.h"
 #include "../app/gh-test-bunker.h"
@@ -570,6 +574,65 @@ live_probe(Fixture *f, const gchar *url)
   }
   g_error("no live check REQ on %s", url);
 }
+
+#ifdef GROUNDHOG_HAVE_NET_SESSION
+static gboolean
+tor_unreachable(gpointer data)
+{
+  return gh_net_session_get_tor_state(data) == GH_NET_TOR_UNREACHABLE;
+}
+
+static void
+network_settings_activated(GSimpleAction *action, GVariant *parameter, gpointer data)
+{
+  (void)action; (void)parameter;
+  (*(guint *)data)++;
+}
+
+static void
+test_runtime_tor_banner(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  window_down(f);
+  g_autoptr(GhNetSession) network = gh_net_session_new(NULL);
+  gh_net_session_set_default(network);
+  window_up(f);
+  GhOnboardingView *view = f->view;
+  AdwBanner *inbox = ADW_BANNER(gtk_widget_get_template_child(GTK_WIDGET(view),
+    GH_TYPE_ONBOARDING_VIEW, "inbox_tor_banner"));
+  AdwBanner *publish = ADW_BANNER(gtk_widget_get_template_child(GTK_WIDGET(view),
+    GH_TYPE_ONBOARDING_VIEW, "publish_tor_banner"));
+  g_assert_nonnull(inbox);
+  g_assert_nonnull(publish);
+  g_assert_false(adw_banner_get_revealed(inbox));
+  g_autofree gchar *refused = g_strdup_printf("127.0.0.1:%u", gh_test_refused_port());
+  gh_net_session_set_mode(network, GH_NET_MODE_TOR, refused);
+  gh_test_spin_until(tor_unreachable, network);
+  g_assert_true(adw_banner_get_revealed(inbox));
+  g_assert_true(adw_banner_get_revealed(publish));
+  g_assert_nonnull(strstr(adw_banner_get_title(inbox), "Tor"));
+  g_assert_cmpstr(adw_banner_get_button_label(inbox), ==, "Network Settings");
+  guint opened = 0;
+  g_autoptr(GSimpleActionGroup) actions = g_simple_action_group_new();
+  g_autoptr(GSimpleAction) settings = g_simple_action_new("network-settings", NULL);
+  g_signal_connect(settings, "activate", G_CALLBACK(network_settings_activated), &opened);
+  g_action_map_add_action(G_ACTION_MAP(actions), G_ACTION(settings));
+  gtk_widget_insert_action_group(GTK_WIDGET(view), "app", G_ACTION_GROUP(actions));
+  g_signal_emit_by_name(inbox, "button-clicked");
+  g_signal_emit_by_name(publish, "button-clicked");
+  g_assert_cmpuint(opened, ==, 2);
+  gh_net_session_set_mode(network, GH_NET_MODE_NONE, NULL);
+  g_assert_false(adw_banner_get_revealed(inbox));
+  g_assert_false(adw_banner_get_revealed(publish));
+  /* The shared session must not keep a disposed view alive or call its template. */
+  window_down(f);
+  gh_net_session_set_mode(network, GH_NET_MODE_TOR, refused);
+  gh_net_session_set_mode(network, GH_NET_MODE_NONE, NULL);
+  gh_net_session_set_default(NULL);
+  g_object_run_dispose(G_OBJECT(network));
+}
+
+#endif
 
 static const gchar *
 banner_title(Fixture *f)
@@ -1532,6 +1595,9 @@ main(int argc, char **argv)
   ADD("signer-denied", test_signer_denied, NULL);
   ADD("minimum-size", test_minimum_size, NULL);
   ADD("returning-user", test_returning_user, npub[1]);
+#ifdef GROUNDHOG_HAVE_NET_SESSION
+  ADD("runtime-tor-banner", test_runtime_tor_banner, npub[1]);
+#endif
   ADD("relay-list-offered", test_relay_list_offered, npub[1]);
   ADD("first-run-offers-relay-list", test_first_run_offers_relay_list, NULL);
   ADD("relay-list-edit-opt-in", test_relay_list_edit_opt_in, npub[1]);

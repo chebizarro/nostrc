@@ -931,8 +931,10 @@ bool passkeys_start_failed = false;
    * config would be undone by the next SIGHUP. */
   signet_mgmt_handler_set_config_path(mgmt, config_path);
 
-  /* 8a) Challenge store (shared by bootstrap, D-Bus TCP, NIP-5L) */
+  /* Separate transport budgets: local clients cannot evict public HTTP proofs. */
   SignetChallengeStore *challenges = signet_challenge_store_new();
+  SignetChallengeStore *tcp_challenges = signet_challenge_store_new();
+  SignetChallengeStore *nip5l_challenges = signet_challenge_store_new();
 
   /* 8b) Deny list + fleet registry for auth */
   SignetDenyList *deny = base_store ? signet_deny_list_new(base_store) : NULL;
@@ -1046,7 +1048,7 @@ bool passkeys_start_failed = false;
       .keys = keys,
       .policy = cap_registry,
       .store = base_store,
-      .challenges = challenges,
+      .challenges = tcp_challenges,
       .audit = audit,
       .fido = fido,
       .deny = deny,
@@ -1071,7 +1073,7 @@ bool passkeys_start_failed = false;
       .keys = keys,
       .policy = cap_registry,
       .store = base_store,
-      .challenges = challenges,
+      .challenges = nip5l_challenges,
       .audit = audit,
       .fleet = &fleet_reg,
       .relays = relays,
@@ -1288,6 +1290,8 @@ cleanup:
 
   signet_deny_list_free(deny);
   signet_challenge_store_free(challenges);
+  signet_challenge_store_free(tcp_challenges);
+  signet_challenge_store_free(nip5l_challenges);
 
   signet_audit_logger_free(audit);
 

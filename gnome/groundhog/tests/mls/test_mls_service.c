@@ -593,6 +593,144 @@ rename_group(App *alice, GhMlsGroup *ga, const gchar *name)
 
 
 static void
+test_round_launch_failure(gconstpointer data)
+{
+  guint boundary = GPOINTER_TO_UINT(data);
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_fake_clock = TRUE;
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Before launch failure", (const guint[]){ BOB }, 1);
+  GhMlsGroup *gb = join(bob, ALICE);
+  wait_live(ga);
+  gh_mls_service_test_fail_round_once(boundary);
+  if (boundary != 2)
+    g_test_expect_message(NULL, G_LOG_LEVEL_WARNING, "*cannot publish a group change:*");
+  OpWait changed = { 0 };
+  gh_mls_service_update_metadata_async(alice->service, ga, "Recovered launch", NULL, NULL,
+                                        on_changed, &changed);
+  spin_until(op_done, &changed, "failed launch completing its caller");
+  if (boundary != 2)
+    g_test_assert_expected_messages();
+  g_assert_false(changed.ok);
+  g_assert_nonnull(changed.error);
+  g_clear_error(&changed.error);
+  g_autofree gchar *pending = pending_commit_id(alice, ga);
+  g_assert_nonnull(pending);
+  gh_clock_fake_advance(alice->clock, 23 * G_USEC_PER_SEC);
+  NameWait recovered = { gb, "Recovered launch" };
+  spin_until(name_is, &recovered, "the durable Commit recovering without restaging");
+  g_autoptr(GPtrArray) events = published(&w.g, 445);
+  gboolean same = FALSE;
+  for (guint i = 0; i < events->len; i++) {
+    g_autofree gchar *id = nostr_event_get_id(g_ptr_array_index(events, i));
+    same |= g_strcmp0(id, pending) == 0;
+  }
+  g_assert_true(same);
+  world_down(&w);
+}
+
+typedef struct { const guint *value; guint minimum; } LookupRequestWait;
+static gboolean lookup_request_seen(gpointer data)
+{
+  LookupRequestWait *wait = data;
+  return *wait->value >= wait->minimum;
+}
+
+static void
+test_cancel_invitee_lookup(gconstpointer data)
+{
+  guint mode = GPOINTER_TO_UINT(data);
+  gboolean adding = mode == 1, offline = mode == 3;
+  World w;
+  world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
+  App *alice = &w.apps[ALICE];
+  wait_key_packages(&w, TRIO, G_N_ELEMENTS(TRIO));
+  accept_contact(alice, BOB);
+  accept_contact(alice, CAROL);
+  GhMlsGroup *group = adding ? create_group(alice, "Before cancelled add", (const guint[]){ BOB }, 1) : NULL;
+  guint groups = g_list_model_get_n_items(G_LIST_MODEL(alice->service));
+  guint64 epoch = group ? gh_mls_group_get_epoch(group) : 0;
+  w.e.no_eose = TRUE;
+  guint requests = w.e.reqs;
+  g_autoptr(GCancellable) caller = g_cancellable_new();
+  OpWait wait = { 0 };
+  const gchar *people[] = { hex[CAROL], NULL };
+  const gchar *relays[] = { w.g.url, NULL };
+  if (adding)
+    gh_mls_service_add_members_async(alice->service, group, people, caller, on_changed, &wait);
+  else
+    gh_mls_service_create_group_async(alice->service, "Cancelled create", NULL, relays,
+                                      people, caller, on_created, &wait);
+  LookupRequestWait requested = { &w.e.reqs, requests + 1 };
+  gh_test_spin_until(lookup_request_seen, &requested);
+  if (offline)
+    set_online(alice, FALSE);
+  else
+    g_cancellable_cancel(caller);
+  /* Less than the lookup's 15-second deadline: only cancellation can finish it. */
+  gh_test_spin_until(op_done, &wait);
+  if (offline)
+    g_assert_error(wait.error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED);
+  else
+    g_assert_error(wait.error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+  g_clear_error(&wait.error);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(alice->service)), ==, groups);
+  if (group)
+    g_assert_cmpuint(gh_mls_group_get_epoch(group), ==, epoch);
+  w.e.no_eose = FALSE;
+  if (offline)
+    set_online(alice, TRUE);
+  /* Cancelling this caller must not cancel the service's lookup generation. */
+  create_group(alice, "After caller cancellation", (const guint[]){ BOB }, 1);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(alice->service)), ==, groups + 1);
+  world_down(&w);
+}
+
+static void
+test_network_flap_is_not_account_change(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Before network flap", (const guint[]){ BOB }, 1);
+  GhMlsGroup *gb = join(bob, ALICE);
+  guint64 generation = gh_account_controller_get_generation(alice->accounts);
+  w.g.hold_oks = TRUE;
+  PendingWait tried = { ga, &w.g, w.g.events };
+  OpWait renamed = { 0 };
+  gh_mls_service_update_metadata_async(alice->service, ga, "After network flap", NULL,
+                                        NULL, on_changed, &renamed);
+  spin_until(pending_and_tried, &tried, "the Commit awaiting a relay answer");
+  g_autofree gchar *pending = pending_commit_id(alice, ga);
+  set_online(alice, FALSE);
+  gh_test_spin_until(op_done, &renamed);
+  g_assert_error(renamed.error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED);
+  g_assert_null(strstr(renamed.error->message, "account changed"));
+  g_clear_error(&renamed.error);
+  g_assert_cmpuint(gh_account_controller_get_generation(alice->accounts), ==, generation);
+  w.g.hold_oks = FALSE;
+  set_online(alice, TRUE);
+  wire_relay_release_oks(&w.g);
+  NameWait recovered = { gb, "After network flap" };
+  spin_until(name_is, &recovered, "the pending change resumed after reconnect");
+  g_autoptr(GPtrArray) events = published(&w.g, 445);
+  gboolean same = FALSE;
+  for (guint i = 0; i < events->len; i++) {
+    g_autofree gchar *id = nostr_event_get_id(g_ptr_array_index(events, i));
+    same |= g_strcmp0(id, pending) == 0;
+  }
+  g_assert_true(same);
+  world_down(&w);
+}
+
+static void
 track_max(GObject *group, GParamSpec *pspec, gpointer data)
 {
   (void)pspec;
@@ -2059,6 +2197,111 @@ stored_by_id(WireRelay *relay, const gchar *id)
   g_assert_not_reached();
 }
 
+static void
+assert_order_inspection_read_only(App *app, GhMlsGroup *group, Backlog *backlog)
+{
+  Marmot *m = gh_mls_service_get_marmot(app->service);
+  const gchar *hex = gh_mls_group_get_group_id(group);
+  g_autofree guint8 *bytes = g_malloc(strlen(hex) / 2);
+  g_assert_true(nostr_hex2bin(bytes, hex, strlen(hex) / 2));
+  MarmotGroupId gid = { .data = bytes, .len = strlen(hex) / 2 };
+  const gchar *labels[] = { "mls_group", "mls_group_parent" };
+  uint8_t *before[2] = { NULL, NULL };
+  size_t len[2] = { 0, 0 };
+  MarmotError errors[2];
+  for (guint i = 0; i < 2; i++)
+    errors[i] = m->storage->mls_load(m->storage->ctx, labels[i], gid.data, gid.len,
+                                    &before[i], &len[i]);
+  guint seen = 0;
+  MarmotMessageOrder previous = { 0 };
+  for (guint i = 0; i < backlog->ids->len; i++) {
+    const gchar *json = stored_by_id(&app->world->g, g_ptr_array_index(backlog->ids, i))->json;
+    MarmotMessageOrder order;
+    if (marmot_inspect_message_order(m, &gid, json, &order) != MARMOT_OK)
+      continue; /* the Commit is not an application */
+    MarmotMessageOrder again;
+    g_assert_cmpint(marmot_inspect_message_order(m, &gid, json, &again), ==, MARMOT_OK);
+    g_assert_cmpmem(&again, sizeof(again), &order, sizeof(order));
+    if (seen++) {
+      g_assert_cmpuint(order.sender_leaf, ==, previous.sender_leaf);
+      g_assert_cmpuint(order.epoch, ==, previous.epoch);
+      g_assert_cmpuint(order.generation, ==, previous.generation + 1);
+    }
+    previous = order;
+  }
+  g_assert_cmpuint(seen, ==, 80);
+  for (guint i = 0; i < 2; i++) {
+    uint8_t *after = NULL;
+    size_t after_len = 0;
+    g_assert_cmpint(m->storage->mls_load(m->storage->ctx, labels[i], gid.data, gid.len,
+                                         &after, &after_len), ==, errors[i]);
+    g_assert_cmpmem(before[i], len[i], after, after_len);
+    if (before[i]) sodium_memzero(before[i], len[i]);
+    if (after) sodium_memzero(after, after_len);
+    free(before[i]);
+    free(after);
+  }
+}
+
+/* A relay may interleave equal-second events arbitrarily. Reversing its
+ * arrival order is not sender-generation ordering: 80 exceeds the retained
+ * skipped-key window of 32. Run both in the joined epoch and beyond a Commit. */
+static void
+test_same_second_generations(gconstpointer data)
+{
+  guint scenario = GPOINTER_TO_UINT(data);
+  guint commits = scenario ? 1 : 0;
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Same second", (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  g_autofree gchar *h = g_strdup(h_of(last_stored_445(&w.g)));
+  join(bob, ALICE);
+  gh_clock_unref(bob->clock);
+  bob->clock = gh_clock_new_fake(g_get_real_time() + (gint64)24 * 3600 * G_USEC_PER_SEC);
+  app_restart(bob);
+  GhMlsGroup *gb = gh_mls_service_lookup(bob->service, room);
+  wait_live(gb);
+  set_online(bob, FALSE);
+  w.g.withhold_new = TRUE;
+  Backlog backlog;
+  make_backlog(&w, alice, ga, h, commits ? 0 : 80, commits, 80, &backlog);
+  assert_order_inspection_read_only(alice, ga, &backlog);
+  StoredCount tail = { &w.g, h, w.g.stored->len, 1 };
+  send_text(alice, ga, "same-second tail");
+  /* Publish completion, not a guessed delay. */
+  wait_stored_text(alice, room, "same-second tail");
+  spin_until(stored_reached, &tail, "tail at relay");
+  g_autofree gchar *tail_json = g_strdup(last_stored_445(&w.g)->json);
+  w.g.withhold_new = FALSE;
+  w.g.same_second_insertion_order = TRUE;
+  gint64 second = real_now() + 5;
+  for (guint i = 0; i < backlog.ids->len; i++) {
+    if (scenario == 2 && i == 0)
+      continue; /* place the Commit in the middle of its equal-second apps */
+    if (scenario == 2 && i == 41) {
+      g_autofree gchar *commit = resigned(stored_by_id(&w.g, backlog.first_commit)->json, second);
+      wire_relay_inject(&w.g, commit);
+    }
+    g_autofree gchar *copy = resigned(stored_by_id(&w.g, g_ptr_array_index(backlog.ids, i))->json,
+                                      second);
+    wire_relay_inject(&w.g, copy);
+  }
+  g_autofree gchar *copy = resigned(tail_json, second + 1);
+  wire_relay_inject(&w.g, copy);
+  set_online(bob, TRUE);
+  wait_stored_text(bob, room, "same-second tail");
+  wait_live(gb);
+  TextsWait all = { bob, room, backlog.texts, 0 };
+  g_assert_true(texts_listed(&all));
+  backlog_clear(&backlog);
+  world_down(&w);
+}
+
 /* REQs for kind 445 that page backwards (carry until). */
 static guint
 paged_reqs(WireRelay *relay)
@@ -2908,6 +3151,173 @@ test_unproven_invitee(void)
   g_assert_cmpint(gh_mls_group_get_member_identity(ga, hex[ALICE], NULL), ==,
                   GH_MLS_MEMBER_PROVEN);
   g_assert_cmpuint(gh_mls_group_get_unverified_members(ga), ==, 0);
+  world_down(&w);
+}
+
+typedef struct { App *app; GhMlsGroup *group; } DeferredWait;
+static gboolean
+deferred_commit_kept(gpointer data)
+{
+  DeferredWait *wait = data;
+  const gchar *hex_id = gh_mls_group_get_group_id(wait->group);
+  g_autofree guint8 *bytes = g_malloc(strlen(hex_id) / 2);
+  g_assert_true(nostr_hex2bin(bytes, hex_id, strlen(hex_id) / 2));
+  MarmotGroupId gid = { bytes, strlen(hex_id) / 2 };
+  size_t order[16], n = 0;
+  return marmot_commit_deferred_replay_order(gh_mls_service_get_marmot(wait->app->service),
+                                            &gid, order, G_N_ELEMENTS(order), &n) == MARMOT_OK && n > 0;
+}
+
+/* The winning local Commit is refused after Bob's losing Add was deferred.
+ * The round's clear applies that Add: its new unproven device belongs to
+ * Bob's authorship, not our rejected change or an unknown committer. */
+static void
+test_deferred_add_attributed(void)
+{
+  World w;
+  world_legacy_only = TRUE;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Before deferred Add", (const guint[]){ BOB }, 1);
+  GhMlsGroup *gb = join(bob, ALICE);
+  const gchar *admins[] = { hex[ALICE], hex[BOB], NULL };
+  OpWait promoted = { 0 };
+  gh_mls_service_set_admins_async(alice->service, ga, admins, NULL, on_changed, &promoted);
+  change(alice, &promoted);
+  spin_until(became_admin, gb, "Bob promoted");
+  wait_epoch(gb, (gint)gh_mls_group_get_epoch(ga));
+  g_autofree gchar *kp = inject_legacy_key_package(&w, CAROL);
+  accept_contact(bob, CAROL);
+  w.g.withhold_new = TRUE;
+  w.g.hold_oks = TRUE;
+  PendingWait attempted = { ga, &w.g, w.g.events };
+  OpWait ours = { 0 };
+  gh_mls_service_update_metadata_async(alice->service, ga, "Refused local change", NULL,
+                                       NULL, on_changed, &ours);
+  spin_until(pending_and_tried, &attempted, "our local Commit at the relay");
+  g_autofree gchar *our_id = pending_commit_id(alice, ga);
+  OpWait added = { 0 };
+  const gchar *people[] = { hex[CAROL], NULL };
+  attempted = (PendingWait){ gb, &w.g, w.g.events };
+  gh_mls_service_add_members_async(bob->service, gb, people, NULL, on_changed, &added);
+  spin_until(pending_and_tried, &attempted, "Bob's Add at the relay");
+  g_autofree gchar *bob_id = pending_commit_id(bob, gb);
+  wire_relay_release(&w.g, bob_id);
+  DeferredWait deferred = { alice, ga };
+  spin_until(deferred_commit_kept, &deferred, "Bob's Add retained behind ours");
+  for (guint i = 0; i < w.g.held_oks->len; i++) {
+    WireHeldOk *held = g_ptr_array_index(w.g.held_oks, i);
+    if (g_str_equal(held->id, our_id))
+      wire_send_ok(held->connection, held->id, FALSE, "blocked: local Commit refused");
+  }
+  spin_until(op_done, &ours, "our refused round completed");
+  g_assert_error(ours.error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_REFUSED);
+  g_clear_error(&ours.error);
+  wait_members(ga, 3);
+  assert_identity(ga, CAROL, GH_MLS_MEMBER_UNVERIFIED, BOB);
+  w.g.withhold_new = FALSE;
+  wire_relay_release_oks(&w.g);
+  spin_until(op_done, &added, "Bob's completed Add");
+  g_assert_no_error(added.error);
+  g_assert_true(added.ok);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  app_restart(alice);
+  ga = gh_mls_service_lookup(alice->service, room);
+  wait_members(ga, 3);
+  assert_identity(ga, CAROL, GH_MLS_MEMBER_UNVERIFIED, BOB);
+  world_down(&w);
+}
+
+/* Build each snapshot through the real clear API. Report the two in one
+ * batch: the final roster alone cannot tell Bob's Add from Carol's Update.
+ * Transport/callback handoff is covered by deferred-add-attributed above. */
+static void
+test_deferred_batch_attribution(void)
+{
+  World w;
+  world_legacy_only = TRUE;
+  const guint keys[] = { ALICE, BOB, CAROL };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB], *carol = &w.apps[CAROL];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  accept_contact(alice, CAROL);
+  GhMlsGroup *ga = create_group(alice, "Deferred batch", (const guint[]){ BOB, CAROL }, 2);
+  GhMlsGroup *gb = join(bob, ALICE), *gc = join(carol, ALICE);
+  const gchar *admins[] = { hex[ALICE], hex[BOB], hex[CAROL], NULL };
+  OpWait promoted = { 0 };
+  gh_mls_service_set_admins_async(alice->service, ga, admins, NULL, on_changed, &promoted);
+  change(alice, &promoted);
+  spin_until(became_admin, gb, "Bob promoted");
+  spin_until(became_admin, gc, "Carol promoted");
+  wait_epoch(gb, (gint)gh_mls_group_get_epoch(ga));
+  wait_epoch(gc, (gint)gh_mls_group_get_epoch(ga));
+  g_autofree gchar *kp_id = inject_legacy_key_package(&w, STRANGER);
+  WireStored *kp = stored_by_id(&w.w, kp_id);
+  g_assert_nonnull(kp);
+  set_online(alice, FALSE);
+  set_online(bob, FALSE);
+  set_online(carol, FALSE);
+  const gchar *gid_hex = gh_mls_group_get_group_id(ga);
+  g_autofree guint8 *bytes = g_malloc(strlen(gid_hex) / 2);
+  g_assert_true(nostr_hex2bin(bytes, gid_hex, strlen(gid_hex) / 2));
+  MarmotGroupId gid = { bytes, strlen(gid_hex) / 2 };
+  Marmot *ma = gh_mls_service_get_marmot(alice->service);
+  Marmot *mb = gh_mls_service_get_marmot(bob->service);
+  Marmot *mc = gh_mls_service_get_marmot(carol->service);
+  MarmotGroupConfig cfg = { .name = "Unpublished local change" };
+  char *ours = NULL, *add = NULL, **welcomes = NULL;
+  size_t n_welcomes = 0;
+  g_assert_cmpint(marmot_update_group_metadata(ma, &gid, &cfg, &ours), ==, MARMOT_OK);
+  const char *kps[] = { kp->json };
+  g_assert_cmpint(marmot_add_members(mb, &gid, kps, 1, &welcomes, &n_welcomes, &add), ==, MARMOT_OK);
+  g_assert_cmpint(marmot_merge_pending_commit(mb, &gid), ==, MARMOT_OK);
+  MarmotMessageResult inbound = { 0 };
+  g_assert_cmpint(marmot_process_message(mc, add, &inbound), ==, MARMOT_OK);
+  marmot_message_result_free(&inbound);
+  g_assert_cmpint(marmot_process_message(ma, add, &inbound), ==, MARMOT_ERR_OWN_COMMIT_PENDING);
+  marmot_message_result_free(&inbound);
+  MarmotMessageResult *first = NULL, *second = NULL;
+  size_t n_first = 0, n_second = 0;
+  g_assert_cmpint(marmot_clear_pending_commit_with_results(ma, &gid, &first, &n_first), ==, MARMOT_OK);
+  g_assert_cmpuint(n_first, ==, 1);
+  free(ours);
+  ours = NULL;
+  g_assert_cmpint(marmot_update_group_metadata(ma, &gid, &cfg, &ours), ==, MARMOT_OK);
+  cfg.name = "Carol's later metadata update";
+  char *update = NULL;
+  g_assert_cmpint(marmot_update_group_metadata(mc, &gid, &cfg, &update), ==, MARMOT_OK);
+  g_assert_cmpint(marmot_merge_pending_commit(mc, &gid), ==, MARMOT_OK);
+  g_assert_cmpint(marmot_process_message(ma, update, &inbound), ==, MARMOT_ERR_OWN_COMMIT_PENDING);
+  marmot_message_result_free(&inbound);
+  g_assert_cmpint(marmot_clear_pending_commit_with_results(ma, &gid, &second, &n_second), ==, MARMOT_OK);
+  g_assert_cmpuint(n_second, ==, 1);
+  g_assert_cmpstr(first[0].commit.committer_pubkey_hex, ==, hex[BOB]);
+  g_assert_cmpstr(second[0].commit.committer_pubkey_hex, ==, hex[CAROL]);
+  g_assert_cmpuint(second[0].commit.updated_group->epoch, ==, first[0].commit.updated_group->epoch + 1);
+  MarmotMessageResult *batch = calloc(2, sizeof(*batch));
+  batch[0] = first[0];
+  batch[1] = second[0];
+  free(first);
+  free(second);
+  gh_mls_service_test_report_cleared(ga, batch, 2);
+  wait_members(ga, 4);
+  assert_identity(ga, STRANGER, GH_MLS_MEMBER_UNVERIFIED, BOB);
+  marmot_message_results_free(batch, 2);
+  for (size_t i = 0; i < n_welcomes; i++)
+    free(welcomes[i]);
+  free(welcomes);
+  free(ours);
+  free(add);
+  free(update);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  app_restart(alice);
+  ga = gh_mls_service_lookup(alice->service, room);
+  wait_members(ga, 4);
+  assert_identity(ga, STRANGER, GH_MLS_MEMBER_UNVERIFIED, BOB);
   world_down(&w);
 }
 
@@ -4884,6 +5294,13 @@ main(int argc, char **argv)
   g_test_init(&argc, &argv, NULL);
   mls_world_init();
   g_test_add_func("/groundhog/mls-service/key-packages", test_key_packages);
+  g_test_add_data_func("/groundhog/mls-service/cancel-create-lookup", GINT_TO_POINTER(0), test_cancel_invitee_lookup);
+  g_test_add_data_func("/groundhog/mls-service/cancel-add-lookup", GINT_TO_POINTER(1), test_cancel_invitee_lookup);
+  g_test_add_data_func("/groundhog/mls-service/offline-create-lookup", GINT_TO_POINTER(3), test_cancel_invitee_lookup);
+  g_test_add_func("/groundhog/mls-service/network-flap-not-account-change", test_network_flap_is_not_account_change);
+  g_test_add_data_func("/groundhog/mls-service/round-create-failure", GUINT_TO_POINTER(1), test_round_launch_failure);
+  g_test_add_data_func("/groundhog/mls-service/round-urls-failure", GUINT_TO_POINTER(2), test_round_launch_failure);
+  g_test_add_data_func("/groundhog/mls-service/round-start-failure", GUINT_TO_POINTER(3), test_round_launch_failure);
 #if GH_MLS_ADOPTED_KEY_PACKAGES
   g_test_add_func("/groundhog/mls-service/create-in-format", test_create_in_format);
 #endif
@@ -4949,6 +5366,9 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/busy-group-stalled-relay",
                   test_busy_group_stalled_relay);
   g_test_add_func("/groundhog/mls-service/stale-welcome", test_stale_welcome);
+  g_test_add_data_func("/groundhog/mls-service/same-second-generations", GUINT_TO_POINTER(0), test_same_second_generations);
+  g_test_add_data_func("/groundhog/mls-service/same-second-after-commit", GUINT_TO_POINTER(1), test_same_second_generations);
+  g_test_add_data_func("/groundhog/mls-service/same-second-mixed-held-backfill", GUINT_TO_POINTER(2), test_same_second_generations);
   g_test_add_func("/groundhog/mls-service/catch-up-over-200", test_catch_up_over_200);
   g_test_add_func("/groundhog/mls-service/join-commit-pins-no-cursor",
                   test_join_commit_pins_no_cursor);
@@ -4957,6 +5377,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/account-proof-enrollment",
                   test_account_proof_enrollment);
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
+  g_test_add_func("/groundhog/mls-service/deferred-add-attributed", test_deferred_add_attributed);
+  g_test_add_func("/groundhog/mls-service/deferred-batch-attribution", test_deferred_batch_attribution);
   g_test_add_func("/groundhog/mls-service/unproven-member-identity",
                   test_unproven_member_identity);
   g_test_add_func("/groundhog/mls-service/own-commit-echo-before-ok",

@@ -199,6 +199,20 @@ void gh_mls_media_fetch_picture_async(GhBlossomClient *client,
  * GH_MLS_MEDIA_ERROR_DAMAGED on a mismatch. Wiped when freed. */
 GBytes *gh_mls_media_open_picture(const MarmotGroupBlossomImage *image, GBytes *ciphertext,
                                   GError **error);
+/* Read-only legacy MIP-01 pictures. v1 uses image_key directly; v2+ uses
+ * HKDF-SHA256 with the mip01-image-encryption-v2 context. Unknown version
+ * 0 is unsupported, never guessed. Group ownership transfers to the caller. */
+MarmotGroup *gh_mls_media_load_legacy_picture(Marmot *marmot, const gchar *group_id_hex,
+                                             GError **error);
+gchar *gh_mls_media_legacy_picture_id(const MarmotGroup *group);
+GBytes *gh_mls_media_open_legacy_picture(const MarmotGroup *group, GBytes *ciphertext,
+                                         GError **error);
+/* Explicit picture fetch from the disclosed URLs; same hash/public-host/Tor
+ * path as adopted pictures. Finishes with gh_mls_media_fetch_finish(). */
+void gh_mls_media_fetch_picture_urls_async(GhBlossomClient *client,
+  const guint8 hash[32], const gchar *const *urls, GCancellable *cancellable,
+  GAsyncReadyCallback callback, gpointer user_data);
+
 /* A new picture: file must be a JPEG or PNG (GH_MLS_MEDIA_ERROR_UNSUPPORTED
  * otherwise; GH_ATTACHMENT_ERROR_TOO_LARGE over GH_MLS_MEDIA_PICTURE_MAX),
  * its metadata removed (gh_attachment_prepare()), encrypted under fresh

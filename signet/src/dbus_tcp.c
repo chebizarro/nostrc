@@ -167,6 +167,13 @@ static void signet_tcp_handle_auth(GDBusConnection *connection,
       return;
     }
 
+    char agent_pubkey[65];
+    if (!signet_key_store_get_agent_pubkey(ds->keys, agent_id, agent_pubkey, sizeof(agent_pubkey))) {
+      g_dbus_method_invocation_return_dbus_error(
+          invocation, "net.signet.Error.NotProvisioned", "agent not provisioned");
+      return;
+    }
+
     int64_t now = signet_now_unix();
     char *challenge = signet_challenge_issue(ds->challenges, agent_id, now);
     if (!challenge) {
@@ -204,7 +211,7 @@ static void signet_tcp_handle_auth(GDBusConnection *connection,
     state->authenticated = true;
 
     g_mutex_lock(&ds->mu);
-    g_hash_table_replace(ds->conn_states, connection, state);
+    g_hash_table_replace(ds->conn_states, g_object_ref(connection), state);
     g_mutex_unlock(&ds->mu);
 
     g_dbus_method_invocation_return_value(invocation,
@@ -279,6 +286,15 @@ static const GDBusInterfaceVTable passkeys_vtable = {
   .method_call = signet_tcp_handle_method,
 };
 
+static void signet_tcp_on_closed(GDBusConnection *connection, gboolean remote,
+                                  GError *error, gpointer data) {
+  (void)remote; (void)error;
+  SignetDbusTcpServer *ds = data;
+  g_mutex_lock(&ds->mu);
+  g_hash_table_remove(ds->conn_states, connection);
+  g_mutex_unlock(&ds->mu);
+}
+
 static gboolean
 signet_tcp_on_new_connection(GDBusServer *server,
                               GDBusConnection *connection,
@@ -319,7 +335,13 @@ signet_tcp_on_new_connection(GDBusServer *server,
       &passkeys_vtable, ds, NULL, &err);
   if (err) { g_error_free(err); err = NULL; }
 
-  return TRUE; /* claim the connection */
+  /* Claiming a GDBusServer connection does not retain it. Keep the reference
+   * for both unauthenticated challenge requests and the authenticated session. */
+  g_mutex_lock(&ds->mu);
+  g_hash_table_insert(ds->conn_states, g_object_ref(connection), g_new0(TcpConnState, 1));
+  g_signal_connect(connection, "closed", G_CALLBACK(signet_tcp_on_closed), ds);
+  g_mutex_unlock(&ds->mu);
+  return TRUE;
 }
 
 /* ------------------------------ public API -------------------------------- */
@@ -344,7 +366,7 @@ SignetDbusTcpServer *signet_dbus_tcp_server_new(const SignetDbusTcpServerConfig 
 
   g_mutex_init(&ds->mu);
   ds->conn_states = g_hash_table_new_full(
-      g_direct_hash, g_direct_equal, NULL, tcp_conn_state_free);
+      g_direct_hash, g_direct_equal, g_object_unref, tcp_conn_state_free);
 
   ds->node_info = g_dbus_node_info_new_for_xml(signet_tcp_introspection_xml, NULL);
   if (!ds->node_info) {
@@ -408,4 +430,16 @@ void signet_dbus_tcp_server_stop(SignetDbusTcpServer *ds) {
   g_dbus_server_stop(ds->server);
   g_object_unref(ds->server);
   ds->server = NULL;
+  g_mutex_lock(&ds->mu);
+  GList *connections = g_hash_table_get_keys(ds->conn_states);
+  for (GList *it = connections; it; it = it->next) g_object_ref(it->data);
+  g_hash_table_remove_all(ds->conn_states);
+  g_mutex_unlock(&ds->mu);
+  for (GList *it = connections; it; it = it->next) {
+    GDBusConnection *connection = it->data;
+    g_signal_handlers_disconnect_by_data(connection, ds);
+    g_dbus_connection_close_sync(connection, NULL, NULL);
+    g_object_unref(connection);
+  }
+  g_list_free(connections);
 }

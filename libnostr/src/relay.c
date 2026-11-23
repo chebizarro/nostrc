@@ -243,7 +243,7 @@ static void relay_callback_slot_call_state(NostrRelay *relay,
 
 static void relay_set_state(NostrRelay *relay, NostrRelayConnectionState new_state);
 static NostrConnection *relay_connection_lease(NostrRelay *r);
-static void relay_connection_unlease(NostrRelay *r);
+static void relay_connection_unlease(NostrRelay *r, NostrConnection *conn);
 static uint64_t get_monotonic_time_ms(void);
 static uint64_t calculate_backoff_with_jitter(int attempt);
 static bool relay_attempt_reconnect(NostrRelay *r);
@@ -262,12 +262,40 @@ static void relay_ok_result_free(NostrRelayOkResult *res) {
 }
 
 static void relay_ok_waiter_free(NostrRelayOkWaiter *waiter) {
-    if (!waiter) return;
+    if (!waiter || atomic_fetch_sub(&waiter->refs, 1) != 1) return;
     if (waiter->done) {
         go_channel_close(waiter->done);
+        void *late = NULL;
+        while (go_channel_try_receive(waiter->done, &late) == 0)
+            relay_ok_result_free(late);
         go_channel_free(waiter->done);
     }
     free(waiter);
+}
+
+/* Called under the relay mutex; the map owns a reference on success. */
+static const char *relay_ok_waiter_insert(NostrRelay *r, const char *id, NostrRelayOkWaiter *waiter) {
+    GoHashMap *map = r->priv->ok_callbacks;
+    if (!map) return "OK waiter map is unavailable";
+    if (go_hash_map_get_string(map, id)) return "an OK waiter for this event already exists";
+    go_hash_map_insert_str(map, id, waiter);
+    if (go_hash_map_get_string(map, id) != waiter) return "could not register OK waiter";
+    atomic_fetch_add(&waiter->refs, 1);
+    return NULL;
+}
+
+static void relay_ok_waiter_remove(NostrRelay *r, const char *id, NostrRelayOkWaiter *waiter) {
+    if (r->priv->ok_callbacks && go_hash_map_get_string(r->priv->ok_callbacks, id) == waiter) {
+        go_hash_map_remove_str(r->priv->ok_callbacks, id);
+        relay_ok_waiter_free(waiter);
+    }
+}
+
+static _Atomic(NostrRelayDialHook) g_pending_ok_hook;
+static _Atomic(void *) g_pending_ok_hook_data;
+void nostr_relay_test_set_pending_ok_hook(NostrRelayDialHook hook, void *data) {
+    atomic_store(&g_pending_ok_hook_data, data);
+    atomic_store(&g_pending_ok_hook, hook);
 }
 
 static NostrRelayOkResult *relay_ok_result_new(bool ok, const char *reason) {
@@ -286,9 +314,10 @@ static bool relay_pending_ok_fail_cb(HashKey *key, void *value, void *user_data)
         NostrRelayOkResult *res = relay_ok_result_new(false, reason);
         if (res) {
             res->disconnected = true;
-            (void)go_channel_send(waiter->done, res);
+            if (go_channel_try_send(waiter->done, res) != 0) relay_ok_result_free(res);
         }
     }
+    relay_ok_waiter_free(waiter); /* detached map reference */
     return true;
 }
 
@@ -305,12 +334,15 @@ static void relay_fail_pending_ok(NostrRelay *r, const char *reason) {
     nsync_mu_lock(&r->priv->mutex);
     GoHashMap *old = r->priv->ok_callbacks;
     r->priv->ok_callbacks = go_hash_map_create(64);
+    nsync_mu_unlock(&r->priv->mutex);
+    /* The detached map retains its references even if publishers retire. */
     if (old) {
+        NostrRelayDialHook hook = atomic_load(&g_pending_ok_hook);
+        if (hook) hook(r, atomic_load(&g_pending_ok_hook_data));
         go_hash_map_for_each_with_data(old, relay_pending_ok_fail_cb,
                                        (void *)(reason ? reason : "relay disconnected"));
         go_hash_map_destroy(old);
     }
-    nsync_mu_unlock(&r->priv->mutex);
 }
 
 /* nostrc-7i6w: the frame an OK/AUTH callback reports (nostr_relay_get_callback_frame). */
@@ -549,8 +581,8 @@ void nostr_relay_dispatch_control_envelope(NostrRelay *r, NostrEnvelope *envelop
             r->priv->ok_callbacks ? go_hash_map_get_string(r->priv->ok_callbacks, oe->event_id) : NULL;
         if (waiter && waiter->done) {
             NostrRelayOkResult *res = relay_ok_result_new(oe->ok, oe->reason);
-            if (res) (void)go_channel_send(waiter->done, res);
-            go_hash_map_remove_str(r->priv->ok_callbacks, oe->event_id);
+            if (res && go_channel_try_send(waiter->done, res) != 0) relay_ok_result_free(res);
+            relay_ok_waiter_remove(r, oe->event_id, waiter);
         }
         ok_slot = relay_callback_slot_ref_locked(r->priv->ok_slot);
         nsync_mu_unlock(&r->priv->mutex);
@@ -673,7 +705,7 @@ bool nostr_relay_wait_established_with_context(NostrRelay *relay, uint32_t timeo
     NostrConnection *conn = relay_connection_lease(relay);
     int outcome = conn ? nostr_connection_wait_handshake_with_context(conn, timeout_ms, cancel) : -1;
     if (outcome == 1) {
-        relay_connection_unlease(relay);
+        relay_connection_unlease(relay, conn);
         return true;
     }
 
@@ -690,7 +722,7 @@ bool nostr_relay_wait_established_with_context(NostrRelay *relay, uint32_t timeo
         }
         nsync_mu_unlock(&relay->priv->mutex);
     }
-    if (conn) relay_connection_unlease(relay);
+    if (conn) relay_connection_unlease(relay, conn);
     relay_callback_slot_call_state(relay, slot, NOSTR_RELAY_STATE_CONNECTED,
                                    NOSTR_RELAY_STATE_DISCONNECTED);
     if (err) {
@@ -745,7 +777,6 @@ NostrRelay *nostr_relay_new(GoContext *context, const char *url, Error **err) {
     relay->priv->subscription_channel_close_queue = go_channel_create(16);
     relay->priv->debug_raw = NULL;
     relay->priv->reconnect_now = go_channel_create(1);
-    relay->priv->conn_leases = 0;
     nsync_cv_init(&relay->priv->conn_leases_cv);
     nsync_cv_init(&relay->priv->dial_done_cv);
     go_wait_group_init(&relay->priv->workers);
@@ -777,20 +808,19 @@ NostrRelay *nostr_relay_ref(NostrRelay *relay) {
     return relay;
 }
 
-/* nostrc-xfjg: a writer's lease on relay->connection (see
- * NostrRelayPrivate.conn_leases). NULL when not connected; otherwise the
- * connection stays usable until relay_connection_unlease(). */
+/* A lease pins this connection, not a replacement published during retirement.
+ * Counts and the shared wakeup CV are protected by the owning relay mutex. */
 static NostrConnection *relay_connection_lease(NostrRelay *r) {
     nsync_mu_lock(&r->priv->mutex);
     NostrConnection *conn = r->connection;
-    if (conn) r->priv->conn_leases++;
+    if (conn) conn->priv->relay_leases++;
     nsync_mu_unlock(&r->priv->mutex);
     return conn;
 }
 
-static void relay_connection_unlease(NostrRelay *r) {
+static void relay_connection_unlease(NostrRelay *r, NostrConnection *conn) {
     nsync_mu_lock(&r->priv->mutex);
-    if (--r->priv->conn_leases == 0) nsync_cv_broadcast(&r->priv->conn_leases_cv);
+    if (--conn->priv->relay_leases == 0) nsync_cv_broadcast(&r->priv->conn_leases_cv);
     nsync_mu_unlock(&r->priv->mutex);
 }
 
@@ -803,13 +833,8 @@ static void relay_connection_unlease(NostrRelay *r) {
  * and a reconnect (which used to only close the old connection and leave its
  * channels to nobody). NULL-safe.
  *
- * Not for a connection that was never stored in relay->connection (a dial
- * that failed, lost a race, or found the relay closing): nostrc-vpha B1. No
- * writer can hold a lease on one (relay_connection_lease() hands out
- * relay->connection only), and conn_leases counts leases on whatever the relay
- * does hold, so waiting here would wait for another connection's writer: one
- * blocked on that connection's full send channel, which only this thread would
- * close. Those go to nostr_connection_release() directly. */
+ * Unpublished losing dials go directly to nostr_connection_release(): nobody
+ * could have leased them. A published connection waits only for its own users. */
 static void relay_retire_connection(NostrRelay *r, NostrConnection *conn) {
     if (!conn) return;
     /* Wake leased handshake waiters before waiting for leases. Do not call
@@ -826,7 +851,7 @@ static void relay_retire_connection(NostrRelay *r, NostrConnection *conn) {
     if (conn->recv_channel) go_channel_close(conn->recv_channel);
     if (conn->send_channel) go_channel_close(conn->send_channel);
     nsync_mu_lock(&r->priv->mutex);
-    while (r->priv->conn_leases > 0)
+    while (conn->priv->relay_leases > 0)
         nsync_cv_wait(&r->priv->conn_leases_cv, &r->priv->mutex);
     nsync_mu_unlock(&r->priv->mutex);
     nostr_connection_release(conn);
@@ -1001,6 +1026,24 @@ static _Atomic(NostrRelayDialHook) g_dial_hook = NULL;
 static _Atomic(void *) g_dial_hook_data = NULL;
 static _Atomic(NostrRelayDialHook) g_reconnect_hook = NULL;
 static _Atomic(void *) g_reconnect_hook_data = NULL;
+static _Atomic(NostrRelayDialHook) g_retire_hook = NULL, g_lease_hook = NULL;
+static _Atomic(void *) g_retire_hook_data = NULL, g_lease_hook_data = NULL;
+static _Atomic(NostrRelayDialHook) g_loop_exit_hook;
+static _Atomic(void *) g_loop_exit_hook_data;
+void nostr_relay_test_set_loop_exit_hook(NostrRelayDialHook hook, void *data) {
+    atomic_store(&g_loop_exit_hook_data, data);
+    atomic_store(&g_loop_exit_hook, hook);
+}
+
+void nostr_relay_test_set_retire_hook(NostrRelayDialHook hook, void *data) {
+    atomic_store(&g_retire_hook_data, data);
+    atomic_store(&g_retire_hook, hook);
+}
+
+void nostr_relay_test_set_lease_hook(NostrRelayDialHook hook, void *data) {
+    atomic_store(&g_lease_hook_data, data);
+    atomic_store(&g_lease_hook, hook);
+}
 
 void nostr_relay_test_set_dial_hook(NostrRelayDialHook hook, void *data) {
     atomic_store(&g_dial_hook_data, data);
@@ -1085,6 +1128,7 @@ bool nostr_relay_connect_with_context(NostrRelay *relay, GoContext *cancel, Erro
     bool spawn = false;
     if (!lost && !closing) {
         relay->connection = conn;
+        relay->priv->connection_installation++;
         /* Reset reconnect state on successful connection (nostrc-4du) */
         relay->priv->reconnect_attempt = 0;
         relay->priv->backoff_ms = 0;
@@ -1110,6 +1154,9 @@ bool nostr_relay_connect_with_context(NostrRelay *relay, GoContext *cancel, Erro
     if (!spawn) {
         free(write_arg);
         free(loop_arg);
+        /* The live reader adopts this publication, including at retirement.
+         * Match the state transition of the initial publication below. */
+        relay_set_state(relay, NOSTR_RELAY_STATE_CONNECTED);
         return true;
     }
 
@@ -1218,7 +1265,7 @@ static void *write_operations(void *arg) {
                 r->priv->connection_generation == req->connection_generation &&
                 r->priv->auth_state == NOSTR_RELAY_AUTH_STATE_SENT) {
                 conn = r->connection;
-                if (conn) r->priv->conn_leases++;
+                if (conn) conn->priv->relay_leases++;
             }
             nsync_mu_unlock(&r->priv->mutex);
         } else {
@@ -1227,6 +1274,8 @@ static void *write_operations(void *arg) {
         if (!conn) {
             werr = new_error(1, "no current connection or AUTH attempt");
         } else {
+            NostrRelayDialHook lease_hook = atomic_load(&g_lease_hook);
+            if (lease_hook) lease_hook(r, atomic_load(&g_lease_hook_data));
             // Metrics: time WS write and count bytes
             nostr_metric_timer t = {0};
             nostr_metric_timer_start(&t);
@@ -1237,7 +1286,7 @@ static void *write_operations(void *arg) {
                 nostr_metric_counter_add("ws_tx_bytes", (uint64_t)strlen(req->msg));
                 nostr_metric_counter_add("ws_tx_messages", 1);
             }
-            relay_connection_unlease(r);
+            relay_connection_unlease(r, conn);
         }
         // The writer owns req->msg copy
         if (req->msg) free(req->msg);
@@ -1398,6 +1447,8 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
     NostrConnection *old_conn = r->connection;
     r->connection = NULL;
     nsync_mu_unlock(&r->priv->mutex);
+    NostrRelayDialHook retire_hook = atomic_load(&g_retire_hook);
+    if (retire_hook) retire_hook(r, atomic_load(&g_retire_hook_data));
     relay_retire_connection(r, old_conn);
 
     /* Create new connection */
@@ -1420,9 +1471,10 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
     bool adopted = !closing && r->connection != NULL;
     if (!closing && !adopted) {
         r->connection = new_conn;
+        r->priv->connection_installation++;
     }
     NostrConnection *candidate = !closing ? r->connection : NULL;
-    if (candidate) r->priv->conn_leases++;
+    if (candidate) candidate->priv->relay_leases++;
     nsync_mu_unlock(&r->priv->mutex);
     /* Never published, so released without the lease wait: the writer may hold
      * a lease on the adopted connection, blocked on its full send channel,
@@ -1466,7 +1518,7 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
         slot = relay_callback_slot_ref_locked(r->priv->state_slot);
     }
     nsync_mu_unlock(&r->priv->mutex);
-    relay_connection_unlease(r);
+    relay_connection_unlease(r, candidate);
     relay_callback_slot_call_state(r, slot, old_state, new_state);
     if (current && ready && old_state != new_state)
         nostr_relay_notify_listeners(r, NOSTR_RELAY_LISTEN_CONNECTED);
@@ -1506,11 +1558,15 @@ static void init_cached_env(void) {
 /* fp-ieg8: hand reconnect ownership back to the pool. Must run on every exit
  * path out of message_loop, or a relay whose loop has died stays flagged as
  * self-managed and nothing ever dials it again. */
-static void relay_message_loop_retire(NostrRelay *r) {
-    if (!r || !r->priv) return;
+static bool relay_message_loop_retire(NostrRelay *r, const uint64_t *observed) {
+    if (!r || !r->priv) return true;
     nsync_mu_lock(&r->priv->mutex);
-    r->priv->message_loop_active = false;
+    bool replacement = observed && r->connection && !r->priv->closing &&
+        !go_context_is_canceled(r->priv->connection_context) &&
+        r->priv->connection_installation != *observed;
+    if (!replacement) r->priv->message_loop_active = false;
     nsync_mu_unlock(&r->priv->mutex);
+    return !replacement;
 }
 
 // Worker: reads messages from the connection, parses envelopes, dispatches,
@@ -1535,7 +1591,7 @@ static void *message_loop(void *arg) {
 
     if (!ctx) {
         if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: no context, exiting\n");
-        relay_message_loop_retire(r);
+        relay_message_loop_retire(r, NULL);
         go_wait_group_done(&r->priv->workers);
         return NULL;
     }
@@ -1551,7 +1607,7 @@ static void *message_loop(void *arg) {
     if (!buf || !priority_buf) {
         free(buf); free(priority_buf);
         if (ctx) go_context_unref(ctx);
-        relay_message_loop_retire(r);
+        relay_message_loop_retire(r, NULL);
         go_wait_group_done(&r->priv->workers);
         return NULL;
     }
@@ -1561,12 +1617,15 @@ static void *message_loop(void *arg) {
     int has_priority = 0;
     bool context_canceled = false;  /* Track if context was canceled (vs connection lost) */
 
+    uint64_t observed_installation = 0;
+read_again:
     /* Outer loop for reconnection (nostrc-4du) */
     for (;;) {
         /* Inner loop: process messages while connected */
         for (;;) {
             nsync_mu_lock(&r->priv->mutex);
             NostrConnection *conn = r->connection;
+            observed_installation = r->priv->connection_installation;
             nsync_mu_unlock(&r->priv->mutex);
             if (!conn) break;
 
@@ -1887,10 +1946,17 @@ static void *message_loop(void *arg) {
         /* Continue outer loop to try again */
     }  /* end outer reconnection loop */
 
+    NostrRelayDialHook exit_hook = atomic_load(&g_loop_exit_hook);
+    if (exit_hook) exit_hook(r, atomic_load(&g_loop_exit_hook_data));
+    /* The publisher saw an active reader and deliberately did not spawn one.
+     * Adopt its connection under the same mutex instead of orphaning it. */
+    if (!relay_message_loop_retire(r, &observed_installation)) {
+        has_priority = 0;
+        goto read_again;
+    }
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: exit\n");
     free(buf);
     free(priority_buf);
-    relay_message_loop_retire(r);
     go_context_unref(ctx);  // Release context reference (nostrc-0q4)
     go_wait_group_done(&r->priv->workers);  // Use local 'r', not freed 'arg'
     return NULL;
@@ -1964,9 +2030,9 @@ static GoChannel *relay_write_impl(NostrRelay *r, char *msg, GoContext *cancel,
     req->msg = msg_copy;
     req->answer = chan;
 
-    /* The raw API preserves its existing backpressure. A cancellable publish
-     * must also select cancellation during queue admission, not only while
-     * waiting for write/OK: the writer may be stalled with a full queue. */
+    /* Queue admission can block: do not hold subscription locks here.
+     * Raw writes preserve backpressure; cancellable publish selects context
+     * cancellation while admitting the EVENT as well as while waiting for OK. */
     bool queued;
     if (!admission_timeout_ms) queued = go_channel_send(r->priv->write_queue, req) == 0;
     else if (cancel && go_context_is_canceled(cancel)) queued = false;
@@ -2119,19 +2185,21 @@ bool nostr_relay_publish_and_wait_with_context(NostrRelay *relay, NostrEvent *ev
         return false;
     }
     NostrRelayOkWaiter *waiter = calloc(1, sizeof(*waiter));
-    if (waiter) waiter->done = go_channel_create(1);
+    if (waiter) {
+        atomic_init(&waiter->refs, 1);
+        waiter->done = go_channel_create(1);
+    }
     if (!waiter || !waiter->done) {
         relay_ok_waiter_free(waiter); free(event_id);
         if (err) *err = new_error(ERR_UNKNOWN, "failed to allocate OK waiter");
         return false;
     }
     nsync_mu_lock(&relay->priv->mutex);
-    bool duplicate = go_hash_map_get_string(relay->priv->ok_callbacks, event_id) != NULL;
-    if (!duplicate) go_hash_map_insert_str(relay->priv->ok_callbacks, event_id, waiter);
+    const char *registration_error = relay_ok_waiter_insert(relay, event_id, waiter);
     nsync_mu_unlock(&relay->priv->mutex);
-    if (duplicate) {
+    if (registration_error) {
         relay_ok_waiter_free(waiter); free(event_id);
-        if (err) *err = new_error(ERR_UNKNOWN, "an OK waiter for this event already exists");
+        if (err) *err = new_error(ERR_UNKNOWN, "%s", registration_error);
         return false;
     }
 
@@ -2190,12 +2258,10 @@ bool nostr_relay_publish_and_wait_with_context(NostrRelay *relay, NostrEvent *ev
             if (result.selected_case < 0) failure = new_error(ERR_UNKNOWN, "timed out waiting for relay OK");
         }
     }
-    /* OK, disconnect and cancellation all access the registration under this
-     * mutex. Unregister before freeing, then drain a result that lost to cancel.
-     * relay_fail_pending_ok must also keep the mutex while completing waiters. */
+    /* Drop the live registration, if present. A detached disconnect map can
+     * still complete the waiter using its own reference; final unref drains it. */
     nsync_mu_lock(&relay->priv->mutex);
-    if (go_hash_map_get_string(relay->priv->ok_callbacks, event_id) == waiter)
-        go_hash_map_remove_str(relay->priv->ok_callbacks, event_id);
+    relay_ok_waiter_remove(relay, event_id, waiter);
     nsync_mu_unlock(&relay->priv->mutex);
     if (!ok_res) (void)go_channel_try_receive(waiter->done, (void **)&ok_res);
     bool cancelled = cancel && go_context_is_canceled(cancel);
@@ -2255,15 +2321,20 @@ static void relay_auth_impl(NostrRelay *relay, void (*sign)(NostrEvent *, Error 
     NostrRelayOkWaiter *waiter = NULL;
     if (!failure && wait_ms) {
         waiter = (NostrRelayOkWaiter *)calloc(1, sizeof(*waiter));
-        if (waiter) waiter->done = go_channel_create(1);
+        if (waiter) {
+            atomic_init(&waiter->refs, 1);
+            waiter->done = go_channel_create(1);
+        }
         if (!waiter || !waiter->done) {
             relay_ok_waiter_free(waiter);
             waiter = NULL;
             failure = new_error(1, "failed to allocate OK waiter");
         } else {
             nsync_mu_lock(&relay->priv->mutex);
-            go_hash_map_insert_str(relay->priv->ok_callbacks, event_id, waiter);
+            const char *registration_error = relay_ok_waiter_insert(relay, event_id, waiter);
             nsync_mu_unlock(&relay->priv->mutex);
+            if (registration_error)
+                failure = new_error(ERR_UNKNOWN, "%s", registration_error);
         }
     }
     if (!failure && !nostr_relay_send_auth(relay, event, generation, &failure) && !failure)
@@ -2286,9 +2357,7 @@ static void relay_auth_impl(NostrRelay *relay, void (*sign)(NostrEvent *, Error 
     }
     if (waiter) {
         nsync_mu_lock(&relay->priv->mutex);
-        if (relay->priv->ok_callbacks &&
-            go_hash_map_get_string(relay->priv->ok_callbacks, event_id) == waiter)
-            go_hash_map_remove_str(relay->priv->ok_callbacks, event_id);
+        relay_ok_waiter_remove(relay, event_id, waiter);
         nsync_mu_unlock(&relay->priv->mutex);
         relay_ok_waiter_free(waiter);
     }

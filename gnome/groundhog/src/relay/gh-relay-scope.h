@@ -285,5 +285,12 @@ void gh_relay_scope_notice(GhRelayScope *scope, const gchar *url,
 void gh_relay_scope_auth_challenge(GhRelayScope *scope, const gchar *url,
                                    const gchar *challenge);
 
+/* Address provenance is independent of AUTH identity. Unknown destinations
+ * are public-only in direct mode; explicitly account-owned URLs may be local.
+ * Set before connecting. Paging/reconnects retain the choice. */
+gboolean gh_relay_scope_set_url_address_trusted(GhRelayScope *self, const gchar *url,
+                                                  gboolean trusted, GError **error);
+gboolean gh_relay_scope_url_address_trusted(const GhRelayScope *self, const gchar *url);
+
 G_END_DECLS
 #endif

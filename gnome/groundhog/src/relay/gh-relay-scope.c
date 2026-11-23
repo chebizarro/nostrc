@@ -32,6 +32,7 @@ typedef struct {
 typedef struct {
   GhRelayScope *scope;         /* owner; endpoints never outlive it */
   gchar *url;
+  gboolean address_trusted; /* explicitly account-owned destination */
   gpointer handle;
   gboolean eose;
   gboolean opened;
@@ -701,7 +702,8 @@ start_page(GhRelayScope *scope, GhEndpoint *endpoint)
   if (scope->signer)
     page->signer = gh_relay_auth_signer_ref(scope->signer);
   if (!gh_relay_scope_add_url(page, endpoint->url, NULL) ||
-      !gh_relay_scope_set_url_auth(page, endpoint->url, endpoint->auth_mode, NULL)) {
+      !gh_relay_scope_set_url_auth(page, endpoint->url, endpoint->auth_mode, NULL) ||
+      !gh_relay_scope_set_url_address_trusted(page, endpoint->url, endpoint->address_trusted, NULL)) {
     gh_relay_scope_unref(page);
     return FALSE;
   }
@@ -1025,6 +1027,31 @@ gh_relay_scope_notice(GhRelayScope *scope, const gchar *url,
       maybe_recover(scope, endpoint, detail);
   }
   gh_relay_scope_unref(scope);
+}
+
+gboolean
+gh_relay_scope_set_url_address_trusted(GhRelayScope *self, const gchar *url,
+                                         gboolean trusted, GError **error)
+{
+  GhEndpoint *endpoint = self && url ? g_hash_table_lookup(self->endpoints, url) : NULL;
+  if (!endpoint) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "Unknown relay URL");
+    return FALSE;
+  }
+  if (self->started && endpoint->address_trusted != trusted) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_BUSY,
+                        "Choose relay address provenance before connecting");
+    return FALSE;
+  }
+  endpoint->address_trusted = trusted;
+  return TRUE;
+}
+
+gboolean
+gh_relay_scope_url_address_trusted(const GhRelayScope *self, const gchar *url)
+{
+  GhEndpoint *endpoint = self && url ? g_hash_table_lookup(self->endpoints, url) : NULL;
+  return endpoint && endpoint->address_trusted;
 }
 
 gboolean

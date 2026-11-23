@@ -227,7 +227,6 @@ typedef struct {
   char *event_id;
   char *notification;
   char *reason;
-  gboolean resubscribe;
   gboolean auth_complete;
 } Deferred;
 
@@ -362,11 +361,25 @@ static void capture_required_locked(SignetRelayPool *rp) {
     for (size_t i = 0; i < pool->subs_count; i++)
       if (pool->subs[i] && nostr_subscription_get_relay(pool->subs[i]) == s->relay)
         latest = pool->subs[i];
+    /* The newest filter replaces the old REQ, not the admission boundary.
+     * Close through libnostr; its worker retains ownership until drained. */
+    for (size_t i = 0; i < pool->subs_count; i++) {
+      NostrSubscription *old = pool->subs[i];
+      if (old && old != latest && nostr_subscription_get_relay(old) == s->relay &&
+          !nostr_subscription_is_closed(old))
+        nostr_subscription_close(old, NULL);
+    }
     g_mutex_lock(&s->mu);
-    if (s->required) nostr_subscription_unref(s->required);
-    s->required = latest ? nostr_subscription_ref(latest) : NULL;
-    s->subscription_revision++;
-    s->ready = FALSE;
+    /* The worker can remove a terminal REQ before the deferred CLOSED
+     * notification runs. Retain its identity until replacement/disconnect. */
+    if (!latest && s->required && nostr_subscription_is_closed(s->required)) latest = s->required;
+    if (s->required != latest) {
+      if (s->required) nostr_subscription_unref(s->required);
+      s->required = latest ? nostr_subscription_ref(latest) : NULL;
+      s->subscription_revision++;
+      s->ready = FALSE;
+      g_hash_table_remove_all(s->boundaries);
+    }
     g_mutex_unlock(&s->mu);
   }
   pthread_mutex_unlock(&pool->pool_mutex);
@@ -452,12 +465,10 @@ static gboolean deferred_run(gpointer data) {
     g_mutex_unlock(&s->mu);
     cb = current ? rp->on_subscription : NULL;
     cb_data = rp->subscription_data;
-  } else if (d->resubscribe) {
-    if (d->auth_complete) {
-      g_mutex_lock(&s->mu);
-      s->auth_pending = FALSE;
-      g_mutex_unlock(&s->mu);
-    }
+  } else if (d->auth_complete) {
+    g_mutex_lock(&s->mu);
+    s->auth_pending = FALSE;
+    g_mutex_unlock(&s->mu);
     NostrFilters *filters = signet_relay_pool_build_filters_locked(rp);
     if (filters) {
       nostr_simple_pool_subscribe_async(rp->pool, (const char **)rp->urls,
@@ -542,7 +553,6 @@ static void ok_dispatch(const char *id, bool accepted, const char *reason, void 
           w->generation == relay_generation(s->relay)) {
         if (accepted) {
           Deferred *d = g_new0(Deferred, 1);
-          d->resubscribe = TRUE;
           d->auth_complete = TRUE;
           defer_locked(s, d, 0);
         } else {
@@ -603,11 +613,8 @@ static void relay_changed(NostrRelay *relay, NostrRelayConnectionState old_state
       nostr_relay_get_connection_state(relay) == state) {
     if (state != NOSTR_RELAY_STATE_CONNECTED) aborted = take_aborted_watches(s);
     notify_locked(s, state == NOSTR_RELAY_STATE_CONNECTED ? "CONNECTED" : "DISCONNECTED", NULL);
-    if (state == NOSTR_RELAY_STATE_CONNECTED) {
-      Deferred *d = g_new0(Deferred, 1);
-      d->resubscribe = TRUE;
-      defer_locked(s, d, 0);
-    }
+    /* libnostr owns reconnect refire/reconcile. The delivering REQ is
+     * captured at EOSE/CLOSED, even if it did not exist at CONNECTED. */
   }
   g_mutex_unlock(&rp->mu);
   if (aborted) finish_aborted_watches(aborted);
@@ -705,13 +712,19 @@ static void subscription_changed(NostrRelay *relay, const char *state,
     else live_wire_diag_locked(rp,"eose_boundary_ready");
   }
   if (s && source && !rp->stopping && !rp->disposing) {
+    /* An asynchronously reconciled REQ may not have existed at CONNECTED.
+     * Keep a terminal required REQ until its CLOSED notification is sent. */
+    g_mutex_lock(&s->mu);
+    gboolean discover = source != s->required;
+    g_mutex_unlock(&s->mu);
+    if (discover) capture_required_locked(rp);
     g_mutex_lock(&s->mu);
     gboolean closed = nostr_subscription_is_closed(source);
     /* Every REQ this pool holds on the relay becomes a live source at its
      * own EOSE, required or not: the relay fans a fresh event out to each
      * matching REQ, oldest first, and simplepool forwards only the first
-     * copy. Startup, reconnect re-fire, reissue and AUTH all leave more than
-     * one open REQ with this filter on a relay. simplepool drains queued
+     * copy. A superseded REQ may still have queued deliveries while its
+     * CLOSE drains. simplepool drains queued
      * history before delivering this EOSE callback, so the boundary is
      * captured here, not in the deferred UI notification. EOSE is signalled
      * once per (re)fire, so a replacement is a re-fired REQ's new catch-up

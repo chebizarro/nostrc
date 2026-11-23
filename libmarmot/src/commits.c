@@ -948,21 +948,42 @@ marmot_group_apply_group_data(MarmotGroup *group, const MarmotGroupDataExtension
     char *description = gde->description ? strdup(gde->description) : NULL;
     uint8_t (*admins)[32] = NULL;
     if (gde->admin_count > 0 && gde->admins) admins = malloc(gde->admin_count * 32);
+    /* The image the epoch names, and the version that says what its key is
+     * (nostrc-x215: a v1 image_key is the image key, a v2 one a seed). */
+    uint8_t *image_hash = gde->image_hash ? malloc(32) : NULL;
+    uint8_t *image_key = gde->image_key ? malloc(32) : NULL;
+    uint8_t *image_nonce = gde->image_nonce ? malloc(12) : NULL;
     if ((gde->name && !name) || (gde->description && !description) ||
-        (gde->admin_count > 0 && gde->admins && !admins)) {
+        (gde->admin_count > 0 && gde->admins && !admins) ||
+        (gde->image_hash && !image_hash) || (gde->image_key && !image_key) ||
+        (gde->image_nonce && !image_nonce)) {
         free(name);
         free(description);
         free(admins);
+        free(image_hash);
+        free(image_key);
+        free(image_nonce);
         return MARMOT_ERR_MEMORY;
     }
     if (admins) memcpy(admins, gde->admins, gde->admin_count * 32);
+    if (image_hash) memcpy(image_hash, gde->image_hash, 32);
+    if (image_key) memcpy(image_key, gde->image_key, 32);
+    if (image_nonce) memcpy(image_nonce, gde->image_nonce, 12);
     free(group->name);
     free(group->description);
     free(group->admin_pubkeys);
+    free(group->image_hash);
+    if (group->image_key) sodium_memzero(group->image_key, 32);
+    free(group->image_key);
+    free(group->image_nonce);
     group->name = name;
     group->description = description;
     group->admin_pubkeys = admins;
     group->admin_count = admins ? gde->admin_count : 0;
+    group->image_hash = image_hash;
+    group->image_key = image_key;
+    group->image_nonce = image_nonce;
+    group->group_data_version = gde->version;
     return MARMOT_OK;
 }
 
@@ -2219,8 +2240,11 @@ static void deferred_order(const Marmot *m, const MlsGroup *cur, const PendingCo
                            size_t *order);
 
 MarmotError
-marmot_commit_clear_pending(Marmot *m, MarmotGroup *group)
+marmot_commit_clear_pending(Marmot *m, MarmotGroup *group,
+                            MarmotMessageResult **out_results, size_t *out_count)
 {
+    if (out_results) *out_results = NULL;
+    if (out_count) *out_count = 0;
     const MarmotGroupId *gid = &group->mls_group_id;
     PendingCommit p;
     MarmotError err = pending_load(m, gid->data, gid->len, &p);
@@ -2238,13 +2262,45 @@ marmot_commit_clear_pending(Marmot *m, MarmotGroup *group)
          * leaf, say -- is judged before the Commit that beats it. */
         size_t order[PENDING_MAX_DEFERRED];
         deferred_order(m, &cur, &p, order);
+        /* nostrc-8gbp: the caller may want each applied Commit's result --
+         * its committer above all (who added a member) -- as it gets one
+         * for a Commit processed live. */
+        MarmotMessageResult *results = NULL;
+        size_t n_results = 0;
+        if (out_results && p.deferred_count > 0) {
+            results = calloc(p.deferred_count, sizeof(*results));
+            if (!results) err = MARMOT_ERR_MEMORY;
+        }
         for (size_t k = 0; err == MARMOT_OK && k < p.deferred_count; k++) {
             const DeferredCommit *d = &p.deferred[order[k]];
             MarmotMessageResult r;
             memset(&r, 0, sizeof(r));
-            (void)marmot_commit_process_inbound(m, group, d->epoch, d->msg, d->msg_len,
-                                                d->event_id, &r);
-            marmot_message_result_free(&r);
+            MarmotError perr = marmot_commit_process_inbound(m, group, d->epoch, d->msg,
+                                                             d->msg_len, d->event_id, &r);
+            if (results && perr == MARMOT_OK && r.type == MARMOT_RESULT_COMMIT) {
+                /* The next deferred Commit may change this roster again.
+                 * Capture it while it still belongs to this result. A read
+                 * failure fails the transaction rather than misattributing
+                 * the final roster to another committer. */
+                if (!r.commit.updated_group ||
+                    r.commit.updated_group->state == MARMOT_GROUP_STATE_ACTIVE)
+                    err = marmot_get_group_member_identities(m, gid,
+                              &r.commit_roster.members, &r.commit_roster.count);
+                if (err == MARMOT_OK) {
+                    r.commit_roster.present = true;
+                    results[n_results++] = r;   /* moved: the caller frees it */
+                } else {
+                    marmot_message_result_free(&r);
+                }
+            } else {
+                marmot_message_result_free(&r);
+            }
+        }
+        if (err == MARMOT_OK && results && n_results > 0) {
+            *out_results = results;
+            *out_count = n_results;
+        } else {
+            marmot_message_results_free(results, n_results);
         }
     }
     mls_group_free(&cur);   /* zeroed by load_current() even on failure */
@@ -4379,6 +4435,64 @@ marmot_commit_branch_secrets(Marmot *m, const MarmotGroupId *gid, MarmotBranchSe
     }
     history_free(h);
     return MARMOT_OK;
+}
+
+static bool
+inspect_order(const MarmotGroupId *gid, uint64_t epoch, const uint8_t tag[32],
+              const uint8_t exporter[32], const uint8_t sender_data[32], const char *content,
+              MarmotMessageOrder *out)
+{
+    uint8_t *plain = NULL;
+    size_t len = 0;
+    if (marmot_group_event_decrypt(exporter, content, &plain, &len) != 0) return false;
+    int rc = mls_private_message_sender_generation(sender_data, gid->data, gid->len, epoch,
+                                                    plain, len, &out->sender_leaf,
+                                                    &out->generation);
+    free_secret(plain, len);
+    if (rc != 0) return false;
+    out->epoch = epoch;
+    memcpy(out->state_tag, tag, 32);
+    return true;
+}
+
+MarmotError
+marmot_inspect_message_order(Marmot *m, const MarmotGroupId *gid, const char *event_json,
+                             MarmotMessageOrder *out)
+{
+    if (!m || !gid || !event_json || !out) return MARMOT_ERR_INVALID_ARG;
+    memset(out, 0, sizeof(*out));
+    if (!m->storage || !m->storage->mls_load) return MARMOT_ERR_STORAGE;
+    NostrEvent *event = nostr_event_new();
+    if (!event) return MARMOT_ERR_MEMORY;
+    if (!nostr_event_deserialize_compact(event, event_json, NULL) ||
+        nostr_event_get_kind(event) != MARMOT_KIND_GROUP_MESSAGE ||
+        !nostr_event_get_content(event)) {
+        nostr_event_free(event);
+        return MARMOT_ERR_DESERIALIZATION;
+    }
+    const char *content = nostr_event_get_content(event);
+    MlsGroup cur;
+    MarmotError err = load_current(m, gid, &cur);
+    bool found = err == MARMOT_OK && inspect_order(gid, cur.epoch,
+        cur.confirmed_transcript_hash, cur.epoch_secrets.exporter_secret,
+        cur.epoch_secrets.sender_data_secret, content, out);
+    mls_group_free(&cur);
+    ConvHistory *h = NULL;
+    if (!found && err == MARMOT_OK) err = history_load(m, gid->data, gid->len, &h);
+    for (size_t i = 0; !found && h && i < h->n_entries; i++) {
+        const MlsGroup *past = &h->entries[i].state;
+        found = inspect_order(gid, past->epoch, past->confirmed_transcript_hash,
+            past->epoch_secrets.exporter_secret, past->epoch_secrets.sender_data_secret,
+            content, out);
+    }
+    for (size_t i = 0; !found && h && i < h->n_secrets; i++) {
+        const ConvBranchSecret *bs = &h->secrets[i];
+        found = inspect_order(gid, bs->epoch, bs->tag, bs->exporter, bs->sender_data,
+                               content, out);
+    }
+    history_free(h);
+    nostr_event_free(event);
+    return found ? MARMOT_OK : err != MARMOT_OK ? err : MARMOT_ERR_MLS;
 }
 
 void

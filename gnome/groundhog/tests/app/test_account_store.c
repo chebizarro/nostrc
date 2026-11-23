@@ -12,6 +12,7 @@
  * GTK (which keeps its session connection); it exits 77 without a display. */
 #include "account-store-outbox.h"
 #include "gh-account-store.h"
+#include "gh-notifier.h"
 #include "gh-social-lists.h"
 #include <nostr-kinds.h>
 #include "gh-app-outbox.h"
@@ -42,6 +43,7 @@
 #include <fcntl.h>
 #include <glib/gstdio.h>
 #include <limits.h>
+#include <sqlite3.h>
 #include <unistd.h>
 #ifdef __linux__
 #include <pthread.h>
@@ -1210,6 +1212,26 @@ test_pseudonymous_names(void)
   g_assert_null(gh_nip17_seen_file_name("npub1nope"));
 }
 
+typedef struct {
+  GThread *main_thread;
+  gint imports;
+} ImportThreadProbe;
+
+/* Observe the existing production import-completion log, emitted on the
+ * thread that executed the real encrypted-store transaction. */
+static void
+assert_import_worker(const gchar *domain, GLogLevelFlags level, const gchar *message,
+                     gpointer data)
+{
+  ImportThreadProbe *probe = data;
+  if (g_str_has_prefix(message, "Groundhog imported ")) {
+    g_assert_true(g_thread_self() != probe->main_thread);
+    g_atomic_int_inc(&probe->imports);
+  } else {
+    g_log_default_handler(domain, level, message, NULL);
+  }
+}
+
 /* ST-12 via the app (W13 review B1). The memory-only inbox's plaintext files
  * (Groundhog 0.6.0's <pubkey>.seen and .checkpoint; a store-less build's
  * <acct>.seen) held keys of messages it kept in memory only. Only their
@@ -1242,8 +1264,12 @@ test_legacy_import(void)
   write_private(mark_path, mark);
   write_private(pseudonymous_path, pseudonymous);
 
+  ImportThreadProbe probe = { .main_thread = g_thread_self() };
+  guint log_handler = g_log_set_handler(NULL, G_LOG_LEVEL_DEBUG, assert_import_worker, &probe);
   stack_up(&f);
   g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  g_log_remove_handler(NULL, log_handler);
+  g_assert_cmpint(g_atomic_int_get(&probe.imports), ==, 2);
   g_assert_cmpuint(gh_test_count_files(f.state_dir), ==, 0);
   g_assert_true(store_seen(&f, GH_STORE_SEEN_REJECTED_WRAP, rejected));
   g_assert_true(store_seen(&f, GH_STORE_SEEN_REJECTED_WRAP, rejected2));
@@ -1571,6 +1597,116 @@ test_kc4_unavailable(void)
   g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
   g_assert_false(gh_account_store_continue_without_saving(f.store, &error));
   g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
+  fixture_down(&f);
+}
+
+typedef struct {
+  Fixture *fixture;
+  guint reads;
+  gint64 received;
+} LastSeenProbe;
+
+static gint64
+observe_last_seen(gpointer data, const gchar *account)
+{
+  LastSeenProbe *probe = data;
+  /* Same callback as the executable, invoked by the real notifier on bind. */
+  probe->received = gh_account_store_notifier_last_seen(probe->fixture->store, account);
+  probe->reads++;
+  g_assert_false(gh_dm_inbox_has_storage(probe->fixture->inbox));
+  return probe->received;
+}
+
+static void
+test_notifier_checkpoint_bind_order(void)
+{
+  Fixture f = { 0 };
+  fixture_up(&f, 2);
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  const gint64 checkpoint = 1700000123;
+  g_assert_true(gh_store_set_cursor(gh_account_store_get_store(f.store),
+    GH_ACCOUNT_STORE_INBOX_CURSOR, "", checkpoint, NULL));
+  /* A different cursor must not accidentally become the notification marker. */
+  g_assert_true(gh_store_set_cursor(gh_account_store_get_store(f.store),
+    "other-cursor", "", checkpoint + 1000, NULL));
+  stack_down(&f);
+  stack_up(&f);
+  LastSeenProbe probe = { .fixture = &f };
+  g_autoptr(GApplication) app = g_application_new("org.nostr.Groundhog.CheckpointTest",
+                                                  G_APPLICATION_NON_UNIQUE);
+  GhNotifierConfig config = { .settings = f.settings, .conversations = f.model,
+    .last_seen = observe_last_seen, .last_seen_data = &probe };
+  g_autoptr(GhNotifier) notifier = gh_notifier_new(app, &config);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  g_assert_cmpuint(probe.reads, ==, 1);
+  g_assert_cmpint(probe.received, ==, checkpoint);
+  g_assert_true(gh_dm_inbox_has_storage(f.inbox));
+  g_assert_cmpint(gh_account_store_notifier_last_seen(f.store, hex[1]), ==, 0);
+  g_object_run_dispose(G_OBJECT(notifier));
+  fixture_down(&f);
+}
+
+static int
+deny_outbox_insert(void *data, int action, const char *table, const char *column,
+                    const char *db, const char *trigger)
+{
+  (void)data; (void)column; (void)db; (void)trigger;
+  return action == SQLITE_INSERT && g_strcmp0(table, "outbox") == 0
+    ? SQLITE_DENY : SQLITE_OK;
+}
+
+static void
+test_reaction_delete_enqueue(void)
+{
+  Fixture f = { .with_outbox = TRUE };
+  fixture_up(&f, 2);
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  publish_inbox_list(&f, 2);
+  receive_message(&f, "reaction target");
+  g_autofree gchar *room_id = room_of(1, 2);
+  GhConversation *room = gh_conversation_store_lookup(f.model, room_id);
+  g_autoptr(GhMessage) target = g_list_model_get_item(G_LIST_MODEL(room), 0);
+  const gchar *target_id = gh_message_get_rumor_id(target);
+  const gchar *rid = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+  GhReactionStore *reactions = gh_app_outbox_get_reactions(f.sender);
+  g_autoptr(GhReaction) reaction = gh_reaction_new(target_id, rid, hex[2], "+", 10, room_id);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_reaction_store_admit(reactions, reaction, &error));
+  g_assert_no_error(error);
+  GhReactionSummary *summary = gh_reaction_store_lookup(reactions, target_id);
+
+  /* The other two dispatch routes have no running service/room. */
+  g_autofree gchar *nip29_id = gh_message_nip29_room_id("wss://relay.test.invalid", "missing-group");
+  g_autofree gchar *mls_id = g_strconcat("mls:", rid, NULL);
+  g_autoptr(GhConversation) nip29 = gh_conversation_new_nip29(hex[2], nip29_id);
+  g_autoptr(GhConversation) mls = gh_conversation_new_mls(hex[2], mls_id);
+  GhConversation *unavailable[] = { nip29, mls };
+  for (guint i = 0; i < G_N_ELEMENTS(unavailable); i++) {
+    g_assert_false(gh_app_outbox_remove_reaction(f.sender, unavailable[i], target_id, "+", &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED);
+    g_clear_error(&error);
+    g_assert_cmpstr(gh_reaction_summary_own_reaction_id(summary, "+"), ==, rid);
+  }
+
+  /* A real SQLCipher enqueue failure must leave both the chip and durable row. */
+  sqlite3 *db = gh_store_get_db(gh_account_store_get_store(f.store));
+  g_assert_cmpint(sqlite3_set_authorizer(db, deny_outbox_insert, NULL), ==, SQLITE_OK);
+  g_assert_false(gh_app_outbox_remove_reaction(f.sender, room, target_id, "+", &error));
+  g_assert_nonnull(error);
+  g_clear_error(&error);
+  g_assert_cmpint(sqlite3_set_authorizer(db, NULL, NULL), ==, SQLITE_OK);
+  g_assert_cmpstr(gh_reaction_summary_own_reaction_id(summary, "+"), ==, rid);
+  sqlite3_stmt *row = NULL;
+  g_assert_cmpint(sqlite3_prepare_v2(db, "SELECT 1 FROM reactions WHERE reaction_msg_id = ?",
+                                    -1, &row, NULL), ==, SQLITE_OK);
+  sqlite3_bind_text(row, 1, rid, -1, SQLITE_TRANSIENT);
+  g_assert_cmpint(sqlite3_step(row), ==, SQLITE_ROW);
+  sqlite3_finalize(row);
+  g_assert_true(gh_app_outbox_remove_reaction(f.sender, room, target_id, "+", &error));
+  g_assert_no_error(error);
+  g_assert_null(gh_reaction_summary_own_reaction_id(summary, "+"));
   fixture_down(&f);
 }
 
@@ -2660,6 +2796,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/account-store/kc2-locked", test_kc2_locked);
   g_test_add_func("/groundhog/account-store/kc3-key-missing", test_kc3_key_missing);
   g_test_add_func("/groundhog/account-store/kc4-unavailable", test_kc4_unavailable);
+  g_test_add_func("/groundhog/account-store/notifier-checkpoint-bind-order", test_notifier_checkpoint_bind_order);
+  g_test_add_func("/groundhog/account-store/reaction-delete-enqueue", test_reaction_delete_enqueue);
   g_test_add_func("/groundhog/account-store/pt6-switch-order", test_pt6_switch_order);
   g_test_add_func("/groundhog/account-store/pt6-switch-mid-open", test_pt6_switch_mid_open);
   g_test_add_func("/groundhog/account-store/st8-forget", test_st8_forget);

@@ -19,7 +19,7 @@ int main(void) {
   CHECK(strcmp(json_object_get_string_member(json_object_get_object_member(sent, "nested"), "client"), "client-key") == 0);
   CHECK(strstr(policy, "client-key")); /* borrowed input remains caller-owned */
   signetctl_wipe_free_string(intent);
-  signetctl_secret_parser_free(parser);
+  signet_secret_json_parser_unref(parser);
 
   const char *uri = "bunker://public?secret=bearer-must-not-leak";
   FILE *capture = tmpfile(); CHECK(capture);

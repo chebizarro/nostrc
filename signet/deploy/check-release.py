@@ -31,7 +31,7 @@ if a.tag and not re.fullmatch(r'signet-v' + re.escape(versions[0]) + r'(?:-[0-9A
     raise SystemExit('tag disagrees with source base version')
 pins = dict(line.split('=', 1) for line in (root / 'signet/deploy/versions.env').read_text().splitlines()
             if line and not line.startswith('#'))
-for key in ('DEBIAN_IMAGE', 'CADDY_IMAGE'):
+for key in ('DEBIAN_IMAGE', 'CADDY_IMAGE', 'CADDY_BUILDER_IMAGE'):
     if not re.fullmatch(r'[a-z0-9./:_-]+@sha256:[0-9a-f]{64}', pins[key]):
         raise SystemExit(f'unpinned {key}')
 for key in ('CMAKE_VERSION', 'MESON_VERSION'):

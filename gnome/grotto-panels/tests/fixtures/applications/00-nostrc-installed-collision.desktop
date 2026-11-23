@@ -1,0 +1,4 @@
+[Desktop Entry]
+Type=Application
+Name=Installed Desktop App
+Exec=/usr/bin/false

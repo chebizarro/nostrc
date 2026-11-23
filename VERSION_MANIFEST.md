@@ -191,6 +191,19 @@ are also Unversioned. Test/checker/documentation changes have no separate
 component bump. No release tag is published by this integration, so Latest
 release and Release tag remain unchanged.
 
+Signet security integration (`nostrc-d1g76`, `nostrc-nmefa`, `nostrc-6dx4o`,
+`nostrc-mnr6a`, `nostrc-k2d0c`, `nostrc-qe8yy`): MINOR-class incompatible
+pre-1.0 bootstrap possession-proof and CTAP-HID authorization/configuration/API
+changes, together with PATCH-class challenge, admission, secret-wiping and
+backup read-back fixes, fold into unreleased **signet 0.10.0**. No additional
+bump is needed before that version is released; incompatible upgrade requirements
+are recorded in `signet/RELEASE_NOTES.md`. Signet's latest release remains
+0.8.0-rc.1 and its published tag remains `signet-v0.8.0-rc.1`.
+The versioned NIP-46 client/provider core (`nostrc-mnr6a`) retains unreleased
+**nip46 0.2.0**: PATCH-class message/parameter wiping changes no public API,
+ABI or wire format and folds into that unreleased version. No authoritative
+version source, declared version or published release/tag changes.
+
 NIP-46 relay-array memory safety (`nostrc-33n89`): PATCH-class fixes fold into
 unreleased nip46 0.2.0 and Groundhog 0.13.0 without a second version bump.
 Parsed relay arrays now carry a trailing NULL, and pairing validation uses the
@@ -1906,7 +1919,39 @@ Published **Latest release** and **Release tag** columns are unchanged.
 
 No bump: libgo 0.3.0, libjson 2.0.0, the FIPS component family and nostr-homed 0.9.0 (test/fixture or test-registration changes only), plus mock/test/selection/push-hook tooling. The shell extension itself is unchanged. Other manifest components have no owning shipped-source change. Relayd and NIP-29/NIP-49/NIP-5F receive PATCH-class corrections but have no authoritative numeric component version; no version or tag is invented. Integration-only fixture corrections require no separate bump.
 
-### Installed NIP dependency closure (nostrc-56nz5 / metadesk md-fdi4)
+## Bug-fix integration version pass
+
+Assessed `75634e1de..bug/integration`, including its combined-verification
+corrections. The declared versions below are not released: the published origin
+tags still stop at the releases already recorded above, and there is no
+`libmarmot-v0.14.1` tag (nor any libmarmot release tag). Per the integration brief,
+fold these changes into the existing unreleased declarations, rather than adding
+another increment to the previous integration pass. The table records the local
+lane decisions before merging origin/master. Where origin/master already chose a
+higher declaration, the main table retains it without adding another bump.
+Latest release and Release tag values are untouched.
+
+| Component | Local lane declaration | Highest impact folded into the unreleased version |
+| --- | --- | --- |
+| libmarmot | 0.14.1 | MINOR, including pre-1.0 incompatibilities: appended `MarmotGroup.group_data_version`, new pending-Commit result/free APIs, the per-result `commit_roster` snapshot, `MARMOT_ERR_WELCOME_LEGACY_TREE` (-77), and `MarmotMessageOrder`/`marmot_inspect_message_order`; required persistence of `mls_send_hwm` outside snapshots; nostrdb group records v2 and SQLite's added column; Welcome rejects legacy unbound leaves (nostrc-x215, nostrc-8gbp, nostrc-l3n7, nostrc-ow0c, nostrc-3hzu). Consumers must rebuild and custom storage implementations must honor the new contract; see libmarmot/README.md. CMake and Meson remain 0.14.1. |
+| groundhog | 0.13.1 | MINOR: legacy MIP-01 image reading and schema v15, plus shipped relay, MLS, network, notification and UI corrections (including nostrc-x215, nostrc-ow0c, nostrc-er14x, nostrc-ctks). Existing CMake and package/metadata authorities remain aligned at 0.13.1. |
+| nip55l | 0.8.0 | MINOR: additive `nip55l_nip5f_serve_unidentified_full()` closure callback API, with lifetime-safe TCP capacity accounting (nostrc-fdg3); authoritative signer_ops.h macros stay 0.8.0. |
+| libnostr | 2.5.0 | PATCH: connection/subscription/refire/OK ownership, replaceable-record queries and installed static dependency closure (nostrc-b4g8, nostrc-gf4j, nostrc-3914, nostrc-kvjq, nostrc-btzb, nostrc-jmfq). |
+| libgo | 0.3.0 | PATCH: context reference ownership and blocking MPMC wakeups (nostrc-4zyo, nostrc-v624). |
+| nostr-gobject | 3.1.1 | PATCH: queued delivery, EOSE/CLOSED fencing and explicit-close ordering (nostrc-jjqw, nostrc-5595, nostrc-ue8f). CMake and Meson agree. |
+| signet | 0.10.0 | PATCH: replay rejection before crypto and re-fired/replaced REQ ownership (nostrc-qwwwr, nostrc-4np3z). CMake, Meson and both CLI version constants agree. |
+| fipsd | 0.1.1 | PATCH: Bloom send settlement uses the completed transport outcome (nostrc-61e1w). Its integration verification correction observes existing snapshot-publication pulses, without changing production code, convergence predicates or deadlines. |
+| Grotto | 0.1.3 (full 0.1.3-alpha1) | PATCH: TCP connection lifetime, retained backup navigation, pending retention input and Debian runtime SDK dependency (nostrc-fdg3, nostrc-cc6ja, nostrc-hmrgk, nostrc-u6v55.28). Integration's desktop-identity fixture alignment (nostrc-cg9ke) is test-only. All CMake/Meson/package authorities remain aligned. |
+| gnostr | 0.2.1 | PATCH: exclude non-chat MLS inner events (nostrc-ruwy); repaired test link closures (nostrc-taue) are test-only. |
+| nostr-homed | 0.9.0 | PATCH: the authority allocator excludes files-owned UIDs (nostrc-fuun). CMake and Meson agree; pkg-config is generated from the declared version. |
+| grotto-panels | 0.1.1 | No bump: only test fixture executable identities, test environment and boundary checks changed (nostrc-cg9ke, nostrc-vthyc). |
+| marmot-gobject, nostr-gtk | 1.5.2, 2.0.1 | No bump: no owning shipped-source changes in this range. |
+| libfips-core | 0.1.0 | No bump: fuzz fake-include correction only (nostrc-wvxnd). |
+| NIP-29 | Unversioned | ABI-incompatible public `nostr_group_t` growth for equal-time snapshot IDs (nostrc-odyg): consumers must rebuild. There is no authoritative numeric version in nips/nip29/CMakeLists.txt, so no version or release tag is invented. |
+| NIP-44, NIP-57 | Unversioned on local base | PATCH-class installed pkg-config closure and early refusal of an unsupported nostrdb-disabled provider configuration (nostrc-s6tf, nostrc-s9nk). The merged NIP-44 .pc uses its independently declared SDK version below; NIP-57 stays unversioned. |
+| Test/CI/selection/packaging verification tooling | — | No bump: no independently shipped component change; prerequisite and compatibility builds do not create a version change in unchanged consumers. |
+
+## Installed NIP dependency closure (nostrc-56nz5 / metadesk md-fdi4)
 
 - nip04, nip11, nip17, nip44, nip51 and nip98: first declared version 0.1.0;
   no source API or wire changes. nip17/nip51 retain OBJECT targets and ship archives.
@@ -1951,3 +1996,9 @@ External pkg-config fixture portability (nostrc-56nz5): no version bump. Test-on
 correction replaces implementation-specific static/sysroot output assertions
 with a compiled/runnable SDK-archives + shared-external-library consumer. Shipped
 metadata, headers, libraries and ABI policy are unchanged.
+
+Merge reconciliation: retain origin/master's installed SDK versions, panels
+0.1.2 and Control1 client 0.1.0; fold the local bug-lane changes into those
+unreleased versions. Grotto remains 0.1.3-alpha1 and its Debian runtime
+requires the exact revision of the panels SDK used for the build (minimum
+SDK version 0.1.2). No extra version bumps or release tags.

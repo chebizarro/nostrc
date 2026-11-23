@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Regenerate only Signet release routing; preserve unrelated inventory bytes.
+"""Regenerate Signet release routing and its backup check; preserve unrelated bytes.
 
 This checkout has no tracked whole-inventory generator. The inventory is the
 selector's policy input, not a CMake-generated artifact. This narrow updater is
-the owner of Signet package metadata and is checked by packaging CI.
+the owner of Signet package metadata and backup-test enrollment, checked by CI.
 """
 import argparse
 import json
@@ -57,6 +57,25 @@ if not any(r.get('exact') == '.dockerignore' for r in policy['path_rules']):
     pos = updated.index('[', updated.index('"path_rules":')) + 1
     encoded = json.dumps(rule, indent=2).replace('\n', '\n    ')
     updated = updated[:pos] + '\n    ' + encoded + ',' + updated[pos:]
+# The hermetic upload/read-back regression is a normal Signet consumer check.
+# AWS absence is an explicit script/CTest/Meson skip, never a fabricated pass.
+backup_check = {
+    'nodes': ['signet'], 'profiles': ['core.linux', 'groundhog.mdk08'],
+    'kind': 'ctest', 'cost': 'ordinary', 'requirement': 'blocking',
+    'expected_outcome': 'pass',
+    'ctest_tests': {profile: ['backup_upload'] for profile in ('core.linux', 'groundhog.mdk08')},
+    'requires': [], 'runtime_inputs': ['signet/tests/test_backup_upload.py', 'signet/deploy/ops.py'],
+    'build_targets': []}
+section = updated.index('"checks":')
+found = re.search(r'    "signet.backup_upload": (\{)', updated[section:])
+encoded = json.dumps(backup_check, indent=2).replace('\n', '\n    ')
+if found:
+    pos = section + found.start(1)
+    _, size = json.JSONDecoder().raw_decode(updated[pos:])
+    updated = updated[:pos] + encoded + updated[pos + size:]
+else:
+    pos = updated.index('{', section) + 1
+    updated = updated[:pos] + '\n    "signet.backup_upload": ' + encoded + ',' + updated[pos:]
 json.loads(updated)
 if a.check:
     if updated != text:

@@ -716,7 +716,16 @@ static AdwNavigationView *identity_navigation(SignerWindow *self) {
 static void identity_backup(gpointer data, const char *npub) {
   g_autoptr(SignerWindow) self = g_weak_ref_get(data);
   if (!self || gn_session_manager_is_locked(gn_session_manager_get_default())) return;
-  adw_navigation_view_push(identity_navigation(self), ADW_NAVIGATION_PAGE(page_identity_detail_new(npub)));
+  AdwNavigationView *navigation = identity_navigation(self);
+  g_autofree gchar *tag = g_strdup_printf("backup:%s", npub);
+  AdwNavigationPage *page = adw_navigation_view_find_page(navigation, tag);
+  if (page) {
+    adw_navigation_view_pop_to_page(navigation, page);
+    return;
+  }
+  page = ADW_NAVIGATION_PAGE(page_identity_detail_new(npub));
+  adw_navigation_page_set_tag(page, tag);
+  adw_navigation_view_push(navigation, page);
 }
 static void identity_open(gpointer data, const char *target) {
   g_autoptr(SignerWindow) self = g_weak_ref_get(data);

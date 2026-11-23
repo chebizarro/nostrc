@@ -85,3 +85,20 @@ target_link_libraries(nip44_vector_demo PRIVATE nostr nostr_nip44_core OpenSSL::
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcNipPackage.cmake")
 declare_component_version(nip44 0 1 1)
 nostrc_install_nip(nostr_nip44_core nip44 "nostr >= 2.5.2" "" EXTERNAL_PRIVATE openssl libsecp256k1)
+
+# Keep the relocatable module name used by installed libmarmot and libporthome
+# consumers, with the same version and mixed link contract as nip44.pc.
+nostrc_pkg_config_shared(NIP44_PC_EXTERNAL openssl libsecp256k1)
+file(RELATIVE_PATH NIP44_PC_PREFIX_RELATIVE
+  "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig" "${CMAKE_INSTALL_PREFIX}")
+set(NIP44_PC_LIBDIR "${CMAKE_INSTALL_LIBDIR}")
+if(NOT IS_ABSOLUTE "${NIP44_PC_LIBDIR}")
+  set(NIP44_PC_LIBDIR "\${prefix}/${NIP44_PC_LIBDIR}")
+endif()
+set(NIP44_PC_INCLUDEDIR "${CMAKE_INSTALL_INCLUDEDIR}")
+if(NOT IS_ABSOLUTE "${NIP44_PC_INCLUDEDIR}")
+  set(NIP44_PC_INCLUDEDIR "\${prefix}/${NIP44_PC_INCLUDEDIR}")
+endif()
+configure_file(nostr-nip44.pc.in nostr-nip44.pc @ONLY)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-nip44.pc"
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)

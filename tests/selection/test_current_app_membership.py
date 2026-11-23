@@ -84,13 +84,15 @@ class CurrentAppMembership(unittest.TestCase):
         self.assertIn('supported.apps.grotto', plan['selected_checks'])
         self.assertFalse(any(check.startswith('libgo.') for check in plan['selected_checks']))
 
-    def test_legacy_core_asan_exclusions_remain_literal(self):
+    def test_repaired_core_asan_tests_are_required_without_exclusions(self):
         names = {name for check in self.policy['checks'].values()
                  for name in check.get('ctest_tests', {}).get('core.linux.asan', [])}
         self.assertTrue({'MockRelayUnit', 'concurrency_subscription_shutdown_asan',
-                         'test_json_envelope'}.isdisjoint(names))
+                         'test_json_envelope'} <= names)
         workflow = (ROOT / '.github/workflows/nostrc-ci.yml').read_text()
-        self.assertIn('-E "test_json_envelope|concurrency_subscription_shutdown_asan|MockRelayUnit"', workflow)
+        self.assertNotIn('-E "test_json_envelope|concurrency_subscription_shutdown_asan|MockRelayUnit"', workflow)
+        for profile in ('core.linux.asan', 'core.macos.asan'):
+            self.assertNotIn('-E', self.policy['profiles'][profile]['workflow_contract']['test_command'])
 
 
 if __name__ == '__main__':

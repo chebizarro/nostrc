@@ -41,7 +41,14 @@ static gboolean has_icon(GtkWidget *widget, GIcon *icon) {
 }
 static void management_panels(void) {
   g_autoptr(GIcon) expected_icon = g_themed_icon_new("grotto-test-app");
-  const char *principals[] = {"exe:/usr/bin/true", "app:org.nostr.GrottoTest", "flatpak:org.nostr.GrottoTest", "snap:org.nostr.GrottoTest;exe:/usr/bin/true", "app:org.nostr.Missing;exe:/usr/bin/true"};
+  g_autofree char *first_executable = g_find_program_in_path("nostrc-grotto-panel-fixture-first");
+  g_autofree char *second_executable = g_find_program_in_path("nostrc-grotto-panel-fixture-second");
+  g_assert_nonnull(first_executable); g_assert_nonnull(second_executable);
+  g_autofree char *first_principal = g_strdup_printf("exe:%s", first_executable);
+  g_autofree char *second_principal = g_strdup_printf("exe:%s", second_executable);
+  g_autofree char *snap_principal = g_strdup_printf("snap:org.nostr.GrottoTest;exe:%s", first_executable);
+  g_autofree char *missing_principal = g_strdup_printf("app:org.nostr.Missing;exe:%s", first_executable);
+  const char *principals[] = {first_principal, "app:org.nostr.GrottoTest", "flatpak:org.nostr.GrottoTest", snap_principal, missing_principal};
   for (guint i = 0; i < G_N_ELEMENTS(principals); i++) {
     g_autoptr(GIcon) icon = NULL;
     g_autofree char *name = grotto_panels_app_display_info(principals[i], principals[i], &icon);
@@ -76,12 +83,12 @@ static void management_panels(void) {
   for (guint i = 0; i < GROTTO_PANEL_N_COMMANDS; i++) grotto_panels_fake_service_set_can(fake, i, TRUE);
   const char *relays[] = {"wss://nos.lol", NULL}, *methods[] = {"sign_event", NULL};
   const char *effective[] = {"Public key after consent", "Public publishing", NULL};
-  GrottoPanelsMetadata app = {.effective_permissions = effective, .id = "exe:/usr/bin/true", .label = "exe:/usr/bin/true", .trust = "medium", .access_policy = "Ask for sensitive operations", .transport = "Local App"};
+  GrottoPanelsMetadata app = {.effective_permissions = effective, .id = first_principal, .label = first_principal, .trust = "medium", .access_policy = "Ask for sensitive operations", .transport = "Local App"};
   GrottoPanelsMetadata status = {.id = "status", .state = "LISTENING", .remote_enabled = TRUE, .relays = relays, .methods = methods};
   GrottoPanelsMetadata request = {.id = "request-1", .label = "Plain App", .operation = "Sign Event", .deadline_usec = g_get_monotonic_time() + 60000000};
   GrottoPanelsMetadata record = {.id = "11", .principal = app.id, .operation = "event", .outcome = "success", .sequence = 11, .has_event_kind = TRUE, .event_kind = 1};
   g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_APPS, &app, NULL));
-  GrottoPanelsMetadata other = app; other.id = "exe:/usr/bin/false"; other.label = other.id;
+  GrottoPanelsMetadata other = app; other.id = second_principal; other.label = other.id;
   g_autoptr(GrottoPanelsItem) other_item = grotto_panels_item_new(&other, NULL);
   g_list_store_append(G_LIST_STORE(grotto_panels_service_get_model(service, GROTTO_PANELS_APPS)), other_item);
   g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_STATUS, &status, NULL));

@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "json.h"
 #include "nostr-event.h"
@@ -16,6 +17,8 @@ static void test_ok(void) {
     assert(ok.event_id && strcmp(ok.event_id, "eid") == 0);
     assert(ok.ok == true);
     assert(ok.reason && strcmp(ok.reason, "all good") == 0);
+    free(ok.event_id);
+    free(ok.reason);
 }
 
 static void test_event_with_and_without_subid(void) {
@@ -47,6 +50,8 @@ static void test_count_without_count_defaults_zero(void) {
     assert(nostr_envelope_deserialize((NostrEnvelope*)&ct, cnt) == 0);
     assert(ct.subscription_id && strcmp(ct.subscription_id, "sub1") == 0);
     assert(ct.count == 0);
+    free(ct.subscription_id);
+    nostr_filters_free(ct.filters);
 }
 
 static void test_auth_with_event_object(void) {
@@ -56,6 +61,8 @@ static void test_auth_with_event_object(void) {
     int rc = nostr_envelope_deserialize((NostrEnvelope*)&au, s);
     assert(rc == 0);
     assert(au.event && au.event->kind == 22242);
+    free(au.challenge);
+    nostr_event_free(au.event);
 }
 
 static void test_closed(void) {
@@ -66,6 +73,8 @@ static void test_closed(void) {
     assert(rc == 0);
     assert(cl.subscription_id && strcmp(cl.subscription_id, "sub") == 0);
     assert(cl.reason && strcmp(cl.reason, "bye") == 0);
+    free(cl.subscription_id);
+    free(cl.reason);
 }
 
 static void test_auth(void) {
@@ -75,6 +84,8 @@ static void test_auth(void) {
     int rc = nostr_envelope_deserialize((NostrEnvelope*)&au, s);
     assert(rc == 0);
     assert(au.challenge && strcmp(au.challenge, "challenge-token") == 0);
+    free(au.challenge);
+    nostr_event_free(au.event);
 }
 
 static void test_notice_eose(void) {
@@ -85,6 +96,8 @@ static void test_notice_eose(void) {
     assert(nostr_envelope_deserialize((NostrEnvelope*)&ee, "[\"EOSE\",\"done\"]") == 0);
     assert(ne.message && strcmp(ne.message, "n") == 0);
     assert(ee.message && strcmp(ee.message, "done") == 0);
+    free(ne.message);
+    free(ee.message);
 }
 
 // Minimal REQ with one filter
@@ -101,6 +114,10 @@ static void test_req_count(void) {
     assert(ct.subscription_id && strcmp(ct.subscription_id, "sub1") == 0);
     assert(ct.count == 5);
     assert(ct.filters && ct.filters->count >= 1);
+    free(rq.subscription_id);
+    nostr_filters_free(rq.filters);
+    free(ct.subscription_id);
+    nostr_filters_free(ct.filters);
 }
 
 int main(void) {

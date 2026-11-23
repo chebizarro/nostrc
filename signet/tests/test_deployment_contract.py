@@ -209,7 +209,8 @@ class DeploymentContracts(unittest.TestCase):
         c = (DEPLOY / 'Caddyfile').read_text()
         for required in ('admin off', 'auto_https disable_redirects',
                          'path /bootstrap /challenge /auth', 'header_up X-Forwarded-Proto https',
-                         'max_size 8KB', 'disable_http_challenge'):
+                         'max_size 8KB', 'disable_http_challenge', 'rate_limit',
+                         'path /challenge', 'key {remote_host}', 'events 20', 'window 1m'):
             self.assertIn(required, c)
         self.assertNotIn('/health', c)
 

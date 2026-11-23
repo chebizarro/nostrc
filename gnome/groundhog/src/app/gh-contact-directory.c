@@ -1093,6 +1093,8 @@ fetch_new(GhContactDirectory *self, GPtrArray *authors, Lookup kinds)
     : gh_relay_scope_new(fetch->generation, filters, on_scope_update, fetch);
   if (self->custom_transport && self->custom_auth)
     gh_relay_scope_set_auth_transport(fetch->scope, &self->auth_transport);
+  g_auto(GStrv) configured = self->settings
+    ? g_settings_get_strv(self->settings, "discovery-relays") : NULL;
   GhAuthPolicy *policy = gh_auth_policy_get_for_accounts(self->accounts);
   for (guint i = 0; i < urls->len; i++) {
     const gchar *url = g_ptr_array_index(urls, i);
@@ -1101,6 +1103,8 @@ fetch_new(GhContactDirectory *self, GPtrArray *authors, Lookup kinds)
     /* An ephemeral key if the relay demands AUTH, never the account (PD-12). */
     gh_auth_policy_apply_scope(policy, fetch->scope, GH_AUTH_PURPOSE_CONTACT_DIRECTORY, url,
                                NULL);
+    if (configured && g_strv_contains((const gchar *const *)configured, url))
+      gh_relay_scope_set_url_address_trusted(fetch->scope, url, TRUE, NULL);
     g_hash_table_insert(fetch->sources, g_strdup(url), GUINT_TO_POINTER(SOURCE_PENDING));
   }
   fetch->deadline = gh_clock_timeout_add(self->clock, (guint64)self->deadline_s * 1000,

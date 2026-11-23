@@ -509,10 +509,11 @@ mls_leaf_node_serialize(const MlsLeafNode *node, MlsTlsBuf *buf)
     return 0;
 }
 
-int
-mls_leaf_node_tbs_serialize(const MlsLeafNode *node,
-                            const uint8_t *group_id, size_t group_id_len,
-                            uint32_t leaf_index, MlsTlsBuf *buf)
+/* `bind`: the update and commit sources end with group_id and leaf_index
+ * (RFC 9420 §7.2); libmarmot <= 0.3.6 signed commit leaves without them. */
+static int
+leaf_node_tbs_write(const MlsLeafNode *node, const uint8_t *group_id, size_t group_id_len,
+                    uint32_t leaf_index, bool bind, MlsTlsBuf *buf)
 {
     if (!node || !buf) return -1;
     uint8_t source = node->leaf_node_source;
@@ -520,7 +521,7 @@ mls_leaf_node_tbs_serialize(const MlsLeafNode *node,
         source != MLS_LEAF_NODE_SOURCE_UPDATE &&
         source != MLS_LEAF_NODE_SOURCE_COMMIT)
         return -1;
-    if (source != MLS_LEAF_NODE_SOURCE_KEY_PACKAGE && !group_id) return -1;
+    if (bind && source != MLS_LEAF_NODE_SOURCE_KEY_PACKAGE && !group_id) return -1;
     if (node->parent_hash_len > 0 && !node->parent_hash) return -1;
 
     if (mls_tls_write_opaque16(buf, node->encryption_key, MLS_KEM_PK_LEN) != 0 ||
@@ -552,12 +553,36 @@ mls_leaf_node_tbs_serialize(const MlsLeafNode *node,
     }
     if (mls_tls_write_opaque32(buf, node->extensions_data, node->extensions_len) != 0)
         return -1;
-    if (source != MLS_LEAF_NODE_SOURCE_KEY_PACKAGE) {
+    if (bind && source != MLS_LEAF_NODE_SOURCE_KEY_PACKAGE) {
         if (mls_tls_write_opaque32(buf, group_id, group_id_len) != 0 ||
             mls_tls_write_u32(buf, leaf_index) != 0)
             return -1;
     }
     return 0;
+}
+
+int
+mls_leaf_node_tbs_serialize(const MlsLeafNode *node,
+                            const uint8_t *group_id, size_t group_id_len,
+                            uint32_t leaf_index, MlsTlsBuf *buf)
+{
+    return leaf_node_tbs_write(node, group_id, group_id_len, leaf_index, true, buf);
+}
+
+int
+mls_leaf_node_verify_legacy_commit_signature(const MlsLeafNode *node)
+{
+    if (!node || node->leaf_node_source != MLS_LEAF_NODE_SOURCE_COMMIT ||
+        node->signature_len != MLS_SIG_LEN)
+        return -1;
+    MlsTlsBuf tbs;
+    if (mls_tls_buf_init(&tbs, 256) != 0) return -1;
+    int rc = leaf_node_tbs_write(node, NULL, 0, 0, false, &tbs);
+    if (rc == 0)
+        rc = mls_crypto_verify_with_label(node->signature, node->signature_key,
+                                          "LeafNodeTBS", tbs.data, tbs.len);
+    mls_tls_buf_free(&tbs);
+    return rc == 0 ? 0 : -1;
 }
 
 int
