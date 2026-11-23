@@ -1515,6 +1515,55 @@ static void test_nip46_junk_replay(void) {
   puts("test_nip46_junk_replay: PASS");
 }
 
+/* NIP-46 logout and switch_relays (nostrc-10knm), both backends. Neither
+ * needs a method grant, only a bound session; logout acks and then ends the
+ * session, so the client must pair again. */
+static void test_logout_and_switch_relays(bool cache_only) {
+  N46Fixture f;
+  n46_setup_mode(&f, cache_only);
+  int64_t now = 1752380000;
+
+  /* A logout from a client with no session is refused like any request. */
+  char rando_sk[65], rando_pk[65];
+  gen_keypair_hex(rando_sk, rando_pk);
+  CHECK(n46_send(&f, rando_sk, rando_pk,
+                 "{\"id\":\"l0\",\"method\":\"logout\",\"params\":[]}", "l0", now) == false);
+  n46_expect_last_audit(&f, "logout", "error", "not_connected");
+  sodium_memzero(rando_sk, sizeof(rando_sk));
+
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "l1", now));
+  n46_expect_binding(&f, f.client_pk_hex, "stew", now);
+
+  /* A policy that pins allow_methods without either method. */
+  char *err = NULL;
+  CHECK(signet_policy_store_set_identity_json(f.ps, "stew",
+      "{\"default\":\"deny\",\"allow_clients\":[\"*\"],"
+      "\"allow_methods\":[\"get_public_key\"]}", now, &err) == 0);
+  g_free(err);
+  CHECK(n46_send(&f, f.client_sk_hex, f.client_pk_hex,
+                 "{\"id\":\"n\",\"method\":\"nip44_encrypt\",\"params\":[\"00\",\"x\"]}",
+                 "l2", now) == false);
+  n46_expect_last_audit(&f, "nip44_encrypt", "error", "policy_denied");
+
+  CHECK(n46_send(&f, f.client_sk_hex, f.client_pk_hex,
+                 "{\"id\":\"s\",\"method\":\"switch_relays\",\"params\":[]}", "l3", now));
+  n46_expect_last_audit(&f, "switch_relays", "ok", "ok");
+  n46_expect_binding(&f, f.client_pk_hex, "stew", now);
+
+  CHECK(n46_send(&f, f.client_sk_hex, f.client_pk_hex,
+                 "{\"id\":\"l\",\"method\":\"logout\",\"params\":[]}", "l4", now));
+  n46_expect_last_audit(&f, "logout", "ok", "ok");
+  n46_expect_binding(&f, f.client_pk_hex, NULL, now);
+
+  /* The session is gone: requests and a secretless reconnect are refused. */
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "l5", now) == false);
+  n46_expect_last_audit(&f, "get_public_key", "error", "not_connected");
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "l6", now) == false);
+
+  n46_teardown(&f);
+  printf("test_logout_and_switch_relays(%s): PASS\n", n46_mode_name(cache_only));
+}
+
 int main(void) {
   test_nip46_junk_replay();
   for (int mode = 0; mode <= 1; mode++) {
@@ -1547,6 +1596,7 @@ int main(void) {
     test_reconnect_own_or_no_secret(cache_only);
     test_reconnect_foreign_secret_refused(cache_only);
     test_reconnect_unknown_client_refused(cache_only);
+    test_logout_and_switch_relays(cache_only);
 #ifdef SIGNET_ENABLE_TEST_HOOKS
     test_re_adopt_between_lookup_and_custody(cache_only);
 #endif
