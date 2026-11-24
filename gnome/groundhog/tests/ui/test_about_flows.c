@@ -692,6 +692,9 @@ test_issue_lookup(void)
   g_assert_nonnull(strstr(reqs, "30617"));
   g_assert_nonnull(strstr(reqs, owner));
   g_assert_nonnull(strstr(reqs, "\"#d\":[\"repo\"]"));
+  /* Resolver completion can precede delivery of the previous lookup's CLOSE.
+   * Settle that socket before the next dialog's no-traffic assertions. */
+  wait_for_close(&discovery, 1);
   /* The maintainers become p tags of the issue, after the owner. */
   GnIssueDraftInput input = { .title = "Crash", .description = "It crashes." };
   g_autoptr(GnIssueDraft) draft = gn_issue_draft_new(&input, NULL);
