@@ -100,6 +100,7 @@ SignetDbusServer *signet_dbus_server_new(const SignetDbusServerConfig *cfg);
  * @ds: (nullable): a D-Bus server
  *
  * Free D-Bus server. Disconnects if connected. Safe on NULL.
+ * As with stop, call from the server's dispatch thread.
  *
  * Since: 1.0
  */
@@ -124,7 +125,9 @@ int signet_dbus_server_start(SignetDbusServer *ds);
  * signet_dbus_server_stop:
  * @ds: (nullable): a D-Bus server
  *
- * Disconnect from D-Bus. Safe to call multiple times.
+ * Disconnect from D-Bus and cancel/drain pending session exchanges. Safe to
+ * call multiple times. Call from the server's dispatch thread, before freeing
+ * the borrowed store or audit logger.
  *
  * Since: 1.0
  */

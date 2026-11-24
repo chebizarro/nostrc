@@ -418,6 +418,7 @@ static bool signet_store_migrate_secret_lifecycle(sqlite3 *db) {
       signet_store_add_column(db, "secrets", "created_by", "TEXT") &&
       signet_store_add_column(db, "secrets", "revoked_at", "INTEGER") &&
       signet_store_add_column(db, "secrets", "version_created_at", "INTEGER") &&
+      signet_store_add_column(db, "secrets", "service_url", "TEXT") &&
       signet_store_add_column(db, "secret_versions", "expires_at", "INTEGER") &&
       signet_store_add_column(db, "secret_versions", "provenance",
                               "TEXT NOT NULL DEFAULT 'legacy'") &&
@@ -484,7 +485,8 @@ static const char *SIGNET_SCHEMA_SQL =
   "  provenance TEXT NOT NULL DEFAULT 'legacy',"
   "  created_by TEXT,"
   "  revoked_at INTEGER,"
-  "  version_created_at INTEGER"
+  "  version_created_at INTEGER,"
+  "  service_url TEXT"
   ");"
   "CREATE INDEX IF NOT EXISTS idx_secrets_agent ON secrets(agent_id);"
   "CREATE INDEX IF NOT EXISTS idx_secrets_pubkey_lookup ON secrets(agent_pubkey);"

@@ -272,7 +272,8 @@ static char *request_json(const char *label, const char *payload) {
       "{\"request_id\":\"r\",\"agent_id\":\"owner\","
       "\"secret_type\":\"api_token\",\"label\":\"%s\","
       "\"policy_id\":\"least-privilege\",\"expires_at\":2000000100,"
-      "\"payload_b64\":\"%s\"}", label, b64);
+      "\"service_url\":\"https://sessions.example.invalid/%s\","
+      "\"payload_b64\":\"%s\"}", label, label, b64);
   sodium_memzero(b64, strlen(b64));
   g_free(b64);
   return json;
@@ -298,6 +299,7 @@ static void test_encrypted_contextvm_lifecycle(void) {
   CHECK(strcmp(metadata.provenance, "created") == 0);
   CHECK(strcmp(metadata.created_by, f.provisioner_pk) == 0);
   CHECK(strcmp(metadata.policy_id, "least-privilege") == 0);
+  CHECK(g_strcmp0(metadata.service_url, "https://sessions.example.invalid/primary") == 0);
   CHECK(metadata.status == SIGNET_SECRET_STATUS_ACTIVE);
   signet_secret_metadata_clear(&metadata);
 
@@ -323,6 +325,7 @@ static void test_encrypted_contextvm_lifecycle(void) {
   CHECK(signet_store_get_secret_metadata(
       store, imported_id, 2000000000, &metadata) == SIGNET_SECRET_OK);
   CHECK(strcmp(metadata.provenance, "imported") == 0);
+  CHECK(g_strcmp0(metadata.service_url, "https://sessions.example.invalid/imported") == 0);
   signet_secret_metadata_clear(&metadata);
 
   char *rotate_b64 =
@@ -339,6 +342,7 @@ static void test_encrypted_contextvm_lifecycle(void) {
   CHECK(signet_store_get_secret_metadata(
       store, primary_id, 2000000000, &metadata) == SIGNET_SECRET_OK);
   CHECK(metadata.version == 2 && metadata.active_version == 2);
+  CHECK(g_strcmp0(metadata.service_url, "https://sessions.example.invalid/primary") == 0);
   signet_secret_metadata_clear(&metadata);
 
   char *inspect = g_strdup_printf(

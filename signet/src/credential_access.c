@@ -173,12 +173,15 @@ SignetCredAccessStatus signet_credential_access_authorize(
   return SIGNET_CRED_ACCESS_OK;
 }
 
-SignetCredAccessStatus signet_credential_access_acquire(
+static SignetCredAccessStatus acquire(
     const SignetCredentialAccessContext *ctx,
-    const SignetCredentialAccessRequest *req,
+    const SignetCredentialAccessRequest *request, const char *service_url,
     int64_t now,
     SignetCredentialAccessGrant *out_grant) {
-  if (!ctx || !ctx->store || !req || !out_grant) return SIGNET_CRED_ACCESS_ERROR;
+  if (!ctx || !ctx->store || !request || !out_grant) return SIGNET_CRED_ACCESS_ERROR;
+  SignetCredentialAccessRequest resolved = *request;
+  const SignetCredentialAccessRequest *req = &resolved;
+  g_autofree char *matched_id = NULL;
   memset(out_grant, 0, sizeof(*out_grant));
 
   SignetCredAccessStatus status = SIGNET_CRED_ACCESS_ERROR;
@@ -187,7 +190,7 @@ SignetCredAccessStatus signet_credential_access_acquire(
   /* 0) Request shape: an authenticated caller, a target, and an EXPLICIT
    * capability are mandatory. */
   if (!req->agent_id || !req->agent_id[0] ||
-      !req->credential_id || !req->credential_id[0] ||
+      (!service_url && (!req->credential_id || !req->credential_id[0])) ||
       !req->capability || !req->capability[0]) {
     status = SIGNET_CRED_ACCESS_ERROR;
     goto audited_out;
@@ -197,6 +200,20 @@ SignetCredAccessStatus signet_credential_access_acquire(
   status = signet_credential_access_authorize(ctx, req, now);
   if (status != SIGNET_CRED_ACCESS_OK) goto audited_out;
   status = SIGNET_CRED_ACCESS_ERROR;
+
+  if (service_url) {
+    SignetSecretResult match = signet_store_find_session_credential(
+        ctx->store, req->agent_id, service_url, &matched_id);
+    if (match != SIGNET_SECRET_OK) {
+      status = signet_cred_access_map_secret_result(match);
+      goto audited_out;
+    }
+    if (req->credential_id && strcmp(req->credential_id, matched_id) != 0) {
+      status = SIGNET_CRED_ACCESS_NOT_FOUND;
+      goto audited_out;
+    }
+    resolved.credential_id = matched_id;
+  }
 
   /* 4) Metadata-only gate: ownership, status and the expected version are
    * decided BEFORE any lease or decryption. Revocation takes precedence over
@@ -309,6 +326,12 @@ SignetCredAccessStatus signet_credential_access_acquire(
       status = SIGNET_CRED_ACCESS_NOT_OWNER;
       goto audited_out;
     }
+    /* Recheck the endpoint on the same row that supplied the payload. */
+    if (service_url && g_strcmp0(out_grant->record.service_url, service_url) != 0) {
+      signet_secret_record_clear(&out_grant->record);
+      status = SIGNET_CRED_ACCESS_NOT_FOUND;
+      goto audited_out;
+    }
     /* A rotation between the metadata gate and this read must not release
      * a version the caller did not ask for. The payload and its version come
      * from one statement, so this check is exact. */
@@ -365,6 +388,20 @@ audited_out:
     }
   }
   return status;
+}
+
+SignetCredAccessStatus signet_credential_access_acquire(
+    const SignetCredentialAccessContext *ctx,
+    const SignetCredentialAccessRequest *req, int64_t now,
+    SignetCredentialAccessGrant *out_grant) {
+  return acquire(ctx, req, NULL, now, out_grant);
+}
+
+SignetCredAccessStatus signet_credential_access_acquire_session(
+    const SignetCredentialAccessContext *ctx,
+    const SignetCredentialAccessRequest *req, const char *service_url,
+    int64_t now, SignetCredentialAccessGrant *out_grant) {
+  return acquire(ctx, req, service_url ? service_url : "", now, out_grant);
 }
 
 void signet_credential_access_grant_clear(SignetCredentialAccessGrant *grant) {

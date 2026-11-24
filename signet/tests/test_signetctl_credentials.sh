@@ -39,12 +39,16 @@ expect_status 1 "$ctl" create-credential owner --type api_token --label label --
 
 chmod 0600 "$tmpdir/world"
 ln -s "$tmpdir/world" "$tmpdir/link"
-expect_status 1 "$ctl" import-credential owner --type credential --label label --file "$tmpdir/link"
+expect_status 1 "$ctl" import-credential owner --type credential --label label \
+  --service-url https://service.invalid/session --file "$tmpdir/link"
+expect_status 2 "$ctl" create-credential owner --type api_token --label label \
+  --service-url '' --stdin
 
 set +e
 printf '%s' "$fixture_secret" |
   SIGNET_PROVISIONER_NSEC= "$ctl" create-credential owner \
-    --type api_token --label label --stdin >"$tmpdir/out" 2>"$tmpdir/err"
+    --type api_token --label label --service-url https://service.invalid/session \
+    --stdin >"$tmpdir/out" 2>"$tmpdir/err"
 actual=$?
 set -e
 [ "$actual" -eq 1 ] || {

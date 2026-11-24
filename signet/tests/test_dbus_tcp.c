@@ -95,16 +95,18 @@ static void check_refused(GDBusConnection *conn, const char *id, const char *err
 static void check_allowed(GDBusConnection *conn, const char *destination, const char *id) {
   g_autoptr(GVariant) token = call(conn, destination, CREDENTIALS, "GetToken",
                                      g_variant_new("(s)", id), NULL);
+  /* GetSession authorizes (deny list, grant, rate limit) before resolving the
+   * endpoint, so reaching the endpoint check proves this transport admitted
+   * the call. No credential is bound to this URL; the real exchange is covered
+   * by dbus_credential_grants. */
   g_autoptr(GVariant) session = call(conn, destination, CREDENTIALS, "GetSession",
-                                       g_variant_new("(s)", "https://example.test"), NULL);
+      g_variant_new("(s)", "https://example.test"), "net.signet.Error.SessionEndpointNotBound");
+  CHECK(session == NULL);
   const char *value;
   gint64 expires;
   CHECK(g_variant_is_of_type(token, G_VARIANT_TYPE("(sx)")));
   g_variant_get(token, "(&sx)", &value, &expires);
   CHECK(strcmp(value, "626561726572") == 0 && expires > time(NULL)); /* "bearer" */
-  CHECK(g_variant_is_of_type(session, G_VARIANT_TYPE("(sx)")));
-  g_variant_get(session, "(&sx)", &value, &expires);
-  CHECK(strlen(value) == 64 && strspn(value, "0123456789abcdef") == 64 && expires > time(NULL));
 }
 
 typedef struct {

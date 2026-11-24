@@ -1,313 +1,274 @@
-/* SPDX-License-Identifier: MIT
- *
- * session_broker.c - Credential → session token broker.
- *
- * Implements the generic cookie-based REST adapter: decrypt credential,
- * POST to service, extract session token, issue lease.
- *
- * When built with SIGNET_HAVE_CURL, performs a real HTTP POST exchange.
- * Without libcurl, falls back to a local token (useful for tests).
- */
-
-#include "signet/session_broker.h"
-#include "signet/credential_access.h"
-#include "signet/store.h"
-#include "signet/store_secrets.h"
-#include "signet/store_leases.h"
-#include "signet/store_audit.h"
-#include "signet/capability.h"
+/* SPDX-License-Identifier: MIT */
+#include "session_broker_internal.h"
+#include "credential_access_internal.h"
+#include "secret_json.h"
 #include "signet/audit_logger.h"
+#include "signet/capability.h"
+#include "signet/store.h"
+#include "signet/store_audit.h"
+#include "signet/store_leases.h"
 #include "signet/util.h"
-
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
 
 #include <glib.h>
 #include <json-glib/json-glib.h>
 #include <sodium.h>
+#include <sqlite3.h>
+#include <string.h>
 
 #ifdef SIGNET_HAVE_CURL
 #include <curl/curl.h>
-#endif
 
-#ifdef SIGNET_HAVE_CURL
+/* Constrain the entire HTTP authority to numeric loopback and an optional
+ * decimal port. Proxies are disabled below. */
+static bool secure_endpoint(const char *url) {
+  for (const unsigned char *p = (const unsigned char *)url; *p; p++)
+    if (*p <= ' ' || *p >= 127 || *p == '\\') return false;
+  if (strchr(url, '#')) return false;
+  if (g_str_has_prefix(url, "https://")) {
+    const char *authority = url + strlen("https://");
+    size_t len = strcspn(authority, "/?");
+    return len && !memchr(authority, '@', len);
+  }
+  static const char loopback[] = "http://127.0.0.1";
+  if (!g_str_has_prefix(url, loopback)) return false;
+  const char *suffix = url + sizeof(loopback) - 1;
+  if (*suffix == ':') {
+    if (!g_ascii_isdigit(*++suffix)) return false;
+    while (g_ascii_isdigit(*suffix)) suffix++;
+  }
+  return *suffix == '\0' || *suffix == '/' || *suffix == '?';
+}
 
-/* ----------------------------- libcurl helpers ---------------------------- */
+#define SESSION_RESPONSE_LIMIT (64 * 1024)
 
 typedef struct {
   char *data;
   size_t len;
 } CurlBuffer;
 
-static size_t curl_write_cb(void *ptr, size_t size, size_t nmemb, void *userdata) {
-  CurlBuffer *buf = (CurlBuffer *)userdata;
-  size_t total = size * nmemb;
-  char *tmp = realloc(buf->data, buf->len + total + 1);
-  if (!tmp) return 0;
-  buf->data = tmp;
-  memcpy(buf->data + buf->len, ptr, total);
-  buf->len += total;
-  buf->data[buf->len] = '\0';
-  return total;
+static size_t write_response(char *ptr, size_t size, size_t count, void *data) {
+  CurlBuffer *buf = data;
+  if (size && count > (SESSION_RESPONSE_LIMIT - buf->len) / size) return 0;
+  size_t n = size * count;
+  memcpy(buf->data + buf->len, ptr, n);
+  buf->len += n;
+  return n;
 }
 
-/* Parse a JSON response of the form:
- *   {"session_token":"...","expires_at":1234567890}
- * or {"token":"...","expires_in":3600}
- *
- * Returns 0 on success, -1 on parse failure. */
-static int parse_session_response(const char *json, size_t json_len,
-                                   char **out_token, int64_t *out_expires_at) {
-  if (!json || json_len == 0 || !out_token || !out_expires_at) return -1;
-  *out_token = NULL;
-  *out_expires_at = 0;
+static bool read_expiry(JsonObject *obj, const char *field, int64_t *value) {
+  JsonNode *node = json_object_get_member(obj, field);
+  if (!node || !JSON_NODE_HOLDS_VALUE(node) ||
+      json_node_get_value_type(node) != G_TYPE_INT64)
+    return false;
+  *value = json_node_get_int(node);
+  return true;
+}
 
-  JsonParser *parser = json_parser_new();
-  if (!parser) return -1;
-
-  GError *err = NULL;
-  gboolean ok = json_parser_load_from_data(parser, json, (gssize)json_len, &err);
-  if (!ok) {
-    if (err) g_error_free(err);
-    g_object_unref(parser);
-    return -1;
+static bool parse_response(const CurlBuffer *buf, SignetSessionResult *result) {
+  if (!buf->len || memchr(buf->data, '\0', buf->len)) return false;
+  /* JSON-GLib exposes strings as NUL-terminated values. Reject a JSON NUL
+   * escape instead of returning a truncated token (escaped backslashes are OK). */
+  for (size_t i = 0; i + 1 < buf->len; i++) {
+    if (buf->data[i] != '\\') continue;
+    if (buf->len - i >= 6 && memcmp(buf->data + i, "\\u0000", 6) == 0)
+      return false;
+    i++;
   }
-
+  g_autoptr(SignetSecretJsonParser) parser = json_parser_new();
+  if (!json_parser_load_from_data(parser, buf->data, buf->len, NULL)) return false;
   JsonNode *root = json_parser_get_root(parser);
-  JsonObject *obj = (root && JSON_NODE_HOLDS_OBJECT(root))
-                        ? json_node_get_object(root)
-                        : NULL;
-  if (!obj) {
-    g_object_unref(parser);
-    return -1;
-  }
-
-  const char *token = NULL;
-  if (json_object_has_member(obj, "session_token"))
-    token = json_object_get_string_member(obj, "session_token");
-  else if (json_object_has_member(obj, "token"))
-    token = json_object_get_string_member(obj, "token");
-
-  if (!token || token[0] == '\0') {
-    g_object_unref(parser);
-    return -1;
-  }
-  *out_token = g_strdup(token);
-
-  if (json_object_has_member(obj, "expires_at")) {
-    *out_expires_at = (int64_t)json_object_get_int_member(obj, "expires_at");
-  } else if (json_object_has_member(obj, "expires_in")) {
-    int64_t delta = (int64_t)json_object_get_int_member(obj, "expires_in");
-    if (delta > 0)
-      *out_expires_at = signet_now_unix() + delta;
-  }
-
-  /* Fallback: 1h if no expiry found. */
-  if (*out_expires_at <= 0)
-    *out_expires_at = signet_now_unix() + 3600;
-
-  g_object_unref(parser);
-  return 0;
-}
-
-/* POST the credential to the service URL and extract the session token.
- * Returns 0 on success, -1 on failure. */
-static int exchange_credential_http(const char *service_url,
-                                      const uint8_t *credential,
-                                      size_t credential_len,
-                                      char **out_token,
-                                      int64_t *out_expires_at) {
-  CURL *curl = curl_easy_init();
-  if (!curl) return -1;
-
-  CurlBuffer response = { .data = NULL, .len = 0 };
-
-  /* Build JSON POST body: {"credential":"<base64>"} */
-  char *cred_b64 = g_base64_encode(credential, credential_len);
-  char *post_body = g_strdup_printf("{\"credential\":\"%s\"}", cred_b64);
-  g_free(cred_b64);
-
-  struct curl_slist *headers = NULL;
-  headers = curl_slist_append(headers, "Content-Type: application/json");
-  headers = curl_slist_append(headers, "Accept: application/json");
-
-  curl_easy_setopt(curl, CURLOPT_URL, service_url);
-  curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_body);
-  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
-  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
-  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
-  /* Security: require HTTPS for production service URLs. */
-  curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
-  curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 0L);
-
-  CURLcode res = curl_easy_perform(curl);
-
-  int rc = -1;
-  if (res == CURLE_OK) {
-    long http_code = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-    if (http_code >= 200 && http_code < 300 && response.data) {
-      rc = parse_session_response(response.data, response.len,
-                                   out_token, out_expires_at);
-    }
-  }
-
-  /* Wipe credential from POST body before freeing. */
-  if (post_body) {
-    sodium_memzero(post_body, strlen(post_body));
-    g_free(post_body);
-  }
-  free(response.data);
-  curl_slist_free_all(headers);
-  curl_easy_cleanup(curl);
-
-  return rc;
-}
-
-#endif /* SIGNET_HAVE_CURL */
-
-/* A brokered session must be exchanged over a secure transport. Require https
- * except for loopback (local development), so credentials are never POSTed to a
- * plaintext service. */
-static bool signet_session_url_is_secure(const char *url) {
-  if (!url) return false;
-  if (g_ascii_strncasecmp(url, "https://", 8) == 0) return true;
-  if (g_ascii_strncasecmp(url, "http://localhost", 16) == 0) return true;
-  if (g_ascii_strncasecmp(url, "http://127.0.0.1", 16) == 0) return true;
-  return false;
-}
-
-int signet_session_broker_get(SignetStore *store,
-                                SignetPolicyRegistry *policy,
-                                struct SignetDenyList *deny,
-                                SignetAuditLogger *audit,
-                                const SignetSessionRequest *req,
-                                SignetSessionResult *result) {
-  if (!store || !req || !req->credential_id || !req->agent_id || !result)
-    return -1;
-  memset(result, 0, sizeof(*result));
+  if (!root || !JSON_NODE_HOLDS_OBJECT(root)) return false;
+  JsonObject *obj = json_node_get_object(root);
+  JsonNode *node = json_object_get_member(obj,
+      json_object_has_member(obj, "session_token") ? "session_token" : "token");
+  if (!node || !JSON_NODE_HOLDS_VALUE(node) ||
+      json_node_get_value_type(node) != G_TYPE_STRING)
+    return false;
+  const char *token = json_node_get_string(node);
+  if (!token || !*token || !g_utf8_validate(token, -1, NULL)) return false;
 
   int64_t now = signet_now_unix();
+  int64_t expires_at = now + 3600;
+  if (json_object_has_member(obj, "expires_at")) {
+    if (!read_expiry(obj, "expires_at", &expires_at) || expires_at <= now)
+      return false;
+  } else if (json_object_has_member(obj, "expires_in")) {
+    int64_t ttl;
+    if (!read_expiry(obj, "expires_in", &ttl) || ttl <= 0 || ttl > INT64_MAX - now)
+      return false;
+    expires_at = now + ttl;
+  }
+  result->session_token = g_strdup(token);
+  result->expires_at = expires_at;
+  return true;
+}
 
-  /* 1+2. Retrieve the credential via the unified credential-access path:
-   * deny-list precedence, explicit credential.get_session capability, rate
-   * limit, owner-before-decrypt, type deny rules, expiry/revocation, and a
-   * hash-chained audit entry on every outcome (allow or deny). */
-  SignetCredentialAccessContext acc = {
-    .store = store,
-    .policy = policy,
-    .deny = deny,
-    .logger = audit,
-  };
-  SignetCredentialAccessRequest areq = {
+static int exchange_progress(void *data, curl_off_t dtotal, curl_off_t dnow,
+                             curl_off_t utotal, curl_off_t unow) {
+  (void)dtotal; (void)dnow; (void)utotal; (void)unow;
+  return data && g_cancellable_is_cancelled(data);
+}
+
+static bool curl_ready(void) {
+  /* Don't let simultaneous first exchanges race libcurl's lazy initialization.
+   * The process also uses libcurl outside this broker; retain its global state. */
+  static gsize state;
+  if (g_once_init_enter(&state)) {
+    CURLcode rc = curl_global_init(CURL_GLOBAL_DEFAULT);
+    g_once_init_leave(&state, rc == CURLE_OK ? 1 : 2);
+  }
+  return state == 1;
+}
+
+static bool exchange(const SignetSecretRecord *rec, GCancellable *cancel,
+                     SignetSessionResult *result) {
+  if (!secure_endpoint(rec->service_url) || !rec->payload_len || !curl_ready()) return false;
+  CURL *curl = curl_easy_init();
+  if (!curl) return false;
+  bool https = g_str_has_prefix(rec->service_url, "https://");
+  /* With NOSIGNAL a synchronous resolver cannot be interrupted on timeout. */
+  if (https && !(curl_version_info(CURLVERSION_NOW)->features & CURL_VERSION_ASYNCHDNS)) {
+    curl_easy_cleanup(curl);
+    return false;
+  }
+  CurlBuffer response = { .data = g_malloc(SESSION_RESPONSE_LIMIT) };
+  char *b64 = g_base64_encode(rec->payload, rec->payload_len);
+  char *body = g_strdup_printf("{\"credential\":\"%s\"}", b64);
+  signet_secret_gfree(b64);
+
+  struct curl_slist *headers = curl_slist_append(NULL, "Content-Type: application/json");
+  struct curl_slist *both = headers ? curl_slist_append(headers, "Accept: application/json") : NULL;
+  if (both) headers = both;
+  long status = 0;
+  bool ok = both &&
+      curl_easy_setopt(curl, CURLOPT_URL, rec->service_url) == CURLE_OK &&
+#if LIBCURL_VERSION_NUM >= 0x075500
+      curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR,
+                       https ? "https" : "http") == CURLE_OK &&
+#else
+      curl_easy_setopt(curl, CURLOPT_PROTOCOLS,
+                       https ? CURLPROTO_HTTPS : CURLPROTO_HTTP) == CURLE_OK &&
+#endif
+      curl_easy_setopt(curl, CURLOPT_PROXY, "") == CURLE_OK &&
+      curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L) == CURLE_OK &&
+      curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L) == CURLE_OK &&
+      curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L) == CURLE_OK &&
+      curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L) == CURLE_OK &&
+      curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L) == CURLE_OK &&
+      curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, exchange_progress) == CURLE_OK &&
+      curl_easy_setopt(curl, CURLOPT_XFERINFODATA, cancel) == CURLE_OK &&
+      curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body) == CURLE_OK &&
+      curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers) == CURLE_OK &&
+      curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_response) == CURLE_OK &&
+      curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response) == CURLE_OK &&
+      curl_easy_perform(curl) == CURLE_OK &&
+      curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status) == CURLE_OK &&
+      status >= 200 && status < 300 && parse_response(&response, result);
+  curl_easy_cleanup(curl);
+  curl_slist_free_all(headers);
+  signet_secret_bytes_free(response.data, response.len);
+  signet_secret_gfree(body);
+  return ok;
+}
+#endif /* SIGNET_HAVE_CURL: without libcurl, fail closed. */
+
+SignetCredAccessStatus signet_session_broker_prepare(
+    const SignetCredentialAccessContext *ctx, const SignetSessionRequest *req,
+    const char *transport, SignetCredentialAccessGrant *grant) {
+  SignetCredentialAccessRequest access = {
     .agent_id = req->agent_id,
     .credential_id = req->credential_id,
     .capability = SIGNET_CAP_CREDENTIAL_GET_SESSION,
-    .transport = "session_broker",
-    .issue_lease = false, /* the broker issues its own session lease below */
+    .transport = transport,
   };
+  return signet_credential_access_acquire_session(
+      ctx, &access, req->service_url, signet_now_unix(), grant);
+}
+
+SignetSessionStatus signet_session_broker_exchange(
+    SignetStore *store, const char *agent_id, const char *transport,
+    SignetCredentialAccessGrant *grant, GCancellable *cancel,
+    SignetSessionResult *result) {
+  memset(result, 0, sizeof(*result));
+  g_autofree char *credential_id = g_steal_pointer(&grant->record.id);
+  g_autofree char *endpoint = NULL;
+  int version = grant->record.active_version;
+  int64_t created_at = grant->record.created_at;
+  bool exchanged = false;
+#ifdef SIGNET_HAVE_CURL
+  if (!cancel || !g_cancellable_is_cancelled(cancel))
+    exchanged = exchange(&grant->record, cancel, result);
+#endif
+  endpoint = g_steal_pointer(&grant->record.service_url);
+  signet_credential_access_grant_clear(grant);
+  int64_t now = signet_now_unix();
+  if (!exchanged || result->expires_at <= now || (cancel && g_cancellable_is_cancelled(cancel))) {
+    signet_session_result_clear(result);
+    (void)signet_audit_log_append(store, now, agent_id, "session_issue",
+        credential_id, transport, "{\"decision\":\"error\",\"reason\":\"exchange_failed\"}");
+    return SIGNET_SESSION_EXCHANGE_FAILED;
+  }
+
+  uint8_t raw[16];
+  randombytes_buf(raw, sizeof(raw));
+  char lease_id[sizeof(raw) * 2 + 1];
+  sodium_bin2hex(lease_id, sizeof(lease_id), raw, sizeof(raw));
+  uint8_t digest[crypto_hash_sha256_BYTES];
+  char hash[sizeof(digest) * 2 + 1];
+  crypto_hash_sha256(digest, (const unsigned char *)result->session_token,
+                     strlen(result->session_token));
+  sodium_bin2hex(hash, sizeof(hash), digest, sizeof(digest));
+  g_autofree char *meta = g_strdup_printf("{\"session_token_hash\":\"%s\"}", hash);
+  /* Revocation/rotation can run while the service responds. Recheck custody
+   * and issue under the store mutex so a revoked credential gets no new lease. */
+  sqlite3_mutex *mu = sqlite3_db_mutex(signet_store_get_db(store));
+  sqlite3_mutex_enter(mu);
+  SignetSecretMetadata current = {0};
+  bool active = signet_store_get_secret_metadata(store, credential_id, now, &current) == SIGNET_SECRET_OK &&
+      current.status == SIGNET_SECRET_STATUS_ACTIVE && current.active_version == version &&
+      current.created_at == created_at && g_strcmp0(current.agent_id, agent_id) == 0 &&
+      g_strcmp0(current.service_url, endpoint) == 0;
+  signet_secret_metadata_clear(&current);
+  int rc = active ? signet_store_issue_lease(store, lease_id, credential_id, agent_id,
+                                              now, result->expires_at, meta) : -1;
+  sqlite3_mutex_leave(mu);
+  if (rc != 0) {
+    (void)signet_audit_log_append(store, now, agent_id, "session_issue",
+        credential_id, transport, "{\"decision\":\"error\",\"reason\":\"lease_persist_failed\"}");
+    signet_session_result_clear(result);
+    return SIGNET_SESSION_STORE_FAILED;
+  }
+  g_autofree char *detail = g_strdup_printf(
+      "{\"decision\":\"allow\",\"reason\":\"ok\",\"lease_id\":\"%s\"}", lease_id);
+  if (signet_audit_log_append(store, now, agent_id, "session_issue",
+                               credential_id, transport, detail) != 0) {
+    (void)signet_store_revoke_lease(store, lease_id, now);
+    signet_session_result_clear(result);
+    return SIGNET_SESSION_STORE_FAILED;
+  }
+  result->lease_id = g_strdup(lease_id);
+  return SIGNET_SESSION_OK;
+}
+
+int signet_session_broker_get(SignetStore *store, SignetPolicyRegistry *policy,
+                              struct SignetDenyList *deny, SignetAuditLogger *audit,
+                              const SignetSessionRequest *req, SignetSessionResult *result) {
+  if (!store || !req || !req->credential_id || !req->agent_id || !result) return -1;
+  SignetCredentialAccessContext ctx = {
+    .store = store, .policy = policy, .deny = deny, .logger = audit,
+  };
+  memset(result, 0, sizeof(*result));
   SignetCredentialAccessGrant grant;
-  if (signet_credential_access_acquire(&acc, &areq, now, &grant) !=
+  if (signet_session_broker_prepare(&ctx, req, "session_broker", &grant) !=
       SIGNET_CRED_ACCESS_OK)
     return -1;
-
-  SignetSecretRecord rec = grant.record; /* ownership moves to rec */
-  g_free(grant.lease_id);
-  char *session_token = NULL;
-  int64_t expires_at = 0;
-  bool exchanged = false;
-
-  /* 3. Exchange the credential for a REAL service session token.
-   *
-   * A service URL is required and must be secure (https, or loopback for local
-   * dev). We never substitute a locally-minted random token for a real service
-   * session: if the exchange cannot happen we fail closed, so a caller can
-   * never mistake a meaningless bearer token for a brokered session. */
-  if (!req->service_url || req->service_url[0] == '\0' ||
-      !signet_session_url_is_secure(req->service_url)) {
-    signet_secret_record_clear(&rec);
-    return -1;
-  }
-#ifdef SIGNET_HAVE_CURL
-  if (rec.payload && rec.payload_len > 0) {
-    if (exchange_credential_http(req->service_url,
-                                 rec.payload, rec.payload_len,
-                                 &session_token, &expires_at) == 0)
-      exchanged = true;
-  }
-#endif
-
-  /* Wipe the credential payload immediately. */
-  signet_secret_record_clear(&rec);
-
-  if (!exchanged) {
-    /* Exchange failed or libcurl unavailable: fail closed, no fake token. */
-    if (session_token) {
-      sodium_memzero(session_token, strlen(session_token));
-      g_free(session_token);
-    }
-    return -1;
-  }
-
-  /* 4. Issue a lease. */
-  uint8_t lid_raw[16];
-  randombytes_buf(lid_raw, sizeof(lid_raw));
-  char lease_id[33];
-  for (int i = 0; i < 16; i++)
-    sprintf(lease_id + i * 2, "%02x", lid_raw[i]);
-  lease_id[32] = '\0';
-
-  char *meta = g_strdup_printf(
-      "{\"credential_id\":\"%s\",\"service_url\":\"%s\",\"exchanged\":%s}",
-      req->credential_id,
-      req->service_url ? req->service_url : "",
-      exchanged ? "true" : "false");
-
-  /* Lease tracking is authoritative: if we cannot persist the lease, fail the
-   * whole request rather than hand back an untracked session token. */
-  if (signet_store_issue_lease(store, lease_id,
-                               req->credential_id,
-                               req->agent_id,
-                               now, expires_at, meta) != 0) {
-    g_free(meta);
-    if (session_token) {
-      sodium_memzero(session_token, strlen(session_token));
-      g_free(session_token);
-    }
-    return -1;
-  }
-  g_free(meta);
-
-  /* 5. Audit log (no secret values). */
-  if (audit) {
-    char *detail = g_strdup_printf(
-        "{\"credential_id\":\"%s\",\"lease_id\":\"%s\",\"expires_at\":%" G_GINT64_FORMAT ",\"exchanged\":%s}",
-        req->credential_id, lease_id, expires_at,
-        exchanged ? "true" : "false");
-    signet_audit_log_append(store, now, req->agent_id,
-                             "session_broker_get",
-                             req->credential_id,
-                             "dbus", detail);
-    g_free(detail);
-  }
-
-  /* Populate result. */
-  result->session_token = session_token;
-  result->expires_at = expires_at;
-  result->lease_id = g_strdup(lease_id);
-
-  return 0;
+  return signet_session_broker_exchange(store, req->agent_id, "session_broker",
+      &grant, NULL, result) == SIGNET_SESSION_OK ? 0 : -1;
 }
 
 void signet_session_result_clear(SignetSessionResult *result) {
   if (!result) return;
-  if (result->session_token) {
-    sodium_memzero(result->session_token, strlen(result->session_token));
-    g_free(result->session_token);
-  }
+  signet_secret_gfree(result->session_token);
   g_free(result->lease_id);
   memset(result, 0, sizeof(*result));
 }

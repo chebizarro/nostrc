@@ -2,13 +2,9 @@
  *
  * session_broker.h - Credential → session token broker for Signet v2.
  *
- * Agent calls GetSession(credential_id) via D-Bus or NIP-5L. Signet:
- * 1. Checks credential_policy (authorized? session_broker=true? capability?)
- * 2. Rate limit check
- * 3. Decrypts credential payload into mlock'd buffer
- * 4. POSTs to service endpoint to obtain session token + expiry
- * 5. Issues lease, logs (no secret values in log)
- * 6. Returns {session_token, expires_in}
+ * D-Bus GetSession(service_url) authorizes the agent, resolves its unique
+ * credential bound to the URL, and exchanges that credential for a session.
+ * The lease stores a hash of the returned token, not the token itself.
  */
 
 #ifndef SIGNET_SESSION_BROKER_H
@@ -47,7 +43,7 @@ typedef struct {
  * SignetSessionRequest:
  * @credential_id: which credential to use.
  * @agent_id: requesting agent.
- * @service_url: optional: override service URL.
+ * @service_url: provisioned service URL to match exactly; not an override.
  *
  * Request to exchange a stored credential for a service session.
  *
@@ -56,7 +52,7 @@ typedef struct {
 typedef struct {
   const char *credential_id;  /* which credential to use */
   const char *agent_id;       /* requesting agent */
-  const char *service_url;    /* optional: override service URL */
+  const char *service_url;    /* must match the provisioned endpoint */
 } SignetSessionRequest;
 
 /**

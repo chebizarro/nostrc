@@ -10,4 +10,11 @@ SignetCredAccessStatus signet_credential_access_authorize(
     const SignetCredentialAccessContext *ctx,
     const SignetCredentialAccessRequest *req, int64_t now);
 
+/* Resolve a unique provisioned endpoint after authorization, then acquire its
+ * credential without charging the capability rate bucket a second time. */
+SignetCredAccessStatus signet_credential_access_acquire_session(
+    const SignetCredentialAccessContext *ctx,
+    const SignetCredentialAccessRequest *req, const char *service_url,
+    int64_t now, SignetCredentialAccessGrant *out_grant);
+
 #endif

@@ -25,6 +25,7 @@ typedef struct {
   struct SignetFidoService *fido;
   struct SignetDenyList *deny;   /* live deny list; deny > any capability */
   const char *transport;
+  GSList **session_jobs; /* transport-owned; only accessed on dispatch context */
 } SignetDbusDispatchContext;
 
 void signet_dbus_dispatch_authenticated(const SignetDbusDispatchContext *ctx,
@@ -33,5 +34,8 @@ void signet_dbus_dispatch_authenticated(const SignetDbusDispatchContext *ctx,
                                         const gchar *method_name,
                                         GVariant *parameters,
                                         GDBusMethodInvocation *invocation);
+
+/* Call on the dispatch context after stopping admission, before freeing store/audit. */
+void signet_dbus_session_jobs_stop(GSList **jobs);
 
 #endif /* SIGNET_DBUS_COMMON_H */

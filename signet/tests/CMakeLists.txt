@@ -92,7 +92,8 @@ if (NOT SIGNET_ENABLE_TEST_HOOKS)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME dbus_credential_grants COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/test_dbus_credential_grants.py
-    $<TARGET_FILE:signetd> $<TARGET_FILE:credential_grants_fixture>)
+    $<TARGET_FILE:signetd> $<TARGET_FILE:credential_grants_fixture>
+    ${signet_session_exchange_enabled})
   set_tests_properties(dbus_credential_grants PROPERTIES TIMEOUT 90)
   if (COMMAND nostrc_describe_test)
     nostrc_describe_test(dbus_credential_grants OWNER signet TARGETS signetd credential_grants_fixture

@@ -8,8 +8,8 @@
 #include "signet/key_store.h"
 #include "signet/capability.h"
 #include "credential_access_internal.h"
+#include "session_broker_internal.h"
 #include "signet/store.h"
-#include "signet/store_audit.h"
 #include "signet/store_leases.h"
 #include "signet/store_secrets.h"
 #include "signet/audit_logger.h"
@@ -25,7 +25,6 @@
 #include <time.h>
 
 #include <glib.h>
-#include <json-glib/json-glib.h>
 #include <sodium.h>
 
 #include <nostr-event.h>
@@ -41,50 +40,6 @@ static void bytes_to_hex(const uint8_t *bytes, size_t len, char *out_hex) {
   for (size_t i = 0; i < len; i++)
     sprintf(out_hex + i * 2, "%02x", bytes[i]);
   out_hex[len * 2] = '\0';
-}
-
-static void sha256_hex(const char *input,
-                       char out_hex[crypto_hash_sha256_BYTES * 2 + 1]) {
-  uint8_t hash_raw[crypto_hash_sha256_BYTES];
-  crypto_hash_sha256(hash_raw, (const uint8_t *)input, strlen(input));
-  bytes_to_hex(hash_raw, sizeof(hash_raw), out_hex);
-  sodium_memzero(hash_raw, sizeof(hash_raw));
-}
-
-static char *build_session_metadata(const char *transport,
-                                    const char *service_url,
-                                    const char *session_token_hash) {
-  JsonBuilder *builder = json_builder_new();
-  if (!builder) return NULL;
-
-  json_builder_begin_object(builder);
-
-  json_builder_set_member_name(builder, "session_token_hash");
-  json_builder_add_string_value(builder, session_token_hash ? session_token_hash : "");
-
-  json_builder_set_member_name(builder, "transport");
-  json_builder_add_string_value(builder, transport ? transport : "dbus");
-
-  json_builder_set_member_name(builder, "service_url");
-  json_builder_add_string_value(builder, service_url ? service_url : "");
-
-  json_builder_end_object(builder);
-
-  JsonGenerator *generator = json_generator_new();
-  if (!generator) {
-    g_object_unref(builder);
-    return NULL;
-  }
-
-  JsonNode *root = json_builder_get_root(builder);
-  json_generator_set_root(generator, root);
-  json_generator_set_pretty(generator, FALSE);
-  char *json = json_generator_to_data(generator, NULL);
-
-  json_node_free(root);
-  g_object_unref(generator);
-  g_object_unref(builder);
-  return json;
 }
 
 static const char *transport_name(const SignetDbusDispatchContext *ctx) {
@@ -270,85 +225,165 @@ static SignetCredentialAccessContext credential_access_context(
   };
 }
 
+static void reply_session(const SignetDbusDispatchContext *ctx, const char *agent_id,
+                          GDBusMethodInvocation *invocation, SignetSessionStatus status,
+                          SignetCredAccessStatus access, const SignetSessionResult *result) {
+  if (status != SIGNET_SESSION_OK) {
+    const char *code = "net.signet.Error.Internal";
+    const char *message = "Session brokering failed";
+    const char *decision = "error";
+    const char *reason = "lease_or_audit_failed";
+    if (status == SIGNET_SESSION_EXCHANGE_FAILED) {
+      code = "net.signet.Error.SessionExchangeFailed";
+      message = "Service session exchange failed";
+      reason = "exchange_failed";
+    } else if (status == SIGNET_SESSION_ACCESS_FAILED) {
+      reason = signet_cred_access_reason(access);
+      if (access != SIGNET_CRED_ACCESS_ERROR) {
+        decision = "deny";
+        if (access == SIGNET_CRED_ACCESS_NOT_FOUND) {
+          code = "net.signet.Error.SessionEndpointNotBound";
+          message = "No unique credential is bound to this service endpoint";
+        } else {
+          code = "net.signet.Error.CapabilityDenied";
+          message = "Operation not permitted by policy";
+        }
+      }
+    }
+    audit_key_access(ctx, agent_id, "GetSession", decision, reason);
+    g_dbus_method_invocation_return_dbus_error(invocation, code, message);
+    return;
+  }
+
+  audit_key_access(ctx, agent_id, "GetSession", "allow", "ok");
+  g_dbus_method_invocation_return_value(invocation,
+      g_variant_new("(sx)", result->session_token, (gint64)result->expires_at));
+}
+
+/* Bound memory and threads per transport. No pending queue holds credentials. */
+#define SIGNET_DBUS_MAX_SESSION_JOBS 2
+
+typedef struct {
+  GSList **jobs;
+  SignetStore *store;
+  SignetAuditLogger *audit;
+  const char *transport;
+  char *agent_id;
+  GDBusMethodInvocation *invocation; /* method handler's owned reference */
+  GCancellable *cancel;
+  GMainContext *context;
+  GSource *completion;
+  GThread *thread;
+  SignetCredentialAccessGrant grant;
+  SignetSessionStatus status;
+  SignetSessionResult result;
+} SessionJob;
+
+static void session_job_free(SessionJob *job) {
+  g_source_destroy(job->completion);
+  g_source_unref(job->completion);
+  g_main_context_unref(job->context);
+  g_object_unref(job->cancel);
+  signet_credential_access_grant_clear(&job->grant);
+  signet_session_result_clear(&job->result);
+  g_free(job->agent_id);
+  g_free(job);
+}
+
+static gboolean session_job_complete(gpointer data) {
+  SessionJob *job = data;
+  g_thread_join(job->thread);
+  *job->jobs = g_slist_remove(*job->jobs, job);
+  SignetDbusDispatchContext ctx = { .audit = job->audit, .transport = job->transport };
+  reply_session(&ctx, job->agent_id, job->invocation, job->status,
+                SIGNET_CRED_ACCESS_OK, &job->result);
+  session_job_free(job);
+  return G_SOURCE_REMOVE;
+}
+
+static gpointer session_job_run(gpointer data) {
+  SessionJob *job = data;
+  job->status = signet_session_broker_exchange(job->store, job->agent_id, job->transport,
+      &job->grant, job->cancel, &job->result);
+  g_source_attach(job->completion, job->context);
+  return NULL;
+}
+
+void signet_dbus_session_jobs_stop(GSList **jobs) {
+  for (GSList *it = *jobs; it; it = it->next) {
+    SessionJob *job = it->data;
+    g_cancellable_cancel(job->cancel);
+  }
+  for (GSList *it = *jobs; it; it = it->next) {
+    SessionJob *job = it->data;
+    g_thread_join(job->thread);
+    /* The main loop may already have quit. Discard an undelivered result
+     * rather than dispatching callbacks as the transport is torn down. */
+    if (job->result.lease_id)
+      (void)signet_store_revoke_lease(job->store, job->result.lease_id, signet_now_unix());
+    SignetDbusDispatchContext ctx = { .audit = job->audit, .transport = job->transport };
+    audit_key_access(&ctx, job->agent_id, "GetSession", "error", "transport_stopping");
+    g_dbus_method_invocation_return_dbus_error(job->invocation,
+        "net.signet.Error.SessionExchangeFailed", "Session transport is stopping");
+    session_job_free(job);
+  }
+  g_clear_pointer(jobs, g_slist_free);
+}
+
 static void handle_get_session(const SignetDbusDispatchContext *ctx,
                                const char *agent_id,
                                GVariant *parameters,
                                GDBusMethodInvocation *invocation) {
   const char *service_url = NULL;
   g_variant_get(parameters, "(&s)", &service_url);
-
-  if (!ctx->store) {
-    g_dbus_method_invocation_return_dbus_error(
-        invocation, "net.signet.Error.NotConfigured",
-        "Session brokering requires a configured store");
-    return;
-  }
-
-  int64_t now = signet_now_unix();
-  SignetCredentialAccessContext acc = credential_access_context(ctx);
-  SignetCredentialAccessRequest req = {
-    .agent_id = agent_id,
-    .capability = SIGNET_CAP_CREDENTIAL_GET_SESSION,
-  };
-  SignetCredAccessStatus st = signet_credential_access_authorize(&acc, &req, now);
-  if (st != SIGNET_CRED_ACCESS_OK) {
-    bool error = st == SIGNET_CRED_ACCESS_ERROR;
-    audit_key_access(ctx, agent_id, "GetSession", error ? "error" : "deny",
-                     signet_cred_access_reason(st));
+  if (!ctx->store || !ctx->session_jobs) {
+    audit_key_access(ctx, agent_id, "GetSession", "error", "store_unavailable");
     g_dbus_method_invocation_return_dbus_error(invocation,
-        error ? "net.signet.Error.Internal" : "net.signet.Error.CapabilityDenied",
-        error ? "Credential access failed" : "Operation not permitted by policy");
+        "net.signet.Error.NotConfigured", "Session brokering is not configured");
     return;
   }
 
-  uint8_t raw[32];
-  randombytes_buf(raw, sizeof(raw));
-  char token_hex[65];
-  bytes_to_hex(raw, sizeof(raw), token_hex);
-  sodium_memzero(raw, sizeof(raw));
-
-  int64_t expires_at = now + 24 * 60 * 60;
-
-  uint8_t lid_raw[16];
-  randombytes_buf(lid_raw, sizeof(lid_raw));
-  char lease_id[33];
-  bytes_to_hex(lid_raw, sizeof(lid_raw), lease_id);
-  sodium_memzero(lid_raw, sizeof(lid_raw));
-
-  char token_hash[crypto_hash_sha256_BYTES * 2 + 1];
-  sha256_hex(token_hex, token_hash);
-  char *meta = build_session_metadata(transport_name(ctx), service_url, token_hash);
-  if (!meta) {
-    g_dbus_method_invocation_return_dbus_error(
-        invocation, "net.signet.Error.Internal", "Failed to build lease metadata");
+  SignetCredentialAccessContext acc = credential_access_context(ctx);
+  SignetSessionRequest req = { .agent_id = agent_id, .service_url = service_url };
+  SignetCredentialAccessGrant grant;
+  SignetCredAccessStatus access = signet_session_broker_prepare(
+      &acc, &req, transport_name(ctx), &grant);
+  if (access != SIGNET_CRED_ACCESS_OK) {
+    reply_session(ctx, agent_id, invocation, SIGNET_SESSION_ACCESS_FAILED, access, NULL);
+    return;
+  }
+  if (g_slist_length(*ctx->session_jobs) >= SIGNET_DBUS_MAX_SESSION_JOBS) {
+    signet_credential_access_grant_clear(&grant);
+    audit_key_access(ctx, agent_id, "GetSession", "error", "session_exchange_busy");
+    g_dbus_method_invocation_return_dbus_error(invocation,
+        "net.signet.Error.SessionExchangeBusy", "Too many active session exchanges");
     return;
   }
 
-  if (signet_store_issue_lease(ctx->store, lease_id, "session",
-                               agent_id, now, expires_at, meta) != 0) {
-    g_free(meta);
-    audit_key_access(ctx, agent_id, "GetSession", "error", "lease_persist_failed");
-    g_dbus_method_invocation_return_dbus_error(
-        invocation, "net.signet.Error.Internal", "Failed to persist session lease");
+  SessionJob *job = g_new0(SessionJob, 1);
+  job->jobs = ctx->session_jobs;
+  job->store = ctx->store;
+  job->audit = ctx->audit;
+  job->transport = transport_name(ctx);
+  job->agent_id = g_strdup(agent_id);
+  job->invocation = invocation;
+  job->grant = grant;
+  job->cancel = g_cancellable_new();
+  GSource *dispatch = g_main_current_source();
+  job->context = dispatch ? g_main_context_ref(g_source_get_context(dispatch))
+                          : g_main_context_ref_thread_default();
+  job->completion = g_idle_source_new();
+  g_source_set_priority(job->completion, G_PRIORITY_DEFAULT);
+  g_source_set_callback(job->completion, session_job_complete, job, NULL);
+  job->thread = g_thread_try_new("signet-session", session_job_run, job, NULL);
+  if (!job->thread) {
+    audit_key_access(ctx, agent_id, "GetSession", "error", "session_worker_unavailable");
+    g_dbus_method_invocation_return_dbus_error(invocation,
+        "net.signet.Error.Internal", "Session exchange worker unavailable");
+    session_job_free(job);
     return;
   }
-  g_free(meta);
-
-  /* Hash-chained audit for the brokered session (token itself is never
-   * logged; the lease metadata records only its SHA-256). */
-  {
-    char detail[160];
-    snprintf(detail, sizeof(detail),
-             "{\"decision\":\"allow\",\"reason\":\"ok\",\"lease_id\":\"%s\"}",
-             lease_id);
-    (void)signet_audit_log_append(ctx->store, now, agent_id, "session_issue",
-                                  "session", transport_name(ctx), detail);
-  }
-  audit_key_access(ctx, agent_id, "GetSession", "allow", "ok");
-
-  g_dbus_method_invocation_return_value(invocation,
-      g_variant_new("(sx)", token_hex, (gint64)expires_at));
-  sodium_memzero(token_hex, sizeof(token_hex));
+  *job->jobs = g_slist_prepend(*job->jobs, job);
 }
 
 static void handle_get_token(const SignetDbusDispatchContext *ctx,

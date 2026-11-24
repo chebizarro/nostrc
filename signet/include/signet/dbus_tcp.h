@@ -85,7 +85,8 @@ SignetDbusTcpServer *signet_dbus_tcp_server_new(const SignetDbusTcpServerConfig 
  * signet_dbus_tcp_server_free:
  * @ds: (nullable): a D-Bus server
  *
- * Free D-Bus TCP server. Safe on NULL.
+ * Free D-Bus TCP server. Safe on NULL. As with stop, call from the server's
+ * dispatch thread.
  *
  * Since: 1.0
  */
@@ -109,7 +110,9 @@ int signet_dbus_tcp_server_start(SignetDbusTcpServer *ds);
  * signet_dbus_tcp_server_stop:
  * @ds: (nullable): a D-Bus server
  *
- * Stop listening. Safe to call multiple times.
+ * Stop listening and cancel/drain pending session exchanges. Safe to call
+ * multiple times. Call from the server's dispatch thread, before freeing the
+ * borrowed store or audit logger.
  *
  * Since: 1.0
  */

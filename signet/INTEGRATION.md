@@ -323,6 +323,48 @@ Use Unix D-Bus for local credential reads; D-Bus TCP does not encrypt replies.
 These grants do not authorize the delegated management `credential/deliver`
 operation below.
 
+### Session exchange
+
+A provisioner sets `service_url` when creating or importing a credential
+(`signetctl create-credential` or `import-credential` with `--service-url <url>`).
+After checking the deny list, capability grant and rate limit, Signet matches
+`GetSession(service_url)` byte-for-byte against the calling agent's credentials.
+No match (including a missing URL on an existing credential), an empty URL, or
+multiple matches fail with `net.signet.Error.SessionEndpointNotBound` before
+any network request. Revoked, expired and policy-disallowed credentials cannot
+be exchanged. Rotation changes the payload, not the endpoint binding.
+
+The provisioned endpoint receives the stored credential: provisioners must
+trust that service and must not put secrets in the URL. Use `https://` with
+normal TLS peer and hostname validation and a libcurl build with asynchronous
+DNS (so name resolution can be bounded). For local tests, an explicitly
+provisioned `http://127.0.0.1` endpoint with an optional port is also accepted;
+it is a numeric loopback address and cannot be resolved to another host.
+Signet does not use proxies or follow redirects. Connection and total transfer
+timeouts are 10 and 30 seconds, respectively; the response body limit is 64 KiB.
+Signet runs the exchanges off the D-Bus dispatch context. Each D-Bus
+transport admits two active exchanges and does not queue additional ones;
+`net.signet.Error.SessionExchangeBusy` indicates that both slots are in use.
+Stopping the transport cancels and drains its active exchanges.
+
+- Signet sends `POST` with `Content-Type: application/json` and
+  `Accept: application/json`. The body is `{"credential":"<base64>"}`, where
+  `credential` is the standard padded base64 encoding of the stored bytes.
+- The service returns a 2xx response with a JSON object and a nonempty UTF-8
+  `session_token` string (`token` is accepted if `session_token` is absent).
+  Signet does not read cookies or `Set-Cookie`. `expires_at`, if present, is
+  an integer Unix timestamp in seconds strictly in the future. Otherwise,
+  `expires_in`, if present, is a positive integer number of seconds measured
+  from receipt; if neither is present, Signet uses one hour from receipt.
+- A disallowed URL, missing libcurl support, transport or TLS failure, non-2xx
+  response (including redirects), oversized body, or invalid response returns
+  `net.signet.Error.SessionExchangeFailed` without writing a lease. On success,
+  Signet writes a lease linked to the credential and returns the service token
+  and Unix expiry. Signet stores only the token's SHA-256 hash in the lease,
+  never the token. The token is for the service, not for authenticating to
+  Signet. If the lease or required audit cannot be recorded, Signet
+  fails the call rather than returning an untracked token.
+
 ### Credential methods
 
 Credentials are generic secrets owned by an agent (`agent_id`). Their id is
@@ -335,7 +377,7 @@ entry of list) is payload-free:
 
 ```json
 {"credential_id":"cred_…","agent_id":"vault","secret_type":"credential",
- "label":"db/primary","policy_id":null,"provenance":"imported",
+ "label":"db/primary","policy_id":null,"service_url":null,"provenance":"imported",
  "created_by":"<provisioner pubkey>","created_at":1760000000,
  "rotated_at":null,"expires_at":null,"revoked_at":null,
  "version":1,"active_version":1,"status":"active"}
@@ -346,7 +388,7 @@ rotation increments it by one; versions are never reused.
 
 | Method | Params | Result | Failure codes (`error.data`) |
 |--------|--------|--------|------------------------------|
-| `credential/create`, `credential/import` | `agent_id`, `secret_type` (`api_token`\|`credential`), `label`, `payload_b64`; optional `policy_id`, `expires_at` | metadata | `credential_exists` (never overwritten), `agent_not_found`, `invalid_credential`, `no_store` |
+| `credential/create`, `credential/import` | `agent_id`, `secret_type` (`api_token`\|`credential`), `label`, `payload_b64`; optional `policy_id`, `expires_at`, `service_url` (nonempty string, at most 2048 bytes) | metadata | `credential_exists` (never overwritten), `agent_not_found`, `invalid_credential`, `no_store` |
 | `credential/list` | `agent_id` (required for a delivery-grant requester; a provisioner may omit it to list every owner) | `{"count":n,"credentials":[metadata…]}` | `no_capability`, `deny_listed`, `credential_store_failed`, `no_store` |
 | `credential/inspect` | `credential_id` | metadata | `credential_not_found` (provisioner), `no_capability`, `deny_listed`, `credential_store_failed`, `no_store` |
 | `credential/deliver` | `agent_id` (the owner), `credential_id`; optional `expected_version` (positive integer; rejected on every other method) | `{"credential_id","agent_id","version","payload_b64","lease_id","lease_expires_at"}` | `no_capability`, `deny_listed`, `not_owner` and `not_found` (provisioner only; a delivery-grant requester gets `no_capability`), `revoked`, `expired`, `version_mismatch`, `type_denied`, `rate_limited`, `credential_access_unavailable`, `internal_error` |
