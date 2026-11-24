@@ -43,6 +43,18 @@ int main(int argc, char **argv) {
       "org.a11y.Bus", "GetAddress", NULL, G_VARIANT_TYPE("(s)"), 0, -1, NULL, &error);
   if (!result) g_error("private accessibility address: %s", error->message);
   const gchar *address; g_variant_get(result, "(&s)", &address);
+  /* GetAddress only starts the bus. Activate the registry and wait for a real
+   * reply before GTK sends its first Embed call. Keep real AT-SPI enabled. */
+  g_autoptr(GDBusConnection) accessibility = g_dbus_connection_new_for_address_sync(address,
+      G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT | G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
+      NULL, NULL, &error);
+  if (!accessibility) g_error("private accessibility connection: %s", error->message);
+  g_autoptr(GVariant) children = g_dbus_connection_call_sync(accessibility, "org.a11y.atspi.Registry",
+      "/org/a11y/atspi/accessible/root", "org.a11y.atspi.Accessible", "GetChildren", NULL,
+      G_VARIANT_TYPE("(a(so))"), G_DBUS_CALL_FLAGS_NONE, 20000, NULL, &error);
+  if (!children) g_error("private accessibility registry: %s", error->message);
+  if (!g_dbus_connection_close_sync(accessibility, NULL, &error))
+    g_error("private accessibility readiness connection close: %s", error->message);
   g_setenv("AT_SPI_BUS_ADDRESS", address, TRUE);
   g_autoptr(GSubprocessLauncher) spawn = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_NONE);
   g_subprocess_launcher_set_child_setup(spawn, child_setup, GINT_TO_POINTER(getpid()), NULL);
