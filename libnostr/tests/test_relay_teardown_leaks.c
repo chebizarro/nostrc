@@ -108,15 +108,21 @@ static struct {
     int port;
 } srv;
 
+typedef struct {
+    bool established;
+} ServerSession;
+
 static int server_cb(struct lws *wsi, enum lws_callback_reasons reason, void *user,
                      void *in, size_t len) {
-    (void)user;
+    ServerSession *session = user;
     (void)in;
     (void)len;
     switch (reason) {
     case LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION:
         return atomic_load(&srv.reject_handshake) ? 1 : 0;
     case LWS_CALLBACK_ESTABLISHED:
+        CHECK(session && !session->established);
+        session->established = true;
         atomic_fetch_add(&srv.connections, 1);
         atomic_fetch_add(&srv.open, 1);
         break;
@@ -129,7 +135,11 @@ static int server_cb(struct lws *wsi, enum lws_callback_reasons reason, void *us
         if (atomic_exchange(&srv.drop, false)) return -1; /* close it */
         break;
     case LWS_CALLBACK_CLOSED:
-        atomic_fetch_sub(&srv.open, 1);
+        /* LWS can also close a rejected upgrade that never established. */
+        if (session && session->established) {
+            session->established = false;
+            CHECK(atomic_fetch_sub(&srv.open, 1) > 0);
+        }
         break;
     default:
         break;
@@ -138,7 +148,7 @@ static int server_cb(struct lws *wsi, enum lws_callback_reasons reason, void *us
 }
 
 static const struct lws_protocols srv_protocols[] = {
-    { "wss", server_cb, 0, 4096, 0, NULL, 0 },
+    { "wss", server_cb, sizeof(ServerSession), 4096, 0, NULL, 0 },
     LWS_PROTOCOL_LIST_TERM
 };
 
@@ -696,6 +706,9 @@ static void test_connect_during_reader_retirement(void) {
     GoSelectCase eose = { .op = GO_SELECT_RECEIVE, .chan = sub->end_of_stored_events };
     CHECK(go_select_timeout(&eose, 1, 10000).selected_case == 0);
     CHECK(nostr_relay_get_connection_state(relay) == NOSTR_RELAY_STATE_CONNECTED);
+    /* Prove the final zero represents closing the replacement, not an
+     * unbalanced callback making a still-open socket invisible. */
+    WAIT_FOR(atomic_load(&srv.open) == 1);
     GoChannel *answer = nostr_relay_write(relay, "[\"CLOSE\",\"reader-proof\"]");
     Error *write_error = NULL;
     GoSelectCase written = { .op = GO_SELECT_RECEIVE, .chan = answer, .recv_buf = (void **)&write_error };
