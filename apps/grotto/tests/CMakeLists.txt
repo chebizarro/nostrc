@@ -561,14 +561,16 @@ add_custom_target(grotto_test_locales DEPENDS ${_g10_spanish_mo} ${_g10_panel_sp
 add_dependencies(test-ui-layout grotto_test_locales)
 add_dependencies(test-ui-layout grotto-schemas grotto_resources)
 add_test(NAME signer/ui-layout COMMAND test-ui-layout)
-set_tests_properties(signer/ui-layout PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77 LABELS "signer;ui;panels"
+# These cases drive the shared X11 keyboard, pointer and focus via xdotool.
+# A competing window on the same display can steal input from any of them.
+set_tests_properties(signer/ui-layout PROPERTIES RUN_SERIAL TRUE TIMEOUT 120 SKIP_RETURN_CODE 77 LABELS "signer;ui;panels"
   ENVIRONMENT "${_UI_TEST_ENV};GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}/..;GSETTINGS_BACKEND=memory;ADW_DISABLE_PORTAL=1")
 add_test(NAME signer/dialog-sizing COMMAND test-ui-layout)
-set_tests_properties(signer/dialog-sizing PROPERTIES TIMEOUT 120 LABELS "signer;ui;panels"
+set_tests_properties(signer/dialog-sizing PROPERTIES RUN_SERIAL TRUE TIMEOUT 120 LABELS "signer;ui;panels"
   ENVIRONMENT "${_UI_TEST_ENV};GROTTO_TEST_DIALOG_SIZING=1;GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}/..;GSETTINGS_BACKEND=memory;ADW_DISABLE_PORTAL=1")
 # GTK's test-only AT context supports property assertions without an AT-SPI bus.
 add_test(NAME signer/ui-accessibility COMMAND test-ui-layout)
-set_tests_properties(signer/ui-accessibility PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77 LABELS "signer;ui;i18n;a11y"
+set_tests_properties(signer/ui-accessibility PROPERTIES RUN_SERIAL TRUE TIMEOUT 120 SKIP_RETURN_CODE 77 LABELS "signer;ui;i18n;a11y"
   ENVIRONMENT "${_UI_TEST_ENV};GTK_A11Y=test;G10_TEST_LANGUAGE=es;GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}/..;GSETTINGS_BACKEND=memory;ADW_DISABLE_PORTAL=1")
 add_dependencies(signer-tests test-panel-inbox-model test-ui-layout)
 # G08: real background state machine, fake portal only on the private bus.
