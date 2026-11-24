@@ -151,6 +151,12 @@ test_config_reload = executable('test_config_reload',
   install: false,
 )
 
+lease_prune_fixture = executable('lease_prune_fixture', 'lease_prune_fixture.c',
+  link_with: signet_core, include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
+test('lease_prune_daemon', find_program('python3'),
+  args: [files('test_lease_prune_daemon.py'), signetd_exe, lease_prune_fixture], timeout: 45)
+
 test_relay_pool = executable('test_relay_pool_protocol',
   'test_relay_pool_protocol.c',
   link_with: signet_core,
