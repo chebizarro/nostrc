@@ -13,6 +13,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from threading import Event
 
 from test_relay_pool_wire import Relay
 
@@ -165,7 +166,33 @@ def run(binary, mode):
                 dead.close()
 
 
+def run_delivery_json(binary):
+    received = []
+    done = Event()
+
+    def handle(relay, frame):
+        if frame[0] == 'EVENT':
+            event = frame[1]
+            relay.send(['OK', event['id'], True, ''])
+            if event['kind'] == 1059:
+                received.append(event['id'])
+                if len(received) == 2:
+                    done.set()
+
+    relay = Relay(handle)
+    try:
+        result = subprocess.run([binary, '--delivery-json', relay.url],
+                                capture_output=True, text=True, timeout=20)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert done.wait(timeout=3) and len(set(received)) == 2, received
+    finally:
+        relay.close()
+
+
 if __name__ == '__main__':
+    if sys.argv[2:] == ['--delivery-json']:
+        run_delivery_json(sys.argv[1])
+        sys.exit(0)
     test_req_replay_order()
     test_fanout_order()
     for mode in ('ingress', 'isolation', 'combined', 'multi', 'reload'):

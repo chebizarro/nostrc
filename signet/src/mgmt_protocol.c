@@ -12,6 +12,7 @@
 #include "signet/health_server.h"
 #include "signet/cascadia.h"
 #include "signet/key_store.h"
+#include "agent_id.h"
 #include "signet/policy_store.h"
 #include "signet/relay_pool.h"
 #include "signet/audit_logger.h"
@@ -119,6 +120,22 @@ bool signet_mgmt_is_authorized(const char *event_pubkey_hex,
 
 /* ------------------------------ parsing ---------------------------------- */
 
+static bool signet_mgmt_mints_agent_id(SignetMgmtOp op) {
+  return op == SIGNET_MGMT_OP_PROVISION_AGENT || op == SIGNET_MGMT_OP_ADOPT_EXISTING ||
+         op == SIGNET_MGMT_OP_RESTORE_EXISTING;
+}
+
+/* JSON-GLib exposes decoded strings as NUL-terminated values. Reject a
+ * JSON NUL escape in creation requests before it can truncate an ID, including
+ * before ContextVM normalization reads and reserializes the params. */
+static bool signet_mgmt_has_nul_escape(const char *json) {
+  for (const char *p = json; (p = strchr(p, '\\')) != NULL; p += 2) {
+    if (p[1] == '\0') break;
+    if (strncmp(p + 1, "u0000", 5) == 0) return true;
+  }
+  return false;
+}
+
 void signet_mgmt_request_clear(SignetMgmtRequest *req) {
   if (!req) return;
   g_free(req->agent_id);
@@ -167,6 +184,11 @@ int signet_mgmt_request_parse(SignetMgmtOp op,
       return 0;
     }
     if (out_error) *out_error = g_strdup("missing content JSON");
+    return -1;
+  }
+
+  if (signet_mgmt_mints_agent_id(op) && signet_mgmt_has_nul_escape(content_json)) {
+    if (out_error) *out_error = g_strdup("identity creation parameters must not contain NUL");
     return -1;
   }
 
@@ -288,12 +310,10 @@ int signet_mgmt_request_parse(SignetMgmtOp op,
   }
 
   /* Validate required fields per op. */
-  bool needs_agent_id = (out_req->op == SIGNET_MGMT_OP_PROVISION_AGENT ||
+  bool needs_agent_id = (signet_mgmt_mints_agent_id(op) ||
                          out_req->op == SIGNET_MGMT_OP_REVOKE_AGENT ||
                          out_req->op == SIGNET_MGMT_OP_SET_POLICY ||
                          out_req->op == SIGNET_MGMT_OP_ROTATE_KEY ||
-                         out_req->op == SIGNET_MGMT_OP_ADOPT_EXISTING ||
-                         out_req->op == SIGNET_MGMT_OP_RESTORE_EXISTING ||
                          out_req->op == SIGNET_MGMT_OP_REISSUE_CONNECT ||
                          out_req->op == SIGNET_MGMT_OP_LIST_CLIENTS ||
                          out_req->op == SIGNET_MGMT_OP_CREATE_CREDENTIAL ||
@@ -305,6 +325,14 @@ int signet_mgmt_request_parse(SignetMgmtOp op,
 
   if (needs_agent_id && (!out_req->agent_id || !out_req->agent_id[0])) {
     if (out_error) *out_error = g_strdup("agent_id is required");
+    signet_mgmt_request_clear(out_req);
+    return -1;
+  }
+
+  /* Existing IDs need not match the new alphabet to remain manageable. */
+  if (signet_mgmt_mints_agent_id(op) && !signet_agent_id_is_valid(out_req->agent_id)) {
+    if (out_error)
+      *out_error = g_strdup("agent_id must be 1 to 64 characters from [A-Za-z0-9._-]");
     signet_mgmt_request_clear(out_req);
     return -1;
   }
@@ -1346,6 +1374,15 @@ static int signet_mgmt_handle_intent(SignetMgmtHandler *h,
     goto out;
   }
 
+  if (signet_mgmt_mints_agent_id(op) && signet_mgmt_has_nul_escape(content_json)) {
+    char *err = signet_mgmt_contextvm_error_json(
+        -32602, "identity creation parameters must not contain NUL", "parse_error", rpc_id);
+    signet_mgmt_publish_ack(h, event_pubkey_hex, err, event_id_hex, now,
+                            SIGNET_MGMT_REPLY_CONTEXTVM, rpc_id);
+    g_free(err);
+    goto out;
+  }
+
   {
     char *encrypted = NULL;
     uint8_t sk[32], pk[32];
@@ -1786,6 +1823,52 @@ static const char *signet_mgmt_delivery_grant_refusal(
   return NULL;
 }
 
+/* Serialize a result object while keeping temporary secret-bearing nodes on
+ * the same wipe path as the final acknowledgement. */
+static char *signet_mgmt_result_json(JsonBuilder *b) {
+  json_builder_end_object(b);
+  JsonNode *root = json_builder_get_root(b);
+  g_autoptr(SignetSecretJsonGenerator) gen = json_generator_new();
+  json_generator_set_root(gen, root);
+  char *result = json_generator_to_data(gen, NULL);
+  signet_secret_json_node_unref(root);
+  return result;
+}
+
+static char *signet_mgmt_epoch_result(int64_t epoch) {
+  g_autoptr(SignetSecretJsonBuilder) b = json_builder_new();
+  json_builder_begin_object(b);
+  json_builder_set_member_name(b, "epoch");
+  json_builder_add_int_value(b, epoch);
+  return signet_mgmt_result_json(b);
+}
+
+static char *signet_mgmt_identity_result(const char *agent_id, const char *pubkey,
+                                         const char *action_flag, const char *bunker_uri,
+                                         int64_t delivery_expires_at) {
+  g_autoptr(SignetSecretJsonBuilder) b = json_builder_new();
+  json_builder_begin_object(b);
+  json_builder_set_member_name(b, "agent_id");
+  json_builder_add_string_value(b, agent_id);
+  json_builder_set_member_name(b, "pubkey");
+  json_builder_add_string_value(b, pubkey);
+  if (action_flag) {
+    json_builder_set_member_name(b, action_flag);
+    json_builder_add_boolean_value(b, TRUE);
+  }
+  if (bunker_uri) {
+    json_builder_set_member_name(b, "bunker_uri");
+    json_builder_add_string_value(b, bunker_uri);
+  }
+  if (delivery_expires_at > 0) {
+    json_builder_set_member_name(b, "delivered");
+    json_builder_add_boolean_value(b, TRUE);
+    json_builder_set_member_name(b, "delivery_expires_at");
+    json_builder_add_int_value(b, delivery_expires_at);
+  }
+  return signet_mgmt_result_json(b);
+}
+
 /* A request-supplied id recorded in the audit chain: bounded, never echoed
  * at arbitrary length. */
 static const char *signet_mgmt_audit_target(const char *id) {
@@ -1849,7 +1932,7 @@ static int signet_mgmt_handler_handle_request_ex(
     size_t pt_len = 0;
     int drc = nostr_nip44_decrypt_v2(sk, pk, content_json, &pt, &pt_len);
     signet_mgmt_memzero(sk, sizeof(sk));
-    if (drc != 0 || !pt || pt_len == 0) {
+    if (drc != 0 || !pt || pt_len == 0 || memchr(pt, '\0', pt_len)) {
       if (pt) secure_wipe(pt, pt_len);
       free(pt);
       return -1;
@@ -2063,7 +2146,7 @@ static int signet_mgmt_handler_handle_request_ex(
         ok = true;
         code = "writer_acquired";
         message = g_strdup("writer lease acquired");
-        result = g_strdup_printf("{\"epoch\":%lld}", (long long)epoch);
+        result = signet_mgmt_epoch_result(epoch);
       } else {
         code = "writer_acquire_failed";
         message = g_strdup("writer lease acquisition failed");
@@ -2077,7 +2160,7 @@ static int signet_mgmt_handler_handle_request_ex(
         ok = true;
         code = "writer_revoked";
         message = g_strdup("writer lease revoked");
-        result = g_strdup_printf("{\"epoch\":%lld}", (long long)epoch);
+        result = signet_mgmt_epoch_result(epoch);
       } else {
         code = "writer_revoke_failed";
         message = g_strdup("writer lease revocation failed");
@@ -2097,15 +2180,7 @@ static int signet_mgmt_handler_handle_request_ex(
         ok = true;
         code = "provisioned";
         message = g_strdup_printf("agent %s provisioned", req.agent_id);
-        if (bunker_uri) {
-          /* Escape the bunker URI for JSON embedding */
-          char *escaped_uri = g_strescape(bunker_uri, NULL);
-          result = g_strdup_printf("{\"agent_id\":\"%s\",\"pubkey\":\"%s\",\"bunker_uri\":\"%s\"}",
-                                   req.agent_id, pubkey_hex, escaped_uri ? escaped_uri : bunker_uri);
-          signet_secret_gfree(escaped_uri);
-        } else {
-          result = g_strdup_printf("{\"agent_id\":\"%s\",\"pubkey\":\"%s\"}", req.agent_id, pubkey_hex);
-        }
+        int64_t delivery_expires_at = 0;
         if (req.deliver && req.bootstrap_pubkey && req.bootstrap_pubkey[0] && bunker_uri) {
           int64_t ttl = req.delivery_ttl > 0 ? req.delivery_ttl : 600;
           if (ttl > 900) ttl = 900;
@@ -2116,12 +2191,11 @@ static int signet_mgmt_handler_handle_request_ex(
           dm.n_relay_urls = h->n_relay_urls;
           dm.expires_at = now + ttl;
           if (signet_bootstrap_send(h->bunker_sk_hex, req.bootstrap_pubkey, &dm, h->relays) == 0) {
-            char *old = result;
-            result = g_strdup_printf("{\"agent_id\":\"%s\",\"pubkey\":\"%s\",\"bunker_uri\":\"%s\",\"delivered\":true,\"delivery_expires_at\":%" G_GINT64_FORMAT "}",
-                                     req.agent_id, pubkey_hex, bunker_uri, (gint64)dm.expires_at);
-            signet_secret_gfree(old);
+            delivery_expires_at = dm.expires_at;
           }
         }
+        result = signet_mgmt_identity_result(req.agent_id, pubkey_hex, NULL,
+                                              bunker_uri, delivery_expires_at);
         signet_mgmt_publish_cas_audit(h, "provision", req.agent_id, "ok", now);
         signet_secret_gfree(bunker_uri);
       } else {
@@ -2211,19 +2285,7 @@ static int signet_mgmt_handler_handle_request_ex(
         code = restoring ? "restored" : "adopted";
         message = g_strdup_printf("agent %s %s", req.agent_id,
                                   restoring ? "restored" : "adopted");
-        if (bunker_uri) {
-          char *escaped_uri = g_strescape(bunker_uri, NULL);
-          result = g_strdup_printf(
-              "{\"agent_id\":\"%s\",\"pubkey\":\"%s\",\"adopted\":true,\"bunker_uri\":\"%s\"}",
-              req.agent_id, pubkey_hex, escaped_uri ? escaped_uri : bunker_uri);
-          signet_secret_gfree(escaped_uri);
-        } else {
-          result = g_strdup_printf(
-              restoring
-                ? "{\"agent_id\":\"%s\",\"pubkey\":\"%s\",\"restored\":true}"
-                : "{\"agent_id\":\"%s\",\"pubkey\":\"%s\",\"adopted\":true}",
-              req.agent_id, pubkey_hex);
-        }
+        int64_t delivery_expires_at = 0;
         if (req.deliver && req.bootstrap_pubkey && req.bootstrap_pubkey[0] && bunker_uri) {
           int64_t ttl = req.delivery_ttl > 0 ? req.delivery_ttl : 600;
           if (ttl > 900) ttl = 900;
@@ -2234,13 +2296,12 @@ static int signet_mgmt_handler_handle_request_ex(
           dm.n_relay_urls = h->n_relay_urls;
           dm.expires_at = now + ttl;
           if (signet_bootstrap_send(h->bunker_sk_hex, req.bootstrap_pubkey, &dm, h->relays) == 0) {
-            char *old = result;
-            result = g_strdup_printf(
-                "{\"agent_id\":\"%s\",\"pubkey\":\"%s\",\"adopted\":true,\"bunker_uri\":\"%s\",\"delivered\":true,\"delivery_expires_at\":%" G_GINT64_FORMAT "}",
-                req.agent_id, pubkey_hex, bunker_uri, (gint64)dm.expires_at);
-            signet_secret_gfree(old);
+            delivery_expires_at = dm.expires_at;
           }
         }
+        result = signet_mgmt_identity_result(req.agent_id, pubkey_hex,
+                                              restoring ? "restored" : "adopted",
+                                              bunker_uri, delivery_expires_at);
         signet_mgmt_publish_cas_audit(
             h, restoring ? "restore_existing" : "adopt_existing",
             req.agent_id, "ok", now);
@@ -2310,10 +2371,15 @@ static int signet_mgmt_handler_handle_request_ex(
       uint32_t cache_count = signet_key_store_cache_count(h->keys);
       bool db_open = signet_key_store_is_open(h->keys);
       bool relays_ok = signet_relay_pool_is_connected(h->relays);
-      result = g_strdup_printf("{\"db_open\":%s,\"agents\":%u,\"relays_connected\":%s}",
-                                db_open ? "true" : "false",
-                                cache_count,
-                                relays_ok ? "true" : "false");
+      g_autoptr(SignetSecretJsonBuilder) b = json_builder_new();
+      json_builder_begin_object(b);
+      json_builder_set_member_name(b, "db_open");
+      json_builder_add_boolean_value(b, db_open);
+      json_builder_set_member_name(b, "agents");
+      json_builder_add_int_value(b, cache_count);
+      json_builder_set_member_name(b, "relays_connected");
+      json_builder_add_boolean_value(b, relays_ok);
+      result = signet_mgmt_result_json(b);
       break;
     }
 
@@ -2324,16 +2390,16 @@ static int signet_mgmt_handler_handle_request_ex(
       if (lrc == 0) {
         ok = true;
         code = "ok";
-        /* Build JSON array of agent IDs. */
-        GString *arr = g_string_new("[");
-        for (size_t i = 0; i < agent_count; i++) {
-          if (i > 0) g_string_append_c(arr, ',');
-          g_string_append_printf(arr, "\"%s\"", agent_ids[i]);
-        }
-        g_string_append_c(arr, ']');
-        result = g_strdup_printf("{\"count\":%zu,\"agents\":%s}",
-                                  agent_count, arr->str);
-        g_string_free(arr, TRUE);
+        g_autoptr(SignetSecretJsonBuilder) b = json_builder_new();
+        json_builder_begin_object(b);
+        json_builder_set_member_name(b, "count");
+        json_builder_add_int_value(b, agent_count);
+        json_builder_set_member_name(b, "agents");
+        json_builder_begin_array(b);
+        for (size_t i = 0; i < agent_count; i++)
+          json_builder_add_string_value(b, agent_ids[i]);
+        json_builder_end_array(b);
+        result = signet_mgmt_result_json(b);
         g_strfreev(agent_ids);
       } else {
         code = "list_failed";
@@ -2384,8 +2450,13 @@ static int signet_mgmt_handler_handle_request_ex(
         signet_mgmt_publish_cas_audit(h, "rotate", req.agent_id, "ok", now);
         code = "key_rotated";
         message = g_strdup_printf("key rotated for agent %s", req.agent_id);
-        result = g_strdup_printf("{\"agent_id\":\"%s\",\"new_pubkey\":\"%s\"}",
-                                  req.agent_id, new_pubkey_hex);
+        g_autoptr(SignetSecretJsonBuilder) b = json_builder_new();
+        json_builder_begin_object(b);
+        json_builder_set_member_name(b, "agent_id");
+        json_builder_add_string_value(b, req.agent_id);
+        json_builder_set_member_name(b, "new_pubkey");
+        json_builder_add_string_value(b, new_pubkey_hex);
+        result = signet_mgmt_result_json(b);
       } else if (rrc == 1) {
         code = "not_found";
         message = g_strdup("agent not found");

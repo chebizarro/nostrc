@@ -35,6 +35,11 @@ class Relay(socketserver.StreamRequestHandler):
             return
         if "sec-websocket-key" not in headers:
             return self.http(request, headers)
+        if mode == "pending-upgrade":
+            # Keep the HTTP upgrade pending until the publisher closes the
+            # socket. No EVENT or OK exchange can happen on this connection.
+            self.rfile.read(1)
+            return
         accept = base64.b64encode(hashlib.sha1((headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
         self.wfile.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n").encode())
         self.wfile.flush()

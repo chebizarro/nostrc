@@ -6,5 +6,9 @@
 #include "signet/nip46_server.h"
 void signet_nip46_server_set_after_binding_hook(SignetNip46Server *server,
                                                  void (*hook)(void *), void *data);
+/* Observe signed events before publication without affecting its outcome. */
+typedef void (*SignetNip46OutgoingEventHook)(void *data, const char *event_json);
+void signet_nip46_server_set_outgoing_event_hook(SignetNip46Server *server,
+    SignetNip46OutgoingEventHook hook, void *data);
 #endif
 #endif

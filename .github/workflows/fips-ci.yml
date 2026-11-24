@@ -44,11 +44,21 @@ jobs:
         env:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+      - name: Cache apt package downloads
+        id: apt-cache
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/cache-apt
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build pkg-config clang libclang-rt-18-dev libjansson-dev libyaml-dev libsecp256k1-dev libsodium-dev libssl-dev libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev libnftables-dev libncurses-dev
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -194,6 +204,10 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
           key: cargo-registry-${{ runner.os }}-${{ hashFiles('upstream-fips/Cargo.lock') }}
+      - name: Cache apt package downloads
+        id: apt-cache
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/cache-apt
       - name: Build the pinned Rust daemon
         if: steps.daemon.outputs.cache-hit != 'true'
         env:
@@ -222,6 +236,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build pkg-config clang libclang-rt-18-dev libjansson-dev libyaml-dev libsecp256k1-dev libsodium-dev libssl-dev libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev libnftables-dev libncurses-dev
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -455,10 +475,20 @@ jobs:
         with:
           submodules: recursive
           persist-credentials: false
+      - name: Cache apt package downloads
+        id: apt-cache
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/cache-apt
       - name: Install dependencies (Linux)
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build pkg-config clang libclang-rt-18-dev libjansson-dev libyaml-dev libsecp256k1-dev libsodium-dev libssl-dev libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev libnftables-dev libncurses-dev
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
       - name: Configure fuzzers
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
@@ -532,6 +562,10 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
           key: cargo-registry-${{ runner.os }}-${{ hashFiles('upstream-fips/Cargo.lock') }}
+      - name: Cache apt package downloads
+        id: apt-cache
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/cache-apt
       - name: Build the pinned Rust daemon
         if: steps.daemon.outputs.cache-hit != 'true'
         env:
@@ -553,6 +587,12 @@ jobs:
           sudo apt-get install -y build-essential cmake ninja-build pkg-config clang libclang-rt-18-dev libjansson-dev libyaml-dev libsecp256k1-dev libsodium-dev libssl-dev libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev libnftables-dev libncurses-dev
       - name: Install the chaos lab tools (iproute2, nftables, iperf3, conntrack)
         run: sudo apt-get install -y iproute2 nftables iperf3 conntrack
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
       - name: Configure (ASan/UBSan)
         shell: bash
         run: |
@@ -632,6 +672,10 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
           key: cargo-registry-${{ runner.os }}-${{ hashFiles('upstream-fips/Cargo.lock') }}
+      - name: Cache apt package downloads
+        id: apt-cache
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/cache-apt
       - name: Build the pinned Rust daemon
         if: steps.daemon.outputs.cache-hit != 'true'
         env:
@@ -679,6 +723,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build pkg-config clang libclang-rt-18-dev libjansson-dev libyaml-dev libsecp256k1-dev libsodium-dev libssl-dev libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev libnftables-dev libncurses-dev
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
       - name: Apply identical test-only workload to the reference
         # The baseline already defines the bench targets (fips_benches,
         # fipsd_perf_native); only the workload sources are refreshed. Never copy

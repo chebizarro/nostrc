@@ -21,6 +21,7 @@ alternate_mirrors() {
     [[ -f "$source" ]] || continue
     sed -i -E \
       -e 's@(https?://)([a-z][a-z0-9-]*\.ec2\.|[a-z]+\.)?(archive|security)\.ubuntu\.com/ubuntu(/|[[:space:]]|$)@\1mirrors.edge.kernel.org/ubuntu\4@g' \
+      -e 's@mirror\+file:(//)?/etc/apt/apt-mirrors\.txt([[:space:]]|$)@https://archive.ubuntu.com/ubuntu\2@g' \
       -e 's@(https?://)ports\.ubuntu\.com/ubuntu-ports(/|[[:space:]]|$)@\1mirrors.mit.edu/ubuntu-ports\2@g' \
       -e 's@(https?://)deb\.debian\.org/debian(/|[[:space:]]|$)@\1ftp.us.debian.org/debian\2@g' \
       "$source"

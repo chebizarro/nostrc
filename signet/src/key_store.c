@@ -12,6 +12,7 @@
 
 #include "signet/key_store.h"
 #include "key_store_private.h"
+#include "agent_id.h"
 #include "signet/store.h"
 #include "signet/store_tokens.h"
 #include "signet/audit_logger.h"
@@ -524,7 +525,8 @@ int signet_key_store_provision_agent(SignetKeyStore *ks,
                                      char *out_pubkey_hex,
                                      size_t out_pubkey_hex_sz,
                                      char **out_bunker_uri) {
-  if (!ks || !agent_id || !agent_id[0] || !out_pubkey_hex || out_pubkey_hex_sz < 65) return -1;
+  if (!ks || !signet_agent_id_is_valid(agent_id) ||
+      !out_pubkey_hex || out_pubkey_hex_sz < 65) return -1;
   if (out_bunker_uri) *out_bunker_uri = NULL;
 
   /* Provisioning is create-or-get, never an implicit key rotation. Reissue
@@ -656,7 +658,7 @@ SignetAdoptResult signet_key_store_adopt_agent(SignetKeyStore *ks,
                                                size_t n_relay_urls,
                                                char out_pubkey_hex[65],
                                                char **out_bunker_uri) {
-  if (!ks || !agent_id || !secret_key || !out_pubkey_hex)
+  if (!ks || !signet_agent_id_is_valid(agent_id) || !secret_key || !out_pubkey_hex)
     return SIGNET_ADOPT_ERR_INTERNAL;
   if (out_bunker_uri) *out_bunker_uri = NULL;
 
@@ -801,7 +803,7 @@ SignetAdoptResult signet_key_store_restore_agent(SignetKeyStore *ks,
                                                  const uint8_t secret_key[32],
                                                  const char *expected_pubkey_hex,
                                                  char out_pubkey_hex[65]) {
-  if (!ks || !agent_id || !agent_id[0] || !secret_key || !out_pubkey_hex)
+  if (!ks || !signet_agent_id_is_valid(agent_id) || !secret_key || !out_pubkey_hex)
     return SIGNET_ADOPT_ERR_INTERNAL;
 
   char sk_hex[65];

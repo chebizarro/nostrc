@@ -11,6 +11,7 @@
  * verifying internal consistency between components.
  */
 
+#include "HANAMI-version.h"
 #include "hanami/hanami.h"
 #include "hanami/hanami-config.h"
 #include "hanami/hanami-index.h"
@@ -85,10 +86,10 @@ static void test_version_info(void)
     int major = -1, minor = -1, patch = -1;
     const char *v = hanami_version(&major, &minor, &patch);
     assert(v != NULL);
-    assert(major == 0);
-    assert(minor == 8);
-    assert(strcmp(v, "0.8.0") == 0);
-    assert(patch == 0);
+    assert(major == HANAMI_VERSION_MAJOR);
+    assert(minor == HANAMI_VERSION_MINOR);
+    assert(patch == HANAMI_VERSION_MICRO);
+    assert(strcmp(v, HANAMI_VERSION) == 0);
 }
 
 /* =========================================================================

@@ -47,6 +47,7 @@
 #include <nostr-keys.h>
 #include <secure_buf.h>
 #include "secret_json.h"
+#include "nip46_server_test_hooks.h"
 
 /* NIP modules */
 #include <nostr/nip04.h>
@@ -193,34 +194,6 @@ static void signet_audit_nip46(SignetAuditLogger *audit,
     (void)signet_audit_log_json(audit, SIGNET_AUDIT_EVENT_SIGN_REQUEST, json);
     g_free(json);
   }
-}
-
-static void signet_nip46_publish_cas_audit(SignetRelayPool *relays,
-                                           const char *signer_sk_hex,
-                                           const char *agent_id,
-                                           int64_t now) {
-  if (!relays || !signer_sk_hex) return;
-  NostrEvent *evt = nostr_event_new();
-  if (!evt) return;
-  nostr_event_set_kind(evt, CAS_AUDIT);
-  nostr_event_set_created_at(evt, now);
-  char *content = g_strdup_printf("{\"domain\":\"signet\",\"type\":\"sign\",\"agent\":\"%s\",\"status\":\"ok\"}", agent_id ? agent_id : "");
-  nostr_event_set_content(evt, content ? content : "{}");
-  g_free(content);
-  NostrTags *tags = nostr_tags_new(0);
-  if (tags) {
-    NostrTag *domain = nostr_tag_new("domain", "signet", NULL);
-    NostrTag *type = nostr_tag_new("type", "sign", NULL);
-    if (domain) nostr_tags_append(tags, domain);
-    if (type) nostr_tags_append(tags, type);
-    if (agent_id) { NostrTag *agent = nostr_tag_new("agent", agent_id, NULL); if (agent) nostr_tags_append(tags, agent); }
-    nostr_event_set_tags(evt, tags);
-  }
-  if (nostr_event_sign(evt, signer_sk_hex) == 0) {
-    char *json = nostr_event_serialize_compact(evt);
-    if (json) { (void)signet_relay_pool_publish_event_json(relays, json); free(json); }
-  }
-  nostr_event_free(evt);
 }
 
 /* -------------------- extract event kind from JSON ----------------------- */
@@ -421,6 +394,8 @@ struct SignetNip46Server {
 #ifdef SIGNET_ENABLE_TEST_HOOKS
   void (*after_binding_hook)(void *);
   void *after_binding_data;
+  SignetNip46OutgoingEventHook outgoing_event_hook;
+  void *outgoing_event_data;
 #endif
   SignetDenyList *deny; /* live deny list (owned by daemon) */
 };
@@ -432,7 +407,59 @@ void signet_nip46_server_set_after_binding_hook(SignetNip46Server *s,
   s->after_binding_hook = hook;
   s->after_binding_data = data;
 }
+
+void signet_nip46_server_set_outgoing_event_hook(SignetNip46Server *s,
+    SignetNip46OutgoingEventHook hook, void *data) {
+  if (!s) return;
+  s->outgoing_event_hook = hook;
+  s->outgoing_event_data = data;
+}
 #endif
+
+static void signet_nip46_publish_cas_audit(SignetNip46Server *s,
+                                          const char *signer_sk_hex,
+                                          const char *agent_id,
+                                          int64_t now) {
+  if (!s->relays || !signer_sk_hex) return;
+  NostrEvent *evt = nostr_event_new();
+  if (!evt) return;
+  nostr_event_set_kind(evt, CAS_AUDIT);
+  nostr_event_set_created_at(evt, now);
+  g_autoptr(JsonBuilder) b = json_builder_new();
+  json_builder_begin_object(b);
+  json_builder_set_member_name(b, "domain");
+  json_builder_add_string_value(b, "signet");
+  json_builder_set_member_name(b, "type");
+  json_builder_add_string_value(b, "sign");
+  json_builder_set_member_name(b, "agent");
+  json_builder_add_string_value(b, agent_id ? agent_id : "");
+  json_builder_set_member_name(b, "status");
+  json_builder_add_string_value(b, "ok");
+  json_builder_end_object(b);
+  g_autoptr(JsonNode) root = json_builder_get_root(b);
+  g_autofree char *content = json_to_string(root, FALSE);
+  nostr_event_set_content(evt, content ? content : "{}");
+  NostrTags *tags = nostr_tags_new(0);
+  if (tags) {
+    NostrTag *domain = nostr_tag_new("domain", "signet", NULL);
+    NostrTag *type = nostr_tag_new("type", "sign", NULL);
+    if (domain) nostr_tags_append(tags, domain);
+    if (type) nostr_tags_append(tags, type);
+    if (agent_id) { NostrTag *agent = nostr_tag_new("agent", agent_id, NULL); if (agent) nostr_tags_append(tags, agent); }
+    nostr_event_set_tags(evt, tags);
+  }
+  if (nostr_event_sign(evt, signer_sk_hex) == 0) {
+    char *json = nostr_event_serialize_compact(evt);
+    if (json) {
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+      if (s->outgoing_event_hook) s->outgoing_event_hook(s->outgoing_event_data, json);
+#endif
+      (void)signet_relay_pool_publish_event_json(s->relays, json);
+      free(json);
+    }
+  }
+  nostr_event_free(evt);
+}
 
 void signet_nip46_server_set_deny_list(SignetNip46Server *s,
                                        struct SignetDenyList *deny) {
@@ -873,7 +900,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
           result_is_json = false;
           status = "ok";
           code = "ok";
-          signet_nip46_publish_cas_audit(s->relays,
+          signet_nip46_publish_cas_audit(s,
               remote_signer_secret_key_hex, session_agent_id, now);
         }
       }
@@ -970,17 +997,23 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
       logout_requested = true;
 
     } else if (strcmp(method, "get_relays") == 0) {
-      /* Build a JSON object mapping relay URLs to empty read/write hints. */
+      /* Relay URLs are JSON member names, not pre-escaped strings. */
       size_t n_urls = 0;
       const char *const *urls = signet_relay_pool_get_urls(s->relays, &n_urls);
-      GString *rb = g_string_new("{");
-      for (size_t ri = 0; ri < n_urls; ri++) {
-        if (ri > 0) g_string_append_c(rb, ',');
-        g_string_append_printf(rb, "\"%s\":{\"read\":true,\"write\":true}",
-                               urls[ri] ? urls[ri] : "");
+      g_autoptr(JsonBuilder) b = json_builder_new();
+      json_builder_begin_object(b);
+      for (size_t i = 0; i < n_urls; i++) {
+        json_builder_set_member_name(b, urls[i] ? urls[i] : "");
+        json_builder_begin_object(b);
+        json_builder_set_member_name(b, "read");
+        json_builder_add_boolean_value(b, TRUE);
+        json_builder_set_member_name(b, "write");
+        json_builder_add_boolean_value(b, TRUE);
+        json_builder_end_object(b);
       }
-      g_string_append_c(rb, '}');
-      result = g_string_free(rb, FALSE);
+      json_builder_end_object(b);
+      g_autoptr(JsonNode) root = json_builder_get_root(b);
+      result = json_to_string(root, FALSE);
       result_is_json = true;
       status = "ok";
       code = "ok";
@@ -1051,6 +1084,9 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
         remote_signer_secret_key_hex, client_pubkey_hex,
         event_id_hex, now, enc_resp, &outer_err);
     if (outer_evt) {
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+      if (s->outgoing_event_hook) s->outgoing_event_hook(s->outgoing_event_data, outer_evt);
+#endif
       if (s->relays) {
         /* Enqueue is neither relay acceptance nor recipient delivery. Failover
          * retains these exact signed bytes; it never re-executes custody. */

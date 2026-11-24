@@ -1360,20 +1360,18 @@ static bool collect_subscription_cb(HashKey *key, void *value, void *user_data) 
  * This prevents the race where nostr_subscription_fire() blocks for up to 3 seconds
  * inside go_select_timeout while holding a bucket lock, during which another thread
  * could free the subscription through a different bucket's lock path. */
-static void relay_refire_subscriptions(NostrRelay *r) {
-    if (!r || !r->subscriptions) return;
-
-    static int debug = -1;
-    if (debug < 0) debug = getenv("NOSTR_DEBUG_LIFECYCLE") ? 1 : 0;
-
-    /* Phase 1: Snapshot - collect subscription pointers under bucket locks.
-     * The callback is fast (just stores pointers), so locks are held briefly. */
+static RefireCollector relay_snapshot_subscriptions(NostrRelay *r) {
     RefireCollector collector = {0};
+    if (!r->subscriptions) return collector;
     collector.capacity = 32;
     collector.entries = calloc(collector.capacity, sizeof(RefireEntry));
-    if (!collector.entries) return;
+    if (collector.entries)
+        go_hash_map_for_each_with_data(r->subscriptions, collect_subscription_cb, &collector);
+    return collector;
+}
 
-    go_hash_map_for_each_with_data(r->subscriptions, collect_subscription_cb, &collector);
+static void relay_refire_subscriptions(NostrRelay *r, RefireCollector collector) {
+    bool debug = getenv("NOSTR_DEBUG_LIFECYCLE") != NULL;
 
     /* Phase 2: Fire - iterate snapshot WITHOUT holding any hash map locks.
      * Each entry holds a ref (taken in Phase 1) that keeps the subscription
@@ -1504,7 +1502,11 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
     NostrRelayConnectionState old_state = r->priv->connection_state;
     NostrRelayConnectionState new_state = ready ? NOSTR_RELAY_STATE_CONNECTED
                                                 : NOSTR_RELAY_STATE_DISCONNECTED;
+    RefireCollector refires = {0};
     if (ready) {
+        /* CONNECTED wakes the pool to send parked REQs. Those new
+         * subscriptions must not be included in this reconnect's refires. */
+        refires = relay_snapshot_subscriptions(r);
         r->priv->reconnect_attempt = 0;
         r->priv->backoff_ms = 0;
     } else if (current) {
@@ -1528,7 +1530,7 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
     }
 
     /* Re-fire active subscriptions */
-    relay_refire_subscriptions(r);
+    relay_refire_subscriptions(r, refires);
 
     nostr_metric_counter_add("relay_reconnect_success", 1);
     fprintf(stderr, "[RECONNECT] Successfully reconnected to %s\n", r->url ? r->url : "unknown");

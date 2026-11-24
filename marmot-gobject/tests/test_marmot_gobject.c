@@ -1364,6 +1364,23 @@ test_client_signal_handler_may_reenter(void)
     g_object_unref(member_store);
 }
 
+typedef struct {
+    GMutex mutex;
+    GCond changed;
+    gboolean finalized;
+} ClientLifetime;
+
+static void
+client_finalized(gpointer data, GObject *object)
+{
+    (void)object;
+    ClientLifetime *lifetime = data;
+    g_mutex_lock(&lifetime->mutex);
+    lifetime->finalized = TRUE;
+    g_cond_signal(&lifetime->changed);
+    g_mutex_unlock(&lifetime->mutex);
+}
+
 /* Destroy a production signal source without dispatching its context. */
 static void
 test_client_signal_source_destroyed(void)
@@ -1390,12 +1407,24 @@ test_client_signal_source_destroyed(void)
     GSource *source = g_main_context_find_source_by_id(context, 1);
     g_assert_nonnull(source);
     g_assert_cmpstr(g_source_get_name(source), ==, "[marmot-gobject] client signal");
-    gpointer weak_client = client;
-    g_object_add_weak_pointer(G_OBJECT(client), &weak_client);
+    ClientLifetime lifetime = {0};
+    g_mutex_init(&lifetime.mutex);
+    g_cond_init(&lifetime.changed);
+    g_object_weak_ref(G_OBJECT(client), client_finalized, &lifetime);
     g_object_unref(client);
-    g_assert_nonnull(weak_client); /* the undispatched source owns it */
+    g_mutex_lock(&lifetime.mutex);
+    g_assert_false(lifetime.finalized); /* the undispatched source owns it */
+    g_mutex_unlock(&lifetime.mutex);
     g_source_destroy(source);
-    g_assert_null(weak_client);
+    /* GTask can deliver the callback before its worker drops the last task
+     * reference. Wait for the client's weak notification, not that callback. */
+    gint64 deadline = g_get_monotonic_time() + 5 * G_TIME_SPAN_SECOND;
+    g_mutex_lock(&lifetime.mutex);
+    while (!lifetime.finalized && g_cond_wait_until(&lifetime.changed, &lifetime.mutex, deadline)) { }
+    g_assert_true(lifetime.finalized);
+    g_mutex_unlock(&lifetime.mutex);
+    g_cond_clear(&lifetime.changed);
+    g_mutex_clear(&lifetime.mutex);
     g_object_unref(group);
     g_strfreev(welcomes);
     g_main_context_unref(context);
