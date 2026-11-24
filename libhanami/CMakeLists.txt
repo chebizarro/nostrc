@@ -364,6 +364,7 @@ if(BUILD_TESTING)
   endif()
 
   add_executable(test-hanami-integration tests/test_hanami_integration.c)
+  target_include_directories(test-hanami-integration PRIVATE "${HANAMI_VERSION_HEADER_DIR}")
   target_compile_features(test-hanami-integration PRIVATE c_std_11)
   target_link_libraries(test-hanami-integration PRIVATE hanami nostr nip34 PkgConfig::LIBGIT2 PkgConfig::SQLITE3)
   add_test(NAME test-hanami-integration
