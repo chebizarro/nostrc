@@ -234,9 +234,21 @@ int main(int argc, char **argv)
     publish_state(ctx, new_oid, 0);
     expect_fetch(ctx, HANAMI_ERR_NOT_FOUND, NULL);
     hanami_nostr_ctx_free(ctx);
-    ctx = context("invalid://fixture", "network");
+    /* Reject a real loopback WebSocket upgrade; do not depend on DNS
+     * search domains or how the transport handles an unknown URI scheme. */
+    ctx = context(argv[1], "unavailable");
     expect_fetch(ctx, HANAMI_ERR_NETWORK, NULL);
-    assert(hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL) == HANAMI_ERR_NETWORK);
+    hanami_error_t unavailable = hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL);
+    if (unavailable != HANAMI_ERR_NETWORK)
+        fprintf(stderr, "publish to rejected upgrade returned %d, expected network error\n", unavailable);
+    assert(unavailable == HANAMI_ERR_NETWORK);
+    hanami_nostr_ctx_free(ctx);
+    ctx = context(argv[1], "pending-upgrade");
+    /* A pending upgrade is not a missing NIP-01 OK. */
+    unavailable = hanami_nostr_publish_state(ctx, "repo", &ref, 1, NULL);
+    if (unavailable != HANAMI_ERR_NETWORK)
+        fprintf(stderr, "publish with pending upgrade returned %d, expected network error\n", unavailable);
+    assert(unavailable == HANAMI_ERR_NETWORK);
     hanami_nostr_ctx_free(ctx);
     ctx = context(argv[1], "no-eose");
     publish_state(ctx, new_oid, 0);

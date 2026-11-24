@@ -368,6 +368,17 @@ hanami_error_t hanami_nostr_publish_event(hanami_nostr_ctx_t *ctx,
         for (size_t i = 0; i < ctx->pool->relay_count; i++) {
             NostrRelay *relay = ctx->pool->relays[i];
             if (!nostr_relay_is_connected(relay)) continue;
+            /* An allocated WSI can still be handshaking. Do not start the
+             * EVENT/OK exchange on a dial that has not upgraded. Admission
+             * and the first publication share the existing per-relay budget. */
+            uint64_t deadline = monotonic_ms() + RELAY_TIMEOUT_MS;
+            if (!nostr_relay_wait_established(relay, RELAY_TIMEOUT_MS, NULL)) continue;
+            uint64_t now = monotonic_ms();
+            if (now >= deadline) {
+                err = HANAMI_ERR_TIMEOUT;
+                continue;
+            }
+            uint64_t publish_budget = deadline - now;
             bool authenticated = false;
             if (has_pending_challenge(ctx, relay)) {
                 err = authenticate_relay(ctx, relay);
@@ -375,7 +386,7 @@ hanami_error_t hanami_nostr_publish_event(hanami_nostr_ctx_t *ctx,
                 if (err != HANAMI_OK) continue;
             }
             Error *failure = NULL;
-            bool accepted = nostr_relay_publish_and_wait(relay, event, RELAY_TIMEOUT_MS, &failure);
+            bool accepted = nostr_relay_publish_and_wait(relay, event, publish_budget, &failure);
             bool auth_refusal = failure && failure->message &&
                                 strstr(failure->message, "auth-required:");
             if (!accepted && !authenticated &&
