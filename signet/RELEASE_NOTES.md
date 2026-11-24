@@ -23,6 +23,8 @@
 
 - Provisioners can grant D-Bus `GetToken` and `GetSession` per agent through
   `set-policy`; wildcard policies do not grant either method.
+- Provisioners can grant the five D-Bus passkey methods individually per agent
+  through `set-policy`, including separate export and import grants.
 
 This release also includes replay, credential, backup, HTTP resource-bound and
 secret/event ownership corrections from the quick-fix integration. No published

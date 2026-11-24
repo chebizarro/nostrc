@@ -62,6 +62,11 @@ if not get_option('signet_enable_test_hooks')
   test('dbus_credential_grants', find_program('python3'),
     args: [files('test_dbus_credential_grants.py'), signetd_exe, credential_grants_fixture],
     timeout: 90)
+  if get_option('signet_enable_passkeys')
+    test('dbus_passkey_grants', find_program('python3'),
+      args: [files('test_dbus_credential_grants.py'), signetd_exe, credential_grants_fixture, '--passkeys'],
+      timeout: 90)
+  endif
 endif
 # W3/W4 deployment packaging and explicitly enabled live drills (separate ownership).
 nip46_reference_client = executable('nip46_reference_client',

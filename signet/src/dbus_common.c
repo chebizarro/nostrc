@@ -414,6 +414,36 @@ static void handle_get_token(const SignetDbusDispatchContext *ctx,
 }
 
 #ifdef SIGNET_ENABLE_PASSKEYS
+static bool authorize_passkey(const SignetDbusDispatchContext *ctx,
+                              const char *agent_id, const char *method,
+                              GDBusMethodInvocation *invocation) {
+  if (!ctx->store) {
+    g_dbus_method_invocation_return_dbus_error(invocation,
+        "net.signet.Error.NotConfigured", "Passkeys require a configured store");
+    return false;
+  }
+  SignetCredentialAccessContext acc = credential_access_context(ctx);
+  SignetCredentialAccessRequest req = {
+    .agent_id = agent_id,
+    .capability = signet_method_to_capability(method),
+  };
+  if (!req.capability) {
+    g_dbus_method_invocation_return_dbus_error(invocation,
+        "net.signet.Error.UnknownMethod", "Unknown passkeys method");
+    return false;
+  }
+  SignetCredAccessStatus st = signet_credential_access_authorize(&acc, &req, signet_now_unix());
+  if (st == SIGNET_CRED_ACCESS_OK) return true;
+
+  bool error = st == SIGNET_CRED_ACCESS_ERROR;
+  audit_key_access(ctx, agent_id, method, error ? "error" : "deny",
+                   signet_cred_access_reason(st));
+  g_dbus_method_invocation_return_dbus_error(invocation,
+      error ? "net.signet.Error.Internal" : "net.signet.Error.CapabilityDenied",
+      error ? "Passkey authorization failed" : "Operation not permitted by policy");
+  return false;
+}
+
 static void handle_passkey_error(GDBusMethodInvocation *invocation,
                                  SignetFidoStatus status,
                                  const SignetFidoError *err) {
@@ -613,7 +643,12 @@ void signet_dbus_dispatch_authenticated(const SignetDbusDispatchContext *ctx,
    * first and the rate bucket is charged just once. */
   bool credential_read = strcmp(interface_name, "net.signet.Credentials") == 0 &&
       (strcmp(method_name, "GetToken") == 0 || strcmp(method_name, "GetSession") == 0);
-  if (!credential_read && ctx->policy &&
+  bool passkey = strcmp(interface_name, "net.signet.Passkeys") == 0;
+  bool passkey_authorizes = false;
+#ifdef SIGNET_ENABLE_PASSKEYS
+  passkey_authorizes = passkey;
+#endif
+  if (!credential_read && !passkey_authorizes && ctx->policy &&
       !signet_policy_evaluate(ctx->policy, agent_id, method_name, -1)) {
     g_dbus_method_invocation_return_dbus_error(
         invocation, "net.signet.Error.CapabilityDenied",
@@ -645,7 +680,10 @@ void signet_dbus_dispatch_authenticated(const SignetDbusDispatchContext *ctx,
       g_dbus_method_invocation_return_dbus_error(
           invocation, "net.signet.Error.UnknownMethod", "Unknown credentials method");
     }
-  } else if (strcmp(interface_name, "net.signet.Passkeys") == 0) {
+  } else if (passkey) {
+#ifdef SIGNET_ENABLE_PASSKEYS
+    if (!authorize_passkey(ctx, agent_id, method_name, invocation)) return;
+#endif
     if (strcmp(method_name, "GetInfo") == 0) {
       handle_passkey_get_info(ctx, agent_id, invocation);
     } else if (strcmp(method_name, "MakeCredential") == 0) {

@@ -87,6 +87,16 @@ if (NOT SIGNET_ENABLE_TEST_HOOKS)
     nostrc_describe_test(dbus_credential_grants OWNER signet TARGETS signetd credential_grants_fixture
       INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_dbus_credential_grants.py")
   endif()
+  if (SIGNET_ENABLE_PASSKEYS)
+    add_test(NAME dbus_passkey_grants COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test_dbus_credential_grants.py
+      $<TARGET_FILE:signetd> $<TARGET_FILE:credential_grants_fixture> --passkeys)
+    set_tests_properties(dbus_passkey_grants PROPERTIES TIMEOUT 90)
+    if (COMMAND nostrc_describe_test)
+      nostrc_describe_test(dbus_passkey_grants OWNER signet TARGETS signetd credential_grants_fixture
+        INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_dbus_credential_grants.py")
+    endif()
+  endif()
 endif()
 signet_add_test_executable(test_replay_cache)
 signet_add_test_executable(test_ssh_agent_wire)
