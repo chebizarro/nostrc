@@ -49,10 +49,24 @@ int main(int argc, char **argv) {
       G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT | G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
       NULL, NULL, &error);
   if (!accessibility) g_error("private accessibility connection: %s", error->message);
+  /* Concurrent cases share Xvfb. Without an explicit address the activated
+   * registry can read another launcher's AT_SPI_BUS property from X11. Pin
+   * activation on this private bus, not just the test child's environment. */
+  GVariantBuilder activation_env;
+  g_variant_builder_init(&activation_env, G_VARIANT_TYPE("a{ss}"));
+  g_variant_builder_add(&activation_env, "{ss}", "AT_SPI_BUS_ADDRESS", address);
+  g_autoptr(GVariant) updated = g_dbus_connection_call_sync(accessibility, "org.freedesktop.DBus",
+      "/org/freedesktop/DBus", "org.freedesktop.DBus", "UpdateActivationEnvironment",
+      g_variant_new("(a{ss})", &activation_env), G_VARIANT_TYPE_UNIT,
+      G_DBUS_CALL_FLAGS_NONE, 20000, NULL, &error);
+  if (!updated) g_error("private accessibility activation environment: %s", error->message);
   g_autoptr(GVariant) children = g_dbus_connection_call_sync(accessibility, "org.a11y.atspi.Registry",
       "/org/a11y/atspi/accessible/root", "org.a11y.atspi.Accessible", "GetChildren", NULL,
       G_VARIANT_TYPE("(a(so))"), G_DBUS_CALL_FLAGS_NONE, 20000, NULL, &error);
-  if (!children) g_error("private accessibility registry: %s", error->message);
+  if (!children) {
+    nostrc_test_bus_dump_log(bus, "accessibility.log");
+    g_error("private accessibility registry: %s", error->message);
+  }
   if (!g_dbus_connection_close_sync(accessibility, NULL, &error))
     g_error("private accessibility readiness connection close: %s", error->message);
   g_setenv("AT_SPI_BUS_ADDRESS", address, TRUE);
