@@ -12,6 +12,7 @@
 #include <glib.h>
 #include <json-glib/json-glib.h>
 #include <sodium.h>
+#include <sqlite3.h>
 #include <string.h>
 
 #ifdef SIGNET_HAVE_CURL
@@ -102,8 +103,26 @@ static bool parse_response(const CurlBuffer *buf, SignetSessionResult *result) {
   return true;
 }
 
-static bool exchange(const SignetSecretRecord *rec, SignetSessionResult *result) {
-  if (!secure_endpoint(rec->service_url) || !rec->payload_len) return false;
+static int exchange_progress(void *data, curl_off_t dtotal, curl_off_t dnow,
+                             curl_off_t utotal, curl_off_t unow) {
+  (void)dtotal; (void)dnow; (void)utotal; (void)unow;
+  return data && g_cancellable_is_cancelled(data);
+}
+
+static bool curl_ready(void) {
+  /* Don't let simultaneous first exchanges race libcurl's lazy initialization.
+   * The process also uses libcurl outside this broker; retain its global state. */
+  static gsize state;
+  if (g_once_init_enter(&state)) {
+    CURLcode rc = curl_global_init(CURL_GLOBAL_DEFAULT);
+    g_once_init_leave(&state, rc == CURLE_OK ? 1 : 2);
+  }
+  return state == 1;
+}
+
+static bool exchange(const SignetSecretRecord *rec, GCancellable *cancel,
+                     SignetSessionResult *result) {
+  if (!secure_endpoint(rec->service_url) || !rec->payload_len || !curl_ready()) return false;
   CURL *curl = curl_easy_init();
   if (!curl) return false;
   bool https = g_str_has_prefix(rec->service_url, "https://");
@@ -135,6 +154,9 @@ static bool exchange(const SignetSecretRecord *rec, SignetSessionResult *result)
       curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L) == CURLE_OK &&
       curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L) == CURLE_OK &&
       curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L) == CURLE_OK &&
+      curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L) == CURLE_OK &&
+      curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, exchange_progress) == CURLE_OK &&
+      curl_easy_setopt(curl, CURLOPT_XFERINFODATA, cancel) == CURLE_OK &&
       curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body) == CURLE_OK &&
       curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers) == CURLE_OK &&
       curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_response) == CURLE_OK &&
@@ -150,32 +172,39 @@ static bool exchange(const SignetSecretRecord *rec, SignetSessionResult *result)
 }
 #endif /* SIGNET_HAVE_CURL: without libcurl, fail closed. */
 
-SignetSessionStatus signet_session_broker_get_for_transport(
+SignetCredAccessStatus signet_session_broker_prepare(
     const SignetCredentialAccessContext *ctx, const SignetSessionRequest *req,
-    const char *transport, SignetSessionResult *result,
-    SignetCredAccessStatus *access_status) {
-  memset(result, 0, sizeof(*result));
+    const char *transport, SignetCredentialAccessGrant *grant) {
   SignetCredentialAccessRequest access = {
     .agent_id = req->agent_id,
     .credential_id = req->credential_id,
     .capability = SIGNET_CAP_CREDENTIAL_GET_SESSION,
     .transport = transport,
   };
-  SignetCredentialAccessGrant grant;
-  *access_status = signet_credential_access_acquire_session(
-      ctx, &access, req->service_url, signet_now_unix(), &grant);
-  if (*access_status != SIGNET_CRED_ACCESS_OK) return SIGNET_SESSION_ACCESS_FAILED;
+  return signet_credential_access_acquire_session(
+      ctx, &access, req->service_url, signet_now_unix(), grant);
+}
 
-  g_autofree char *credential_id = g_strdup(grant.record.id);
+SignetSessionStatus signet_session_broker_exchange(
+    SignetStore *store, const char *agent_id, const char *transport,
+    SignetCredentialAccessGrant *grant, GCancellable *cancel,
+    SignetSessionResult *result) {
+  memset(result, 0, sizeof(*result));
+  g_autofree char *credential_id = g_steal_pointer(&grant->record.id);
+  g_autofree char *endpoint = NULL;
+  int version = grant->record.active_version;
+  int64_t created_at = grant->record.created_at;
   bool exchanged = false;
 #ifdef SIGNET_HAVE_CURL
-  exchanged = exchange(&grant.record, result);
+  if (!cancel || !g_cancellable_is_cancelled(cancel))
+    exchanged = exchange(&grant->record, cancel, result);
 #endif
-  signet_credential_access_grant_clear(&grant);
+  endpoint = g_steal_pointer(&grant->record.service_url);
+  signet_credential_access_grant_clear(grant);
   int64_t now = signet_now_unix();
-  if (!exchanged || result->expires_at <= now) {
+  if (!exchanged || result->expires_at <= now || (cancel && g_cancellable_is_cancelled(cancel))) {
     signet_session_result_clear(result);
-    (void)signet_audit_log_append(ctx->store, now, req->agent_id, "session_issue",
+    (void)signet_audit_log_append(store, now, agent_id, "session_issue",
         credential_id, transport, "{\"decision\":\"error\",\"reason\":\"exchange_failed\"}");
     return SIGNET_SESSION_EXCHANGE_FAILED;
   }
@@ -190,18 +219,30 @@ SignetSessionStatus signet_session_broker_get_for_transport(
                      strlen(result->session_token));
   sodium_bin2hex(hash, sizeof(hash), digest, sizeof(digest));
   g_autofree char *meta = g_strdup_printf("{\"session_token_hash\":\"%s\"}", hash);
-  if (signet_store_issue_lease(ctx->store, lease_id, credential_id, req->agent_id,
-                               now, result->expires_at, meta) != 0) {
-    (void)signet_audit_log_append(ctx->store, now, req->agent_id, "session_issue",
+  /* Revocation/rotation can run while the service responds. Recheck custody
+   * and issue under the store mutex so a revoked credential gets no new lease. */
+  sqlite3_mutex *mu = sqlite3_db_mutex(signet_store_get_db(store));
+  sqlite3_mutex_enter(mu);
+  SignetSecretMetadata current = {0};
+  bool active = signet_store_get_secret_metadata(store, credential_id, now, &current) == SIGNET_SECRET_OK &&
+      current.status == SIGNET_SECRET_STATUS_ACTIVE && current.active_version == version &&
+      current.created_at == created_at && g_strcmp0(current.agent_id, agent_id) == 0 &&
+      g_strcmp0(current.service_url, endpoint) == 0;
+  signet_secret_metadata_clear(&current);
+  int rc = active ? signet_store_issue_lease(store, lease_id, credential_id, agent_id,
+                                              now, result->expires_at, meta) : -1;
+  sqlite3_mutex_leave(mu);
+  if (rc != 0) {
+    (void)signet_audit_log_append(store, now, agent_id, "session_issue",
         credential_id, transport, "{\"decision\":\"error\",\"reason\":\"lease_persist_failed\"}");
     signet_session_result_clear(result);
     return SIGNET_SESSION_STORE_FAILED;
   }
   g_autofree char *detail = g_strdup_printf(
       "{\"decision\":\"allow\",\"reason\":\"ok\",\"lease_id\":\"%s\"}", lease_id);
-  if (signet_audit_log_append(ctx->store, now, req->agent_id, "session_issue",
+  if (signet_audit_log_append(store, now, agent_id, "session_issue",
                                credential_id, transport, detail) != 0) {
-    (void)signet_store_revoke_lease(ctx->store, lease_id, now);
+    (void)signet_store_revoke_lease(store, lease_id, now);
     signet_session_result_clear(result);
     return SIGNET_SESSION_STORE_FAILED;
   }
@@ -216,9 +257,13 @@ int signet_session_broker_get(SignetStore *store, SignetPolicyRegistry *policy,
   SignetCredentialAccessContext ctx = {
     .store = store, .policy = policy, .deny = deny, .logger = audit,
   };
-  SignetCredAccessStatus access_status;
-  return signet_session_broker_get_for_transport(&ctx, req, "session_broker", result,
-      &access_status) == SIGNET_SESSION_OK ? 0 : -1;
+  memset(result, 0, sizeof(*result));
+  SignetCredentialAccessGrant grant;
+  if (signet_session_broker_prepare(&ctx, req, "session_broker", &grant) !=
+      SIGNET_CRED_ACCESS_OK)
+    return -1;
+  return signet_session_broker_exchange(store, req->agent_id, "session_broker",
+      &grant, NULL, result) == SIGNET_SESSION_OK ? 0 : -1;
 }
 
 void signet_session_result_clear(SignetSessionResult *result) {

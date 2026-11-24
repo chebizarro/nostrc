@@ -108,6 +108,7 @@ struct SignetDbusServer {
   SignetUidResolver uid_resolver;
   void *uid_resolver_data;
   bool use_system_bus;
+  GSList *session_jobs;
 
   guint bus_owner_id;
   GDBusConnection *conn;
@@ -175,6 +176,7 @@ static void signet_dbus_handle_method(GDBusConnection *connection,
     .fido = ds->fido,
     .deny = ds->deny,
     .transport = "dbus_unix",
+    .session_jobs = &ds->session_jobs,
   };
   signet_dbus_dispatch_authenticated(&ctx, agent_id, interface_name,
                                       method_name, parameters, invocation);
@@ -329,4 +331,5 @@ void signet_dbus_server_stop(SignetDbusServer *ds) {
     g_bus_unown_name(ds->bus_owner_id);
     ds->bus_owner_id = 0;
   }
+  signet_dbus_session_jobs_stop(&ds->session_jobs);
 }

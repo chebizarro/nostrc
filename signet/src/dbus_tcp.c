@@ -137,6 +137,7 @@ struct SignetDbusTcpServer {
   struct SignetDenyList *deny;
   const SignetFleetRegistry *fleet;
 
+  GSList *session_jobs;
   GDBusServer *server;
   GDBusNodeInfo *node_info;
   GHashTable *conn_states;  /* GDBusConnection* → TcpConnState* */
@@ -264,6 +265,7 @@ static void signet_tcp_handle_method(GDBusConnection *connection,
     .fido = ds->fido,
     .deny = ds->deny,
     .transport = "dbus_tcp",
+    .session_jobs = &ds->session_jobs,
   };
   signet_dbus_dispatch_authenticated(&ctx, agent_id, interface_name,
                                       method_name, parameters, invocation);
@@ -433,6 +435,7 @@ void signet_dbus_tcp_server_stop(SignetDbusTcpServer *ds) {
   g_dbus_server_stop(ds->server);
   g_object_unref(ds->server);
   ds->server = NULL;
+  signet_dbus_session_jobs_stop(&ds->session_jobs);
   g_mutex_lock(&ds->mu);
   GList *connections = g_hash_table_get_keys(ds->conn_states);
   for (GList *it = connections; it; it = it->next) g_object_ref(it->data);

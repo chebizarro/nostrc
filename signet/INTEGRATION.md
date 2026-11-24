@@ -319,8 +319,10 @@ provisioned `http://127.0.0.1` endpoint with an optional port is also accepted;
 it is a numeric loopback address and cannot be resolved to another host.
 Signet does not use proxies or follow redirects. Connection and total transfer
 timeouts are 10 and 30 seconds, respectively; the response body limit is 64 KiB.
-The exchange currently runs in the D-Bus dispatch context, so provisioners
-should use responsive services: a slow exchange can delay other requests.
+Signet runs the exchanges off the D-Bus dispatch context. Each D-Bus
+transport admits two active exchanges and does not queue additional ones;
+`net.signet.Error.SessionExchangeBusy` indicates that both slots are in use.
+Stopping the transport cancels and drains its active exchanges.
 
 - Signet sends `POST` with `Content-Type: application/json` and
   `Accept: application/json`. The body is `{"credential":"<base64>"}`, where

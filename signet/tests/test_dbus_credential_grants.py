@@ -35,6 +35,7 @@ RESPONSES = {
     '/bad-expiry': {'session_token': SERVICE_TOKEN, 'expires_at': '2100000000'},
     '/overflow': {'session_token': SERVICE_TOKEN, 'expires_in': 2**63 - 1},
 }
+SLOW_PATHS = ('/slow-first', '/slow-stop')
 FAILURE_PATHS = ('/failed', '/redirect', '/oversize', '/malformed', '/nul',
                  '/expired', '/bad-expiry', '/overflow')
 
@@ -57,12 +58,20 @@ class ExchangeHandler(BaseHTTPRequestHandler):
             payload += b' ' * (64 * 1024)  # valid JSON if read without the limit
         elif self.path in RESPONSES:
             payload = json.dumps(RESPONSES[self.path]).encode()
+        if self.path in SLOW_PATHS:
+            self.server.entered.put(self.path)
+            if not self.server.release[self.path].wait(timeout=25):
+                return
         self.send_response(status)
         self.send_header('Content-Length', str(len(payload)))
         for name, value in headers.items():
             self.send_header(name, value)
-        self.end_headers()
-        self.wfile.write(payload)
+        try:
+            self.end_headers()
+            self.wfile.write(payload)
+        except (BrokenPipeError, ConnectionResetError):
+            if self.path != '/slow-stop':
+                raise
 
 
 def exercise(daemon, fixture, root, address, agent, methods, service, curl, deny=False):
@@ -82,7 +91,7 @@ def exercise(daemon, fixture, root, address, agent, methods, service, curl, deny
     insecure = f'http://localhost:{service.server_port}/insecure'
     matched = endpoint + '/session'
     extra = ['', insecure, endpoint + '/ambiguous', endpoint + '/ambiguous']
-    extra += [endpoint + path for path in (*FAILURE_PATHS, '/ttl', '/default-expiry')]
+    extra += [endpoint + path for path in (*FAILURE_PATHS, *SLOW_PATHS, '/ttl', '/default-expiry')]
     cred_id = subprocess.check_output(
         [fixture, db, agent, 'deny' if deny else 'allow', matched, *extra],
         env=env, text=True, timeout=10).strip()
@@ -159,9 +168,12 @@ def exercise(daemon, fixture, root, address, agent, methods, service, curl, deny
         p.send_signal(signal.SIGHUP)
         wait_for_audit(action='config_reload')
 
-    def call(method, arg, expected_error=None):
-        result = subprocess.run(BASE + ['--method', f'net.signet.Credentials.{method}', arg],
-                                env=env, text=True, capture_output=True, timeout=10)
+    def command(method, arg):
+        return BASE + ['--method', f'net.signet.Credentials.{method}', arg]
+
+    def call(method, arg, expected_error=None, *, timeout=10):
+        result = subprocess.run(command(method, arg), env=env, text=True,
+                                capture_output=True, timeout=timeout)
         if expected_error:
             assert result.returncode and f'net.signet.Error.{expected_error}:' in result.stderr, (
                 agent, method, result.stderr, result.returncode)
@@ -171,6 +183,36 @@ def exercise(daemon, fixture, root, address, agent, methods, service, curl, deny
             value = re.fullmatch(rf"\('{token}', (?:int64 )?(\d+)\)", result.stdout.strip())
             assert value and int(value[1]) > time.time(), (agent, method, 'invalid token or expiry')
             return int(value[1])
+
+    def exercise_slow_sessions():
+        clients = []
+        try:
+            for path in SLOW_PATHS:
+                client = subprocess.Popen(command('GetSession', endpoint + path), env=env,
+                                          text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                clients.append(client)
+                assert service.entered.get(timeout=6) == path
+            assert all(client.poll() is None for client in clients)
+            # Neither held request may serialize the other or block dispatch.
+            call('GetToken', cred_id, timeout=4)
+            call('GetSession', matched, 'SessionExchangeBusy', timeout=4)
+            service.release[SLOW_PATHS[0]].set()
+            stdout, stderr = clients[0].communicate(timeout=6)
+            assert clients[0].returncode == 0 and SERVICE_TOKEN in stdout, (stdout, stderr)
+
+            before_stop = leases()
+            p.terminate()
+            assert p.wait(timeout=8) == 0, 'daemon did not drain a held exchange cleanly'
+            _, stderr = clients[1].communicate(timeout=6)
+            assert clients[1].returncode != 0, stderr
+            assert leases() == before_stop, 'cancelled exchange persisted a lease'
+        finally:
+            for path in SLOW_PATHS:
+                service.release[path].set()
+            for client in clients:
+                if client.poll() is None:
+                    client.kill()
+                client.communicate(timeout=6)
 
     try:
         subprocess.run(['gdbus', 'wait', '--system', '--timeout', '10', BUS],
@@ -196,6 +238,10 @@ def exercise(daemon, fixture, root, address, agent, methods, service, curl, deny
             set_policy([])
             reload_policy()
             session(matched, DENIED)
+            if curl:
+                set_policy([TOKEN, SESSION])
+                reload_policy()
+                exercise_slow_sessions()
         else:
             call('GetToken', cred_id, 'NotFound' if deny else DENIED)
             session(matched, DENIED)
@@ -205,7 +251,8 @@ def exercise(daemon, fixture, root, address, agent, methods, service, curl, deny
         print(''.join(log), file=sys.stderr)
         raise
     finally:
-        p.terminate()
+        if p.poll() is None:
+            p.terminate()
         try:
             p.wait(timeout=8)
         except subprocess.TimeoutExpired:
@@ -221,6 +268,8 @@ def main():
     curl = sys.argv[3] == '1'
     with ThreadingHTTPServer(('127.0.0.1', 0), ExchangeHandler) as service:
         service.requests = []
+        service.entered = queue.Queue()
+        service.release = {path: threading.Event() for path in SLOW_PATHS}
         thread = threading.Thread(target=service.serve_forever, daemon=True)
         thread.start()
         try:
