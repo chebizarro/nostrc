@@ -1100,28 +1100,6 @@ int signet_policy_store_set_identity_json(SignetPolicyStore *ps,
   return 0;
 }
 
-int signet_policy_store_put(SignetPolicyStore *ps,
-                            const SignetPolicyKeyView *key,
-                            const SignetPolicyValue *val,
-                            int64_t now) {
-  (void)ps;
-  (void)key;
-  (void)val;
-  (void)now;
-  /* Phase 4: single-rule put not yet implemented; use set_identity_json. */
-  return -1;
-}
-
-int signet_policy_store_delete(SignetPolicyStore *ps,
-                               const SignetPolicyKeyView *key,
-                               int64_t now) {
-  (void)ps;
-  (void)key;
-  (void)now;
-  /* Phase 4: read-only file-backed store. */
-  return -1;
-}
-
 void signet_policy_store_free(SignetPolicyStore *ps) {
   if (!ps) return;
 

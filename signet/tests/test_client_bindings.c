@@ -45,9 +45,17 @@
 #include "signet/replay_cache.h"
 #include "signet/health_server.h" /* g_signet_metrics */
 
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+#include "signet/cascadia.h"
+#include "signet/relay_pool.h"
+#include <json-glib/json-glib.h>
+#include <nostr-event.h>
+#endif
 #include <nostr-keys.h>
 #include <nostr/nip44/nip44.h>
 
+#include "test_connect_admission.h"
+#include "test_deny_list_fixture.h"
 #include "test_check.h"
 #include <stdbool.h>
 #include <stdio.h>
@@ -123,7 +131,7 @@ static void test_store_binding_lifecycle(void) {
   gen_keypair_hex(a_sk, a_pk);
   uint8_t a_raw[32];
   CHECK(hex_to_bytes(a_sk, a_raw, 32) == 0);
-  CHECK(signet_store_put_agent_ex(st, "stew", a_raw, 32, NULL, a_pk,
+  CHECK(signet_store_put_agent_ex(st, "stew", a_raw, 32, "s1", a_pk,
                                    "adopted", 900) == 0);
 
   char c1_sk[65], c1_pk[65], c2_sk[65], c2_pk[65];
@@ -131,7 +139,7 @@ static void test_store_binding_lifecycle(void) {
   gen_keypair_hex(c2_sk, c2_pk);
 
   /* Bind + lookup; the pairing-secret hash is retrievable. */
-  CHECK(signet_store_bind_client(st, "stew", a_pk, c1_pk, "s1", 1000) == 0);
+  test_pair_store_client(st, "stew", "s1", c1_pk, 1000);
   char *agent = NULL;
   char *hash = NULL;
   CHECK(signet_store_lookup_client_binding(st, c1_pk, 1001, &agent, &hash) == 0);
@@ -149,7 +157,8 @@ static void test_store_binding_lifecycle(void) {
   /* Uppercase input canonicalizes: bind uppercase, lookup lowercase. */
   char upper[65];
   for (int i = 0; i < 65; i++) upper[i] = (char)g_ascii_toupper(c2_pk[i]);
-  CHECK(signet_store_bind_client(st, "stew", a_pk, upper, NULL, 1002) == 0);
+  CHECK(signet_store_reissue_connect_secret(st, "stew", "s2", 1002) == 0);
+  test_pair_store_client(st, "stew", "s2", upper, 1002);
   CHECK(signet_store_lookup_client_binding(st, c2_pk, 1003, &agent, NULL) == 0);
   CHECK(agent && strcmp(agent, "stew") == 0);
   g_free(agent);
@@ -160,7 +169,9 @@ static void test_store_binding_lifecycle(void) {
       "1111111111111111111111111111111111111111111111111111111111111111",
       1004, &agent, NULL) == 1);
   CHECK(signet_store_lookup_client_binding(st, "nope", 1005, &agent, NULL) == 1);
-  CHECK(signet_store_bind_client(st, "stew", a_pk, "nope", NULL, 1006) == -1);
+  CHECK(signet_store_reissue_connect_secret(st, "stew", "s3", 1006) == 0);
+  CHECK(test_admit_store_client(st, "s3", "nope", 1006, &agent) == -1);
+  CHECK(agent == NULL);
 
   /* Revoke: lookup misses; second revoke reports already-revoked. */
   CHECK(signet_store_revoke_client(st, c1_pk, 2000) == 0);
@@ -181,7 +192,7 @@ static void test_store_binding_lifecycle(void) {
   signet_client_binding_list_free(list, count);
 
   /* Re-bind clears revocation. */
-  CHECK(signet_store_bind_client(st, "stew", a_pk, c1_pk, NULL, 3000) == 0);
+  test_pair_store_client(st, "stew", "s3", c1_pk, 3000);
   CHECK(signet_store_lookup_client_binding(st, c1_pk, 3001, &agent, NULL) == 0);
   CHECK(agent && strcmp(agent, "stew") == 0);
   g_free(agent);
@@ -450,8 +461,9 @@ static void test_fenced_nip46_nip44_contract(void) {
                     "one-time-secret", "crypto-connect", now));
   char other_sk[65], other_pk[65];
   gen_keypair_hex(other_sk, other_pk);
-  CHECK(signet_store_bind_client(signet_key_store_get_store(f.ks),
-      "stew", f.stew_pk_hex, other_pk, NULL, now) == 0);
+  SignetStore *store = signet_key_store_get_store(f.ks);
+  CHECK(signet_store_reissue_connect_secret(store, "stew", "other-secret", now) == 0);
+  CHECK(n46_connect(&f, other_sk, other_pk, "other-secret", "other-connect", now));
   /* Never fenced: every bound client keeps working. */
   n46_crypto(&f, other_sk, other_pk, "nip44_encrypt", "secret", "crypto-unfenced", now);
   n46_expect_last_audit(&f, "nip44_encrypt", "ok", "ok");
@@ -492,7 +504,7 @@ static void test_fenced_nip46_nip44_contract(void) {
   g_free(req);
 
   char *ciphertext = NULL;
-  CHECK(signet_key_store_crypt_nip44(f.ks, "stew", f.client_pk_hex,
+  CHECK(test_crypt_bound_client(f.ks, "stew", f.client_pk_hex,
       "nip44_encrypt", f.stew_pk_hex, "unseal", &ciphertext) == 0);
   n46_crypto(&f, f.client_sk_hex, f.client_pk_hex, "nip44_decrypt", ciphertext,
              "crypto-decrypt", now);
@@ -510,7 +522,7 @@ static void test_fenced_nip46_nip44_contract(void) {
   n46_crypto(&f, other_sk, other_pk, "nip44_encrypt_b64", binary,
              "crypto-binary-non-owner", now);
   n46_expect_last_audit(&f, "nip44_encrypt_b64", "error", "crypto_failed");
-  CHECK(signet_key_store_crypt_nip44(f.ks, "stew", f.client_pk_hex,
+  CHECK(test_crypt_bound_client(f.ks, "stew", f.client_pk_hex,
       "nip44_encrypt_b64", f.stew_pk_hex, binary, &ciphertext) == 0);
   n46_crypto(&f, f.client_sk_hex, f.client_pk_hex, "nip44_decrypt", ciphertext,
              "crypto-binary-text", now);
@@ -525,7 +537,7 @@ static void test_fenced_nip46_nip44_contract(void) {
   g_free(binary);
   const uint8_t invalid_utf8[] = {0xff, 0xfe, 0x80};
   binary = g_base64_encode(invalid_utf8, sizeof(invalid_utf8));
-  CHECK(signet_key_store_crypt_nip44(f.ks, "stew", f.client_pk_hex,
+  CHECK(test_crypt_bound_client(f.ks, "stew", f.client_pk_hex,
       "nip44_encrypt_b64", f.stew_pk_hex, binary, &ciphertext) == 0);
   n46_crypto(&f, f.client_sk_hex, f.client_pk_hex, "nip44_decrypt", ciphertext,
              "crypto-invalid-utf8", now);
@@ -568,8 +580,9 @@ static void test_fenced_nip46_signing_contract(void) {
                     "one-time-secret", "lease-connect", now));
   char other_sk[65], other_pk[65];
   gen_keypair_hex(other_sk, other_pk);
-  CHECK(signet_store_bind_client(signet_key_store_get_store(f.ks),
-      "stew", f.stew_pk_hex, other_pk, NULL, now) == 0);
+  SignetStore *store = signet_key_store_get_store(f.ks);
+  CHECK(signet_store_reissue_connect_secret(store, "stew", "other-secret", now) == 0);
+  CHECK(n46_connect(&f, other_sk, other_pk, "other-secret", "other-connect", now));
   char *event = g_strdup_printf(
       "{\\\"kind\\\":1,\\\"created_at\\\":%lld,\\\"tags\\\":[],\\\"content\\\":\\\"lease test\\\"}",
       (long long)now);
@@ -638,7 +651,8 @@ static void test_pair_once_reconnect_freely(void) {
   g_free(bound);
   {
     char *agent = NULL;
-    CHECK(signet_key_store_consume_connect_secret(f.ks, "one-time-secret", now, &agent) == 1);
+    CHECK(test_admit_client(f.ks, "one-time-secret", f.client_pk_hex, now, &agent) == 1);
+    CHECK(agent == NULL);
   }
 
   /* Daemon restart: fresh server object, empty RAM sessions, same store.
@@ -754,13 +768,15 @@ static void test_suspended_agent_binding_refused(void) {
   CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e2", now) == true);
 
   /* Suspend. */
-  CHECK(signet_deny_list_add(deny, f.stew_pk_hex, "stew", "suspended", now) == 0);
+  deny = test_set_denied(st, deny, f.stew_pk_hex, "stew", now, true);
+  signet_nip46_server_set_deny_list(f.srv, deny);
   CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e3", now) == false);
   CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e4", now) == false);
   CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e5", now) == false);
 
   /* Lift. */
-  CHECK(signet_deny_list_remove(deny, f.stew_pk_hex) == 0);
+  deny = test_set_denied(st, deny, f.stew_pk_hex, NULL, now, false);
+  signet_nip46_server_set_deny_list(f.srv, deny);
   CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e6", now) == true);
 
   signet_nip46_server_set_deny_list(f.srv, NULL);
@@ -1455,7 +1471,8 @@ static void test_refused_pairing_preserves_secret(bool cache_only, bool policy_d
     n46_adopt(&f, "unlisted", sk, pk, "refused-secret");
     sodium_memzero(sk, sizeof(sk));
   } else {
-    CHECK(signet_deny_list_add(deny, f.stew_pk_hex, "stew", "suspended", now) == 0);
+    deny = test_set_denied(st, deny, f.stew_pk_hex, "stew", now, true);
+    signet_nip46_server_set_deny_list(f.srv, deny);
   }
   const char *secret = policy_deny ? "refused-secret" : "one-time-secret";
   CHECK(!n46_connect(&f, f.client_sk_hex, f.client_pk_hex, secret, "denied-pair", now));
@@ -1468,7 +1485,8 @@ static void test_refused_pairing_preserves_secret(bool cache_only, bool policy_d
     signet_agent_record_clear(&rec);
   }
   if (!policy_deny) {
-    CHECK(signet_deny_list_remove(deny, f.stew_pk_hex) == 0);
+    deny = test_set_denied(st, deny, f.stew_pk_hex, NULL, now, false);
+    signet_nip46_server_set_deny_list(f.srv, deny);
     /* Lifting suspension must not activate a binding left by the refusal. */
     CHECK(!n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "no-binding", now));
     CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, secret, "allowed-pair", now));
@@ -1476,9 +1494,7 @@ static void test_refused_pairing_preserves_secret(bool cache_only, bool policy_d
     /* The cache-only secret is also still pending: explicit lower-layer pairing
      * demonstrates preservation without changing the policy under test. */
     char *agent = NULL;
-    int rc = cache_only
-      ? signet_key_store_ephemeral_pair_client(f.ks, secret, f.client_pk_hex, &agent)
-      : signet_store_consume_connect_secret_and_bind(st, secret, f.client_pk_hex, now, &agent);
+    int rc = test_admit_client(f.ks, secret, f.client_pk_hex, now, &agent);
     CHECK(rc == 0 && g_strcmp0(agent, "unlisted") == 0); g_free(agent);
   }
   signet_nip46_server_set_deny_list(f.srv, NULL);
@@ -1564,7 +1580,114 @@ static void test_logout_and_switch_relays(bool cache_only) {
   printf("test_logout_and_switch_relays(%s): PASS\n", n46_mode_name(cache_only));
 }
 
-int main(void) {
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+typedef struct {
+  char *reply;
+  char *audit_content;
+} Nip46JsonCapture;
+
+static void capture_nip46_event(void *data, const char *wire) {
+  Nip46JsonCapture *out = data;
+  NostrEvent *evt = nostr_event_new();
+  CHECK(evt && nostr_event_deserialize_compact(evt, wire, NULL));
+  CHECK(nostr_event_check_signature(evt));
+  char **target = nostr_event_get_kind(evt) == CAS_AUDIT ? &out->audit_content : &out->reply;
+  CHECK(!*target);
+  *target = g_strdup(nostr_event_get_content(evt));
+  nostr_event_free(evt);
+}
+
+static void test_nip46_result_json(void) {
+  N46Fixture f;
+  n46_setup(&f);
+  const int64_t now = time(NULL);
+  const char *legacy_id = "old\"\\\001agent";
+  char agent_sk[65], agent_pk[65];
+  uint8_t raw[32];
+  gen_keypair_hex(agent_sk, agent_pk);
+  CHECK(hex_to_bytes(agent_sk, raw, sizeof(raw)) == 0);
+  sodium_memzero(agent_sk, sizeof(agent_sk));
+  CHECK(signet_store_put_agent_ex(signet_key_store_get_store(f.ks), legacy_id,
+                                    raw, sizeof(raw), NULL, agent_pk, "adopted", now) == 0);
+  sodium_memzero(raw, sizeof(raw));
+  signet_nip46_server_free(f.srv);
+  signet_key_store_free(f.ks);
+  n46_open_key_store(&f);
+  /* Pair through the production admission path; legacy IDs predate the
+   * creation alphabet but stay pairable. */
+  SignetStore *legacy_store = signet_key_store_get_store(f.ks);
+  CHECK(signet_store_reissue_connect_secret(legacy_store, legacy_id, "legacy-secret", now) == 0);
+  test_pair_store_client(legacy_store, legacy_id, "legacy-secret", f.client_pk_hex, now);
+  g_autofree char *err = NULL;
+  CHECK(signet_policy_store_set_identity_json(f.ps, legacy_id,
+      "{\"default\":\"allow\",\"allow_clients\":[\"*\"],\"allow_methods\":[\"*\"],\"allow_kinds\":[\"*\"]}",
+      now, &err) == 0);
+
+  /* A disconnected pool supplies the exact configured URL; the observer
+   * inspects the signed events that the real handler offers for publication. */
+  const char *url = "wss://relay.example/quote\"backslash\\";
+  SignetRelayPoolConfig rcfg = { .relays = &url, .n_relays = 1 };
+  SignetRelayPool *pool = signet_relay_pool_new(&rcfg);
+  CHECK(pool);
+  SignetNip46ServerConfig cfg = { .identity = "bunker" };
+  f.srv = signet_nip46_server_new(pool, f.pe, f.ks, f.replay, f.audit, &cfg);
+  CHECK(f.srv);
+  Nip46JsonCapture capture = {0};
+  signet_nip46_server_set_outgoing_event_hook(f.srv, capture_nip46_event, &capture);
+
+  CHECK(n46_send(&f, f.client_sk_hex, f.client_pk_hex,
+      "{\"id\":\"relay-list\",\"method\":\"get_relays\",\"params\":[]}", "relay-list", now));
+  CHECK(capture.reply && !capture.audit_content);
+  uint8_t pk[32];
+  CHECK(hex_to_bytes(f.client_sk_hex, raw, sizeof(raw)) == 0);
+  CHECK(hex_to_bytes(f.bunker_pk_hex, pk, sizeof(pk)) == 0);
+  uint8_t *plain = NULL;
+  size_t plain_len = 0;
+  CHECK(nostr_nip44_decrypt_v2(raw, pk, capture.reply, &plain, &plain_len) == 0);
+  sodium_memzero(raw, sizeof(raw));
+  g_clear_pointer(&capture.reply, g_free);
+  g_autoptr(JsonParser) parser = json_parser_new();
+  CHECK(json_parser_load_from_data(parser, (const char *)plain, plain_len, NULL));
+  free(plain);
+  JsonObject *reply = json_node_get_object(json_parser_get_root(parser));
+  CHECK(reply && g_strcmp0(json_object_get_string_member(reply, "id"), "relay-list") == 0);
+  JsonObject *result = json_object_get_object_member(reply, "result");
+  CHECK(result && json_object_get_size(result) == 1);
+  JsonObject *hints = json_object_get_object_member(result, url);
+  CHECK(hints && json_object_get_boolean_member(hints, "read") &&
+        json_object_get_boolean_member(hints, "write"));
+
+  g_autofree char *sign = g_strdup_printf(
+      "{\"id\":\"sign\",\"method\":\"sign_event\",\"params\":[\"{"
+      "\\\"kind\\\":1,\\\"created_at\\\":%" G_GINT64_FORMAT
+      ",\\\"tags\\\":[],\\\"content\\\":\\\"serialization check\\\"}\"]}", (gint64)now);
+  CHECK(n46_send(&f, f.client_sk_hex, f.client_pk_hex, sign, "sign-json", now));
+  CHECK(capture.reply && capture.audit_content);
+  CHECK(json_parser_load_from_data(parser, capture.audit_content, -1, NULL));
+  JsonObject *audit = json_node_get_object(json_parser_get_root(parser));
+  CHECK(audit && json_object_get_size(audit) == 4);
+  CHECK(g_strcmp0(json_object_get_string_member(audit, "agent"), legacy_id) == 0);
+  CHECK(g_strcmp0(json_object_get_string_member(audit, "domain"), "signet") == 0);
+  CHECK(g_strcmp0(json_object_get_string_member(audit, "type"), "sign") == 0);
+  CHECK(g_strcmp0(json_object_get_string_member(audit, "status"), "ok") == 0);
+  g_free(capture.reply);
+  g_free(capture.audit_content);
+  n46_teardown(&f);
+  signet_relay_pool_free(pool);
+}
+#endif
+
+int main(int argc, char **argv) {
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+  if (argc == 2 && strcmp(argv[1], "--result-json") == 0) {
+    CHECK(sodium_init() >= 0);
+    test_nip46_result_json();
+    return 0;
+  }
+#else
+  (void)argc;
+  (void)argv;
+#endif
   test_nip46_junk_replay();
   for (int mode = 0; mode <= 1; mode++) {
     test_refused_pairing_preserves_secret(mode != 0, false);

@@ -66,6 +66,11 @@ add_test(NAME challenge_transports COMMAND test_challenge_transports)
 signet_add_test_executable(test_nip5l_wire)
 add_test(NAME nip5l_wire COMMAND test_nip5l_wire)
 set_tests_properties(nip5l_wire PROPERTIES TIMEOUT 60)
+signet_add_test_executable(test_nip5l_wipe test_nip5l_wire.c
+  ../src/nip5l_transport.c ../src/secret_json.c)
+target_compile_definitions(test_nip5l_wipe PRIVATE SIGNET_ENABLE_TEST_HOOKS=1)
+add_test(NAME nip5l_wipe COMMAND test_nip5l_wipe)
+set_tests_properties(nip5l_wipe PROPERTIES TIMEOUT 60)
 signet_add_test_executable(test_nip5l_line_cap)
 add_test(NAME nip5l_line_cap COMMAND test_nip5l_line_cap)
 set_tests_properties(nip5l_line_cap PROPERTIES TIMEOUT 60)
@@ -75,6 +80,12 @@ add_test(NAME http_listen COMMAND test_http_listen)
 add_test(NAME http_routes COMMAND test_http_routes)
 add_test(NAME daemon_startup COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/test_daemon_startup.sh $<TARGET_FILE:signetd> $<TARGET_FILE:signetctl>)
 set_tests_properties(daemon_startup PROPERTIES TIMEOUT 120)
+signet_add_test_executable(test_dbus_tcp)
+add_test(NAME dbus_tcp_daemon COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_dbus_tcp_daemon.py
+  $<TARGET_FILE:signetd> $<TARGET_FILE:test_dbus_tcp>)
+set_tests_properties(dbus_tcp_daemon PROPERTIES TIMEOUT 120)
+add_test(NAME dbus_tcp_authorized COMMAND test_dbus_tcp)
+set_tests_properties(dbus_tcp_authorized PROPERTIES TIMEOUT 30)
 # Stock daemon: exercise the production [uid_map] resolver, not the fixture override.
 if (NOT SIGNET_ENABLE_TEST_HOOKS)
   signet_add_test_executable(credential_grants_fixture)
@@ -342,6 +353,13 @@ add_test(NAME db_migration COMMAND test_db_migration)
 add_test(NAME adopt_existing COMMAND test_adopt_existing)
 add_test(NAME reissue_connect COMMAND test_reissue_connect)
 add_test(NAME mgmt_replay COMMAND test_mgmt_replay)
+add_test(NAME mgmt_agent_id COMMAND test_mgmt_replay --agent-id)
+if (SIGNET_ENABLE_TEST_HOOKS)
+  target_compile_definitions(test_mgmt_replay PRIVATE SIGNET_ENABLE_TEST_HOOKS=1)
+  target_include_directories(test_mgmt_replay PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+  add_test(NAME mgmt_result_json COMMAND test_mgmt_replay --result-json)
+  add_test(NAME nip46_result_json COMMAND test_client_bindings --result-json)
+endif()
 add_test(NAME backend_admission COMMAND test_backend_admission)
 add_test(NAME pubkey_backfill COMMAND test_pubkey_backfill)
 add_test(NAME reissue_self_service COMMAND test_reissue_self_service)
@@ -414,6 +432,18 @@ if(COMMAND nostrc_describe_test)
 endif()
 # End management ingress boundary block.
 
+if (SIGNET_ENABLE_TEST_HOOKS)
+  add_test(NAME mgmt_delivery_json COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_mgmt_ingress_wire.py $<TARGET_FILE:test_mgmt_replay>
+    --delivery-json)
+  set_tests_properties(mgmt_delivery_json PROPERTIES TIMEOUT 30)
+  if(COMMAND nostrc_describe_test)
+    nostrc_describe_test(mgmt_delivery_json OWNER signet TARGETS test_mgmt_replay
+      INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_mgmt_ingress_wire.py"
+             "${CMAKE_CURRENT_SOURCE_DIR}/test_relay_pool_wire.py")
+  endif()
+endif()
+
 # A real daemon, ordinary local relay and crypto-only disposable peer. No hooks.
 add_test(NAME backend_admission_daemon COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/test_backend_admission_daemon.py
@@ -433,6 +463,16 @@ if(COMMAND nostrc_describe_test)
   nostrc_describe_test(memory_hardening_daemon OWNER signet TARGETS signetd
     INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_memory_hardening_daemon.py"
            "${CMAKE_CURRENT_SOURCE_DIR}/../src/memory_hardening.c")
+endif()
+
+signet_add_test_executable(lease_prune_fixture)
+add_test(NAME lease_prune_daemon COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_lease_prune_daemon.py
+  $<TARGET_FILE:signetd> $<TARGET_FILE:lease_prune_fixture>)
+set_tests_properties(lease_prune_daemon PROPERTIES TIMEOUT 45)
+if(COMMAND nostrc_describe_test)
+  nostrc_describe_test(lease_prune_daemon OWNER signet TARGETS signetd lease_prune_fixture
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_lease_prune_daemon.py")
 endif()
 
 # Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above

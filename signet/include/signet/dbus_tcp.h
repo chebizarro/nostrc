@@ -38,7 +38,7 @@ struct SignetPolicyStore;
 
 /**
  * SignetDbusTcpServerConfig:
- * @listen_address: e.g. "tcp:host=0.0.0.0,port=47472".
+ * @listen_address: e.g. "tcp:host=127.0.0.1,port=47472".
  * @keys: borrowed key-store dependency.
  * @policy: borrowed policy dependency.
  * @store: borrowed store dependency.
@@ -46,13 +46,15 @@ struct SignetPolicyStore;
  * @audit: borrowed audit logger dependency.
  * @fido: borrowed FIDO service dependency.
  * @fleet: borrowed fleet registry dependency.
+ * @allow_credentials: allow GetToken/GetSession over plaintext TCP (default false;
+ *   normal authorization still applies).
  *
  * Configuration for the D-Bus TCP transport.
  *
  * Since: 1.0
  */
 typedef struct {
-  const char *listen_address;  /* e.g. "tcp:host=0.0.0.0,port=47472" */
+  const char *listen_address;  /* e.g. "tcp:host=127.0.0.1,port=47472" */
   struct SignetKeyStore *keys;
   struct SignetPolicyRegistry *policy;
   struct SignetStore *store;
@@ -61,6 +63,7 @@ typedef struct {
   struct SignetFidoService *fido;
   struct SignetDenyList *deny;  /* live deny list (deny > capability) */
   const struct SignetFleetRegistry *fleet;
+  bool allow_credentials;
   struct SignetPolicyStore *identity_policy;  /* borrowed live policy store */
 } SignetDbusTcpServerConfig;
 

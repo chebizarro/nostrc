@@ -19,6 +19,7 @@
 #include <nostr/nip44/nip44.h>
 #include <nostr-event.h>
 
+#include "test_deny_list_fixture.h"
 #include "test_check.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -890,11 +891,9 @@ static void test_delivery_grant_requester_without_provisioner(void) {
   CHECK(AS_REQUESTER(SIGNET_MGMT_OP_INSPECT_CREDENTIAL, inspect, "g-d3b") == -1);
 
   grant_delivery(&f, "owner", requester_pk);
-  SignetDenyList *deny = signet_deny_list_new(store);
-  CHECK(deny);
+  SignetDenyList *deny = test_set_denied(store, NULL, requester_pk, NULL,
+                                         2000000000, true);
   signet_mgmt_handler_set_deny_list(f.mgmt, deny);
-  CHECK(signet_deny_list_add(deny, requester_pk, NULL, "test",
-                             2000000000) == 0);
   int leases_before = leases_for(store, granted);
   CHECK(AS_REQUESTER(SIGNET_MGMT_OP_DELIVER_CREDENTIAL, deliver, "g-d4") == -1);
   CHECK(AS_REQUESTER(SIGNET_MGMT_OP_INSPECT_CREDENTIAL, inspect, "g-d5") == -1);
@@ -903,10 +902,11 @@ static void test_delivery_grant_requester_without_provisioner(void) {
                      "g-d6") == -1);
   CHECK(leases_for(store, granted) == leases_before);
   CHECK(audit_rows_containing(store, "deny_listed") > 0);
-  CHECK(signet_deny_list_remove(deny, requester_pk) == 0);
+  deny = test_set_denied(store, deny, requester_pk, NULL, 2000000000, false);
+  signet_mgmt_handler_set_deny_list(f.mgmt, deny);
   /* A deny-listed owner is refused through the grant path as well. */
-  CHECK(signet_deny_list_add(deny, owner_pk, "owner", "test",
-                             2000000000) == 0);
+  deny = test_set_denied(store, deny, owner_pk, "owner", 2000000000, true);
+  signet_mgmt_handler_set_deny_list(f.mgmt, deny);
   int owner_denials = audit_rows_containing(store, "deny_listed");
   CHECK(AS_REQUESTER(SIGNET_MGMT_OP_DELIVER_CREDENTIAL, deliver, "g-o1") == -1);
   CHECK(AS_REQUESTER(SIGNET_MGMT_OP_INSPECT_CREDENTIAL, inspect, "g-o2") == -1);
@@ -915,7 +915,8 @@ static void test_delivery_grant_requester_without_provisioner(void) {
                      "g-o3") == -1);
   CHECK(audit_rows_containing(store, "deny_listed") == owner_denials + 3);
   CHECK(leases_for(store, granted) == leases_before);
-  CHECK(signet_deny_list_remove(deny, owner_pk) == 0);
+  deny = test_set_denied(store, deny, owner_pk, NULL, 2000000000, false);
+  signet_mgmt_handler_set_deny_list(f.mgmt, deny);
   CHECK(AS_REQUESTER(SIGNET_MGMT_OP_DELIVER_CREDENTIAL, deliver, "g-d7") == 0);
   signet_mgmt_handler_set_deny_list(f.mgmt, NULL);
   signet_deny_list_free(deny);

@@ -135,44 +135,6 @@ bool signet_policy_store_has_exact_method_grant(
     SignetPolicyStore *ps, const char *identity, const char *client_pubkey_hex,
     const char *method, int64_t now);
 
-/* Put/overwrite a policy value. Returns 0 on success, -1 on error.
- * NOTE: File backend is currently read-only and returns -1. */
-/**
- * signet_policy_store_put:
- * @ps: (not nullable): a #SignetPolicyStore
- * @key: (not nullable): key
- * @val: (not nullable): val
- * @now: current Unix time in seconds
- *
- * Put/overwrite a policy value. Returns 0 on success, -1 on error. NOTE: File backend is currently read-only and returns -1.
- *
- * Returns: operation-specific status or value as documented by the function
- *
- * Since: 1.0
- */
-int signet_policy_store_put(SignetPolicyStore *ps,
-                            const SignetPolicyKeyView *key,
-                            const SignetPolicyValue *val,
-                            int64_t now);
-
-/* Delete a policy entry. Returns 0 on success, 1 if missing, -1 on error.
- * NOTE: File backend is currently read-only and returns -1. */
-/**
- * signet_policy_store_delete:
- * @ps: (not nullable): a #SignetPolicyStore
- * @key: (not nullable): key
- * @now: current Unix time in seconds
- *
- * Delete a policy entry. Returns 0 on success, 1 if missing, -1 on error. NOTE: File backend is currently read-only and returns -1.
- *
- * Returns: operation-specific status or value as documented by the function
- *
- * Since: 1.0
- */
-int signet_policy_store_delete(SignetPolicyStore *ps,
-                               const SignetPolicyKeyView *key,
-                               int64_t now);
-
 /* Free the policy store. Safe on NULL. */
 /**
  * signet_policy_store_free:

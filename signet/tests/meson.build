@@ -36,6 +36,12 @@ test_nip5l_wire_exe = executable('test_nip5l_wire', 'test_nip5l_wire.c',
   link_with: signet_core, include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
 test('nip5l_wire', test_nip5l_wire_exe, timeout: 60)
+test_nip5l_wipe_exe = executable('test_nip5l_wipe', 'test_nip5l_wire.c',
+  '../src/nip5l_transport.c', '../src/secret_json.c',
+  link_with: signet_core, include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args + ['-DSIGNET_ENABLE_TEST_HOOKS=1'], install: false)
+test('nip5l_wipe', test_nip5l_wipe_exe, timeout: 60)
 test_nip5l_line_cap_exe = executable('test_nip5l_line_cap', 'test_nip5l_line_cap.c',
   link_with: signet_core, include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
@@ -54,6 +60,12 @@ test('memory_hardening_daemon', find_program('python3'),
   args: [files('test_memory_hardening_daemon.py'), signetd_exe], timeout: 30)
 test('daemon_startup', find_program('sh'),
   args: [files('test_daemon_startup.sh'), signetd_exe, signetctl_exe], timeout: 120)
+test_dbus_tcp_exe = executable('test_dbus_tcp', 'test_dbus_tcp.c',
+  link_with: signet_core, include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
+test('dbus_tcp_daemon', find_program('python3'),
+  args: [files('test_dbus_tcp_daemon.py'), signetd_exe, test_dbus_tcp_exe], timeout: 120)
+test('dbus_tcp_authorized', test_dbus_tcp_exe, timeout: 30)
 # Stock daemon: exercise the production [uid_map] resolver, not the fixture override.
 if not get_option('signet_enable_test_hooks')
   credential_grants_fixture = executable('credential_grants_fixture', 'credential_grants_fixture.c',
@@ -159,6 +171,12 @@ test_config_reload = executable('test_config_reload',
   c_args: signet_test_c_args,
   install: false,
 )
+
+lease_prune_fixture = executable('lease_prune_fixture', 'lease_prune_fixture.c',
+  link_with: signet_core, include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
+test('lease_prune_daemon', find_program('python3'),
+  args: [files('test_lease_prune_daemon.py'), signetd_exe, lease_prune_fixture], timeout: 45)
 
 test_relay_pool = executable('test_relay_pool_protocol',
   'test_relay_pool_protocol.c',
@@ -272,7 +290,7 @@ test_backend_admission = executable('test_backend_admission',
 test_mgmt_replay = executable('test_mgmt_replay',
   'test_mgmt_replay.c',
   link_with: signet_core,
-  include_directories: signet_includes,
+  include_directories: [signet_includes, include_directories('../src')],
   dependencies: signet_deps + [in_tree_dep],
   c_args: signet_test_c_args,
   install: false,
@@ -405,6 +423,11 @@ test('db_migration', test_db_migration)
 test('adopt_existing', test_adopt_existing)
 test('reissue_connect', test_reissue_connect)
 test('mgmt_replay', test_mgmt_replay)
+test('mgmt_agent_id', test_mgmt_replay, args: ['--agent-id'])
+if get_option('signet_enable_test_hooks')
+  test('mgmt_result_json', test_mgmt_replay, args: ['--result-json'])
+  test('nip46_result_json', test_client_bindings, args: ['--result-json'])
+endif
 test('backend_admission', test_backend_admission)
 test('pubkey_backfill', test_pubkey_backfill)
 test('reissue_self_service', test_reissue_self_service)
@@ -483,6 +506,12 @@ test('mgmt_ingress_wire', find_program('python3'),
   timeout: 30,
 )
   # End management ingress boundary block.
+if get_option('signet_enable_test_hooks')
+  test('mgmt_delivery_json', find_program('python3'),
+    args: [meson.current_source_dir() / 'test_mgmt_ingress_wire.py',
+           test_mgmt_replay.full_path(), '--delivery-json'],
+    depends: test_mgmt_replay, timeout: 30)
+endif
   test('backend_admission_daemon', find_program('python3'),
     args: [meson.current_source_dir() / 'test_backend_admission_daemon.py',
            signetd_exe.full_path(), backend_admission_fixture.full_path()],

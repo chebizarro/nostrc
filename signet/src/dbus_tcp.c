@@ -127,6 +127,7 @@ static void tcp_conn_state_free(gpointer p) {
 
 struct SignetDbusTcpServer {
   char *listen_address;
+  bool allow_credentials;
   SignetKeyStore *keys;
   SignetPolicyRegistry *policy;
   struct SignetPolicyStore *identity_policy;
@@ -255,6 +256,17 @@ static void signet_tcp_handle_method(GDBusConnection *connection,
     return;
   }
 
+  /* The TCP opt-in only removes this transport gate; shared dispatch still
+   * applies the same capability and credential checks as the Unix transport. */
+  if (!ds->allow_credentials && strcmp(interface_name, "net.signet.Credentials") == 0 &&
+      (strcmp(method_name, "GetToken") == 0 || strcmp(method_name, "GetSession") == 0)) {
+    g_dbus_method_invocation_return_dbus_error(invocation,
+        "net.signet.Error.CredentialsOverTcpDisabled",
+        "Credential secrets are disabled over plaintext D-Bus TCP");
+    g_free(agent_id);
+    return;
+  }
+
   SignetDbusDispatchContext ctx = {
     .keys = ds->keys,
     .policy = ds->policy,
@@ -357,6 +369,7 @@ SignetDbusTcpServer *signet_dbus_tcp_server_new(const SignetDbusTcpServerConfig 
 
   ds->listen_address = g_strdup(cfg->listen_address
       ? cfg->listen_address : "tcp:host=127.0.0.1,port=47472");
+  ds->allow_credentials = cfg->allow_credentials;
   ds->keys = cfg->keys;
   ds->policy = cfg->policy;
   ds->identity_policy = cfg->identity_policy;

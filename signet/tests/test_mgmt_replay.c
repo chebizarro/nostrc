@@ -34,6 +34,11 @@
 #include <unistd.h>
 
 #include <glib.h>
+#include <json-glib/json-glib.h>
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+#include "mgmt_protocol_test_hooks.h"
+#include "secret_json.h"
+#endif
 #include <sodium.h>
 
 #define MASTER_KEY "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -83,16 +88,7 @@ typedef struct {
   char prov_pk_hex[65];
 } Fixture;
 
-static void fixture_setup(Fixture *f, bool with_replay_cache) {
-  memset(f, 0, sizeof(*f));
-
-  gen_keypair_hex(f->bunker_sk_hex, f->bunker_pk_hex);
-  gen_keypair_hex(f->prov_sk_hex, f->prov_pk_hex);
-
-  f->db_path = make_temp_db_path();
-  SignetAuditLoggerConfig alc = { .path = NULL, .to_stdout = false, .flush_each_write = false };
-  f->audit = signet_audit_logger_new(&alc);
-  CHECK(f->audit);
+static void fixture_open(Fixture *f, SignetRelayPool *pool) {
   SignetKeyStoreConfig kcfg = { .db_path = f->db_path, .master_key = MASTER_KEY };
   f->ks = signet_key_store_new(f->audit, &kcfg);
   CHECK(f->ks != NULL);
@@ -106,10 +102,19 @@ static void fixture_setup(Fixture *f, bool with_replay_cache) {
     .relay_urls = RELAYS,
     .n_relay_urls = 1,
   };
-  /* No relay pool: ack publishing becomes a no-op, which is fine — these
-   * tests assert on handler return codes and persisted store state. */
-  f->mgmt = signet_mgmt_handler_new(f->ks, NULL, NULL, NULL, &mcfg);
+  f->mgmt = signet_mgmt_handler_new(f->ks, pool, NULL, NULL, &mcfg);
   CHECK(f->mgmt != NULL);
+}
+
+static void fixture_setup_with_pool(Fixture *f, bool with_replay_cache, SignetRelayPool *pool) {
+  memset(f, 0, sizeof(*f));
+  gen_keypair_hex(f->bunker_sk_hex, f->bunker_pk_hex);
+  gen_keypair_hex(f->prov_sk_hex, f->prov_pk_hex);
+  f->db_path = make_temp_db_path();
+  SignetAuditLoggerConfig alc = { .path = NULL, .to_stdout = false, .flush_each_write = false };
+  f->audit = signet_audit_logger_new(&alc);
+  CHECK(f->audit);
+  fixture_open(f, pool);
 
   if (with_replay_cache) {
     SignetReplayCacheConfig rcfg = { .max_entries = 128, .ttl_seconds = 300, .skew_seconds = 300 };
@@ -117,6 +122,10 @@ static void fixture_setup(Fixture *f, bool with_replay_cache) {
     CHECK(f->replay != NULL);
     signet_mgmt_handler_set_replay_cache(f->mgmt, f->replay);
   }
+}
+
+static void fixture_setup(Fixture *f, bool with_replay_cache) {
+  fixture_setup_with_pool(f, with_replay_cache, NULL);
 }
 
 static void fixture_teardown(Fixture *f) {
@@ -688,11 +697,255 @@ static int test_wire_ingress(const char *url, const char *fixture_path,
   return 0;
 }
 
+static void test_agent_id_validation(void) {
+  Fixture f;
+  fixture_setup(&f, false);
+  const char *escaped_ids[] = {
+    "with\\\"quote", "with\\\\slash", "with\\u0001control", "with\\u0000nul",
+    "with space", "caf\\u00e9", "",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  };
+  for (size_t i = 0; i < G_N_ELEMENTS(escaped_ids); i++) {
+    g_autofree char *intent = g_strdup_printf(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"agent/provision\","
+        "\"params\":{\"agent_id\":\"%s\"}}", escaped_ids[i]);
+    CHECK(signet_mgmt_handler_handle_intent(f.mgmt, f.prov_pk_hex, intent,
+        "invalid-agent-id", 1752380000, 1752380000) == -1);
+  }
+  char **ids = NULL;
+  size_t count = 0;
+  CHECK(signet_key_store_list_agents(f.ks, &ids, &count) == 0 && count == 0);
+  g_strfreev(ids);
+
+  const char *bad_id = "old\"\\\001agent";
+  uint8_t sk[32] = { [31] = 1 };
+  char pk[65];
+  CHECK(signet_key_store_provision_agent(f.ks, bad_id, f.bunker_pk_hex,
+      RELAYS, 1, pk, sizeof(pk), NULL) != 0);
+  CHECK(signet_key_store_adopt_agent(f.ks, bad_id, sk, NULL, NULL,
+      f.bunker_pk_hex, RELAYS, 1, pk, NULL) != SIGNET_ADOPT_OK);
+  /* Restore updates an existing row, so seed one as a pre-upgrade record. */
+  SignetStore *st = signet_key_store_get_store(f.ks);
+  char *original_pk = nostr_key_get_public(
+      "0000000000000000000000000000000000000000000000000000000000000001");
+  CHECK(original_pk);
+  CHECK(signet_store_put_agent_ex(st, bad_id, sk, sizeof(sk), NULL,
+                                  original_pk, "adopted", 1752380000) == 0);
+  CHECK(signet_key_store_restore_agent(f.ks, bad_id, sk, original_pk, pk)
+        != SIGNET_ADOPT_OK);
+  const SignetMgmtOp mint_ops[] = {
+    SIGNET_MGMT_OP_PROVISION_AGENT, SIGNET_MGMT_OP_ADOPT_EXISTING,
+    SIGNET_MGMT_OP_RESTORE_EXISTING,
+  };
+  for (size_t i = 0; i < G_N_ELEMENTS(mint_ops); i++) {
+    SignetMgmtRequest req;
+    g_autofree char *err = NULL;
+    CHECK(signet_mgmt_request_parse(mint_ops[i],
+        "{\"agent_id\":\"old\\\"agent\",\"agent_nsec\":\"test\"}", &req, &err) == -1);
+    CHECK(err && strstr(err, "agent_id"));
+  }
+  const char *boundary_id =
+      "A-z_09.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  CHECK(strlen(boundary_id) == 64);
+  CHECK(signet_key_store_provision_agent(f.ks, boundary_id, f.bunker_pk_hex,
+      RELAYS, 1, pk, sizeof(pk), NULL) == 0);
+  free(original_pk);
+  fixture_teardown(&f);
+}
+
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+static void capture_mgmt_reply(void *data, const char *recipient, const char *reply) {
+  (void)recipient;
+  char **out = data;
+  CHECK(!*out);
+  *out = g_strdup(reply);
+}
+
+static JsonObject *call_mgmt(Fixture *f, SignetMgmtOp op, const char *params,
+                             SignetSecretJsonParser *parser) {
+  char *reply = NULL;
+  signet_mgmt_handler_set_reply_hook(f->mgmt, capture_mgmt_reply, &reply);
+  char *cipher = params ? encrypt_to_bunker(f, params) : NULL;
+  int rc = signet_mgmt_handler_handle_request(f->mgmt, f->prov_pk_hex, cipher,
+                                               op, "json", 1752380000);
+  signet_mgmt_handler_set_reply_hook(f->mgmt, NULL, NULL);
+  free(cipher);
+  CHECK(reply);
+  CHECK(json_parser_load_from_data(parser, reply, -1, NULL));
+  signet_secret_gfree(reply);
+  JsonNode *root = json_parser_get_root(parser);
+  CHECK(JSON_NODE_HOLDS_OBJECT(root));
+  JsonObject *ack = json_node_get_object(root);
+  if (rc != 0)
+    fprintf(stderr, "%s failed (%s)\n", signet_mgmt_op_to_string(op),
+            json_object_get_string_member(ack, "code"));
+  CHECK(rc == 0 && json_object_get_boolean_member(ack, "ok"));
+  return ack;
+}
+
+static void test_mgmt_result_json(void) {
+  Fixture f;
+  fixture_setup(&f, false);
+  SignetStore *st = signet_key_store_get_store(f.ks);
+  const char *legacy_id = "old\"\\\001agent";
+  const char *legacy_params = "{\"agent_id\":\"old\\\"\\\\\\u0001agent\"}";
+  char secret[65], expected_pk[65], pk[65];
+  uint8_t raw[32];
+  gen_keypair_hex(secret, expected_pk);
+  CHECK(hex_to_bytes(secret, raw, sizeof(raw)) == 0);
+  CHECK(signet_store_put_agent_ex(st, legacy_id, raw, sizeof(raw), NULL,
+                                  expected_pk, "adopted", 1752380000) == 0);
+  sodium_memzero(raw, sizeof(raw));
+  signet_mgmt_handler_free(f.mgmt);
+  signet_key_store_free(f.ks);
+  fixture_open(&f, NULL);
+  CHECK(signet_key_store_get_agent_pubkey(f.ks, legacy_id, pk, sizeof(pk)));
+  CHECK(strcmp(pk, expected_pk) == 0);
+
+  g_autoptr(SignetSecretJsonParser) p = json_parser_new();
+  JsonObject *ack = call_mgmt(&f, SIGNET_MGMT_OP_LIST_AGENTS, NULL, p);
+  CHECK(json_object_has_member(ack, "result"));
+  JsonObject *res = json_object_get_object_member(ack, "result");
+  CHECK(res && json_object_get_int_member(res, "count") == 1);
+  JsonArray *agents = json_object_get_array_member(res, "agents");
+  CHECK(agents && json_array_get_length(agents) == 1);
+  CHECK(g_strcmp0(json_array_get_string_element(agents, 0), legacy_id) == 0);
+
+  ack = call_mgmt(&f, SIGNET_MGMT_OP_ROTATE_KEY, legacy_params, p);
+  res = json_object_get_object_member(ack, "result");
+  CHECK(res && g_strcmp0(json_object_get_string_member(res, "agent_id"), legacy_id) == 0);
+  CHECK(signet_key_store_get_agent_pubkey(f.ks, legacy_id, pk, sizeof(pk)));
+  CHECK(g_strcmp0(json_object_get_string_member(res, "new_pubkey"), pk) == 0);
+  CHECK(strcmp(expected_pk, pk) != 0);
+  ack = call_mgmt(&f, SIGNET_MGMT_OP_REVOKE_AGENT, legacy_params, p);
+  CHECK(g_strcmp0(json_object_get_string_member(ack, "code"), "revoked") == 0);
+  CHECK(strstr(json_object_get_string_member(ack, "message"), legacy_id));
+  CHECK(!signet_key_store_get_agent_pubkey(f.ks, legacy_id, pk, sizeof(pk)));
+  SignetAgentRecord revoked = {0};
+  CHECK(signet_store_get_agent(signet_key_store_get_store(f.ks), legacy_id, &revoked) == 1);
+  signet_agent_record_clear(&revoked);
+
+  ack = call_mgmt(&f, SIGNET_MGMT_OP_PROVISION_AGENT, "{\"agent_id\":\"new\"}", p);
+  res = json_object_get_object_member(ack, "result");
+  CHECK(res && g_strcmp0(json_object_get_string_member(res, "agent_id"), "new") == 0);
+  CHECK(signet_key_store_get_agent_pubkey(f.ks, "new", pk, sizeof(pk)));
+  CHECK(g_strcmp0(json_object_get_string_member(res, "pubkey"), pk) == 0);
+  CHECK(g_str_has_prefix(json_object_get_string_member(res, "bunker_uri"), "bunker://"));
+  CHECK(!json_object_has_member(res, "delivered"));
+
+  char *adopt_params = g_strdup_printf(
+      "{\"agent_id\":\"adopted\",\"agent_nsec\":\"%s\",\"connect_secret\":\"test\\u00e9\"}", secret);
+  ack = call_mgmt(&f, SIGNET_MGMT_OP_ADOPT_EXISTING, adopt_params, p);
+  res = json_object_get_object_member(ack, "result");
+  CHECK(res && json_object_get_boolean_member(res, "adopted"));
+  CHECK(g_strcmp0(json_object_get_string_member(res, "agent_id"), "adopted") == 0);
+  CHECK(g_strcmp0(json_object_get_string_member(res, "pubkey"), expected_pk) == 0);
+  CHECK(g_str_has_suffix(json_object_get_string_member(res, "bunker_uri"), "&secret=testé"));
+  CHECK(!json_object_has_member(res, "delivered"));
+  signet_secret_gfree(adopt_params);
+
+  char *restore_params = g_strdup_printf(
+      "{\"agent_id\":\"adopted\",\"agent_nsec\":\"%s\"}", secret);
+  sodium_memzero(secret, sizeof(secret));
+  ack = call_mgmt(&f, SIGNET_MGMT_OP_RESTORE_EXISTING, restore_params, p);
+  signet_secret_gfree(restore_params);
+  res = json_object_get_object_member(ack, "result");
+  CHECK(res && json_object_get_boolean_member(res, "restored"));
+  CHECK(!json_object_has_member(res, "bunker_uri"));
+  CHECK(g_strcmp0(json_object_get_string_member(res, "agent_id"), "adopted") == 0);
+  CHECK(g_strcmp0(json_object_get_string_member(res, "pubkey"), expected_pk) == 0);
+
+  ack = call_mgmt(&f, SIGNET_MGMT_OP_GET_STATUS, NULL, p);
+  res = json_object_get_object_member(ack, "result");
+  CHECK(res && json_object_get_boolean_member(res, "db_open"));
+  CHECK(!json_object_get_boolean_member(res, "relays_connected"));
+  CHECK(json_object_get_int_member(res, "agents") > 0);
+
+  const char *writer = "{\"agent_id\":\"new\",\"writer_pubkey\":"
+      "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}";
+  ack = call_mgmt(&f, SIGNET_MGMT_OP_WRITER_ACQUIRE, writer, p);
+  res = json_object_get_object_member(ack, "result");
+  CHECK(res && json_object_get_int_member(res, "epoch") == 1);
+  ack = call_mgmt(&f, SIGNET_MGMT_OP_WRITER_REVOKE, "{\"agent_id\":\"new\"}", p);
+  res = json_object_get_object_member(ack, "result");
+  CHECK(res && json_object_get_int_member(res, "epoch") == 2);
+  fixture_teardown(&f);
+}
+
+static void delivery_relay_connected(const char *url, const char *state,
+                                      const char *reason, void *data) {
+  (void)url;
+  (void)reason;
+  if (strcmp(state, "CONNECTED") == 0) g_main_loop_quit(data);
+}
+
+static gboolean delivery_relay_deadline(void *data) {
+  g_main_loop_quit(data);
+  return G_SOURCE_CONTINUE; /* removed by the caller */
+}
+
+static void test_mgmt_delivery_result_json(const char *url) {
+  SignetRelayPoolConfig cfg = { .relays = &url, .n_relays = 1 };
+  SignetRelayPool *pool = signet_relay_pool_new(&cfg);
+  CHECK(pool);
+  g_autoptr(GMainLoop) loop = g_main_loop_new(NULL, FALSE);
+  signet_relay_pool_set_subscription_callback(pool, delivery_relay_connected, loop);
+  CHECK(signet_relay_pool_start(pool) == 0);
+  guint deadline = g_timeout_add_seconds(10, delivery_relay_deadline, loop);
+  g_main_loop_run(loop);
+  g_source_remove(deadline);
+  CHECK(signet_relay_pool_is_connected(pool));
+
+  Fixture f;
+  fixture_setup_with_pool(&f, false, pool);
+  g_autoptr(SignetSecretJsonParser) p = json_parser_new();
+  const SignetMgmtOp ops[] = {SIGNET_MGMT_OP_PROVISION_AGENT, SIGNET_MGMT_OP_ADOPT_EXISTING};
+  for (size_t i = 0; i < G_N_ELEMENTS(ops); i++) {
+    const char *agent = i == 0 ? "provisioned" : "adopted";
+    char secret[65], pubkey[65];
+    gen_keypair_hex(secret, pubkey);
+    char *params = g_strdup_printf(
+        "{\"agent_id\":\"%s\",\"agent_nsec\":\"%s\",\"deliver\":true,"
+        "\"bootstrap_pubkey\":\"%s\",\"delivery_ttl\":123}", agent, secret, f.prov_pk_hex);
+    sodium_memzero(secret, sizeof(secret));
+    JsonObject *ack = call_mgmt(&f, ops[i], params, p);
+    signet_secret_gfree(params);
+    CHECK(json_object_has_member(ack, "result"));
+    JsonObject *res = json_object_get_object_member(ack, "result");
+    CHECK(res && json_object_get_boolean_member(res, "delivered"));
+    CHECK(json_object_get_int_member(res, "delivery_expires_at") == 1752380123);
+    CHECK(g_strcmp0(json_object_get_string_member(res, "agent_id"), agent) == 0);
+    CHECK(g_str_has_prefix(json_object_get_string_member(res, "bunker_uri"), "bunker://"));
+    if (i == 1) {
+      CHECK(json_object_get_boolean_member(res, "adopted"));
+      CHECK(g_strcmp0(json_object_get_string_member(res, "pubkey"), pubkey) == 0);
+    }
+  }
+  fixture_teardown(&f);
+  signet_relay_pool_free(pool);
+}
+#endif
+
 int main(int argc, char **argv) {
   if (sodium_init() < 0) {
     fprintf(stderr, "sodium_init failed\n");
     return 1;
   }
+
+  if (argc == 2 && strcmp(argv[1], "--agent-id") == 0) {
+    test_agent_id_validation();
+    return 0;
+  }
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+  if (argc == 2 && strcmp(argv[1], "--result-json") == 0) {
+    test_mgmt_result_json();
+    return 0;
+  }
+  if (argc == 3 && strcmp(argv[1], "--delivery-json") == 0) {
+    test_mgmt_delivery_result_json(argv[2]);
+    return 0;
+  }
+#endif
 
   if (argc >= 4 && strncmp(argv[1], "--wire-", 7) == 0) {
     const char *mode = argv[1] + 7;
