@@ -13,6 +13,9 @@ APP_CHECKS = {
     'supported.apps.grotto.tests.private_bus',
 }
 
+# Suites deleted with the module they tested; no current check may claim them.
+RETIRED_SUITES = {'signer/hsm-provider', 'signer/social-recovery'}
+
 
 class CurrentAppMembership(unittest.TestCase):
     def setUp(self):
@@ -34,10 +37,12 @@ class CurrentAppMembership(unittest.TestCase):
                         self.assertNotIn(name, claims, (profile, name))
                         claims[name] = ident
                 # W4 replaces the retired dashboard model without rewriting the
-                # historical enrollment receipt.
+                # historical enrollment receipt; nostrc-83in5 deleted the unwired
+                # HSM and social-recovery modules together with their suites.
                 current = {'signer/panel-inbox-model' if name == 'signer/home-model' else name
-                           for name in data['registrations']}
+                           for name in data['registrations']} - RETIRED_SUITES
                 self.assertTrue(current <= claims.keys())
+                self.assertFalse(RETIRED_SUITES & claims.keys())
                 for ident in APP_CHECKS:
                     check = self.policy['checks'][ident]
                     self.assertEqual(check['ctest_tests'][profile], check['ctest_tests'][peer])

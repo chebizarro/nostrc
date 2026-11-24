@@ -101,9 +101,6 @@ package_grotto() {
     'openssl'
     'libsecret'
   )
-  optdepends=(
-    'p11-kit: PKCS#11 HSM support'
-  )
 
   cd "nostrc-${pkgver}"
 

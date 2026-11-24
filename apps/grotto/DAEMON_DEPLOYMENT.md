@@ -19,8 +19,7 @@ Use GTK ≥4.14, libadwaita ≥1.5 and GLib ≥2.80. Build from the **monorepo r
 ```sh
 git submodule update --init --recursive
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
-  -DBUILD_GNOSTR_APP=OFF -DBUILD_TESTING=OFF -DBUILD_SIGNER_TESTS=OFF \
-  -DGROTTO_WITH_PKCS11=OFF -DGROTTO_WITH_HW_WALLET=OFF
+  -DBUILD_GNOSTR_APP=OFF -DBUILD_TESTING=OFF -DBUILD_SIGNER_TESTS=OFF
 cmake --build build --target apps/grotto/all
 sudo cmake --install build/apps/grotto
 systemctl --user daemon-reload

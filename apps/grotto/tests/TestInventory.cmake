@@ -17,8 +17,8 @@ function(_grotto_test name target owner)
   endif()
 endfunction()
 
-foreach(suite crypto identity session legacy-dirs rate-limiter hsm-provider core
-    secure-mem social-recovery signer-core profile-guard)
+foreach(suite crypto identity session legacy-dirs rate-limiter core
+    secure-mem signer-core profile-guard)
   _grotto_test("signer/${suite}" "test-${suite}" grotto.gui)
 endforeach()
 _grotto_test(signer/dbus test-dbus grotto.gui REQUIRES private_bus)

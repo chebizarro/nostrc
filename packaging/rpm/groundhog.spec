@@ -124,8 +124,6 @@ Grotto is an alpha release; its interface may change.
     -DBUILD_GNOSTR_APP=OFF \
     -DBUILD_NATIVE_HOST=OFF \
     -DBUILD_SIGNER_TESTS=OFF \
-    -DGROTTO_WITH_PKCS11=OFF \
-    -DGROTTO_WITH_HW_WALLET=OFF \
     -DBUILD_RELAYD=OFF \
     -DBUILD_LIBHANAMI=OFF \
     -DSIGNET_ENABLE=OFF \

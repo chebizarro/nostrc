@@ -24,7 +24,7 @@
 #include <nostr/nip55l/error.h>
 #include <nostr/crypto/bip39.h>
 #include <nostr/nip19/nip19.h>
-#include "key_rotation.h"
+#include "key-migration-event.h"
 #include <nostrc-profile-guard.h>
 extern char *nostr_nip06_private_key_from_seed(const unsigned char *seed);
 

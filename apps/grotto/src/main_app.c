@@ -5,7 +5,6 @@
 #include <gio/gio.h>
 #include <string.h>
 #include "legacy_dirs.h"
-#include "signer_grants.h"
 #include "accounts_store.h"
 #include "settings_manager.h"
 #include "startup-timing.h"

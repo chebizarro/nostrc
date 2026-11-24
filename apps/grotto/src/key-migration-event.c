@@ -1,5 +1,5 @@
 /* Shared, pure migration-event builder; custody and publication are callers' policy. */
-#include "key_rotation.h"
+#include "key-migration-event.h"
 #include <json-glib/json-glib.h>
 #include <nostr-gobject-1.0/nostr_nip19.h>
 #include <time.h>

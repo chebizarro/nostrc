@@ -214,8 +214,7 @@ The application consists of two main components:
 # From the monorepo root, with submodules initialized:
 git submodule update --init --recursive
 cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr \
-  -DBUILD_GNOSTR_APP=OFF -DBUILD_TESTING=OFF -DBUILD_SIGNER_TESTS=OFF \
-  -DGROTTO_WITH_PKCS11=OFF -DGROTTO_WITH_HW_WALLET=OFF
+  -DBUILD_GNOSTR_APP=OFF -DBUILD_TESTING=OFF -DBUILD_SIGNER_TESTS=OFF
 cmake --build build --target apps/grotto/all
 ```
 

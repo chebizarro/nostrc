@@ -99,7 +99,6 @@ journalctl --user -u grotto-daemon -f
 
 ### Runtime (grotto)
 - Same as gnostr plus libsecret
-- Optional: p11-kit for HSM support
 
 ### Optional
 - gstreamer + plugins for video playback

@@ -52,7 +52,6 @@ The formulas automatically install required dependencies:
 ### Optional Dependencies
 
 - `gstreamer` - For video playback (gnostr)
-- `p11-kit` - For PKCS#11 HSM support (grotto)
 
 ## Running the Signer Daemon
 
