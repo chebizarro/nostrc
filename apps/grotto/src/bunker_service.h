@@ -80,8 +80,6 @@ GVariant *bunker_service_relay_status(BunkerService *);
 guint bunker_service_pending_acks(BunkerService *);
 guint bunker_service_pending_pairing_requests(BunkerService *);
 
-typedef gboolean (*BunkerAuthorizeCb)(const BunkerSignRequest *req, gpointer user_data);
-
 /* Create a new bunker service */
 BunkerService *bunker_service_new(void);
 
@@ -118,9 +116,6 @@ BunkerState bunker_service_get_state(BunkerService *bs);
 /* Generate a bunker:// URI for sharing */
 gchar *bunker_service_get_bunker_uri(BunkerService *bs, const gchar *secret);
 
-/* Process a nostrconnect:// URI (incoming connection request) */
-gboolean bunker_service_handle_connect_uri(BunkerService *bs, const gchar *uri);
-
 /* List active connections */
 GPtrArray *bunker_service_list_connections(BunkerService *bs);
 
@@ -135,9 +130,6 @@ void bunker_service_set_configured_relays(BunkerService *, const gchar *const *r
 /* Admission-only legacy inventory: empty admits no unpaired clients. */
 void bunker_service_set_allowed_pubkeys(BunkerService *bs, const gchar *const *pubkeys);
 
-/* Deprecated compatibility no-op: global kinds never grant permission. */
-void bunker_service_set_auto_approve_kinds(BunkerService *bs, const gchar *const *kinds);
-
 /* Set state change callback */
 void bunker_service_set_state_callback(BunkerService *bs,
                                        BunkerStateChangedCb cb,
@@ -148,34 +140,11 @@ void bunker_service_set_connection_callback(BunkerService *bs,
                                             BunkerConnectionCb cb,
                                             gpointer user_data);
 
-/* Set authorization callback (for sign requests) */
-void bunker_service_set_authorize_callback(BunkerService *bs,
-                                           BunkerAuthorizeCb cb,
-                                           gpointer user_data);
-
-/* Complete a pending authorization request */
-void bunker_service_authorize_response(BunkerService *bs,
-                                       const gchar *request_id,
-                                       gboolean approved);
-
 /* Free a connection info */
 void bunker_connection_free(BunkerConnection *conn);
 
 /* Free a sign request */
 void bunker_sign_request_free(BunkerSignRequest *req);
-
-/* Create a client session after approval (nostrc-09n)
- * Call this when user approves a request with "remember" checked
- * @client_pubkey: Client's public key (hex)
- * @app_name: Application name (optional)
- * @persistent: Whether to persist across restarts
- * @ttl_seconds: Session TTL (0 for default, -1 for never expires)
- */
-void bunker_service_create_client_session(BunkerService *bs,
-                                          const gchar *client_pubkey,
-                                          const gchar *app_name,
-                                          gboolean persistent,
-                                          gint64 ttl_seconds);
 
 G_END_DECLS
 #endif /* APPS_GNOSTR_SIGNER_BUNKER_SERVICE_H */

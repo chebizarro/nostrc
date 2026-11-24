@@ -408,12 +408,6 @@ on_password_activate(AdwPasswordEntryRow *entry, gpointer user_data)
 
 /* Public API */
 
-GnLockScreen *
-gn_lock_screen_new(void)
-{
-  return g_object_new(GN_TYPE_LOCK_SCREEN, NULL);
-}
-
 void
 gn_lock_screen_set_lock_reason(GnLockScreen *self, GnLockReason reason)
 {
@@ -519,31 +513,4 @@ gn_lock_screen_set_busy(GnLockScreen *self, gboolean busy)
   } else {
     gtk_button_set_label(self->btn_unlock, "_Unlock");
   }
-}
-
-gboolean
-gn_lock_screen_get_password_configured(GnLockScreen *self)
-{
-  g_return_val_if_fail(GN_IS_LOCK_SCREEN(self), FALSE);
-
-  GnSessionManager *sm = gn_session_manager_get_default();
-  return gn_session_manager_has_password(sm);
-}
-
-gboolean
-gn_lock_screen_is_rate_limited(GnLockScreen *self)
-{
-  g_return_val_if_fail(GN_IS_LOCK_SCREEN(self), FALSE);
-
-  GnRateLimiter *limiter = gn_rate_limiter_get_default();
-  return gn_rate_limiter_is_locked_out(limiter);
-}
-
-guint
-gn_lock_screen_get_rate_limit_remaining(GnLockScreen *self)
-{
-  g_return_val_if_fail(GN_IS_LOCK_SCREEN(self), 0);
-
-  GnRateLimiter *limiter = gn_rate_limiter_get_default();
-  return gn_rate_limiter_get_remaining_lockout(limiter);
 }

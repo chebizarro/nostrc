@@ -57,15 +57,5 @@ typedef enum {
   GN_SIGNER_ERROR_INTERNAL
 } GnSignerError;
 
-/**
- * gn_signer_error_to_string:
- * @code: A #GnSignerError code
- *
- * Get a human-readable string for an error code.
- *
- * Returns: (transfer none): Static string describing the error
- */
-const gchar *gn_signer_error_to_string(GnSignerError code);
-
 G_END_DECLS
 #endif /* APPS_GNOSTR_SIGNER_GN_SIGNER_ERROR_H */

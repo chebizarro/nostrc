@@ -63,29 +63,14 @@ GQuark gn_key_provider_error_quark(void);
 /**
  * GnKeyProviderInterface:
  * @parent: Parent interface
- * @get_key_type: Returns the key type this provider handles
- * @get_key_type_name: Returns a human-readable name for the key type
- * @get_private_key_size: Returns the private key size in bytes
- * @get_public_key_size: Returns the public key size in bytes
- * @get_signature_size: Returns the signature size in bytes
  * @derive_public_key: Derives public key from private key
  * @sign: Signs a message hash with the private key
  * @verify: Verifies a signature against a message hash and public key
- * @generate_private_key: Generates a new random private key
- * @is_valid_private_key: Validates a private key
- * @is_valid_public_key: Validates a public key
  *
  * The virtual function table for #GnKeyProvider.
  */
 struct _GnKeyProviderInterface {
   GTypeInterface parent;
-
-  /* Key type information */
-  GnKeyType     (*get_key_type)         (GnKeyProvider *self);
-  const gchar * (*get_key_type_name)    (GnKeyProvider *self);
-  gsize         (*get_private_key_size) (GnKeyProvider *self);
-  gsize         (*get_public_key_size)  (GnKeyProvider *self);
-  gsize         (*get_signature_size)   (GnKeyProvider *self);
 
   /* Key derivation */
   gboolean      (*derive_public_key)    (GnKeyProvider  *self,
@@ -114,74 +99,11 @@ struct _GnKeyProviderInterface {
                                          gsize           signature_len,
                                          GError        **error);
 
-  /* Key generation and validation */
-  gboolean      (*generate_private_key) (GnKeyProvider  *self,
-                                         guint8         *private_key_out,
-                                         gsize          *private_key_len_out,
-                                         GError        **error);
-
-  gboolean      (*is_valid_private_key) (GnKeyProvider  *self,
-                                         const guint8   *private_key,
-                                         gsize           private_key_len);
-
-  gboolean      (*is_valid_public_key)  (GnKeyProvider  *self,
-                                         const guint8   *public_key,
-                                         gsize           public_key_len);
 };
 
 /* ============================================================================
  * GnKeyProvider interface methods
  * ============================================================================ */
-
-/**
- * gn_key_provider_get_key_type:
- * @self: A #GnKeyProvider
- *
- * Gets the key type this provider handles.
- *
- * Returns: The #GnKeyType
- */
-GnKeyType gn_key_provider_get_key_type(GnKeyProvider *self);
-
-/**
- * gn_key_provider_get_key_type_name:
- * @self: A #GnKeyProvider
- *
- * Gets a human-readable name for the key type.
- *
- * Returns: (transfer none): The key type name (e.g., "secp256k1", "ed25519")
- */
-const gchar *gn_key_provider_get_key_type_name(GnKeyProvider *self);
-
-/**
- * gn_key_provider_get_private_key_size:
- * @self: A #GnKeyProvider
- *
- * Gets the expected private key size in bytes.
- *
- * Returns: Private key size in bytes
- */
-gsize gn_key_provider_get_private_key_size(GnKeyProvider *self);
-
-/**
- * gn_key_provider_get_public_key_size:
- * @self: A #GnKeyProvider
- *
- * Gets the expected public key size in bytes.
- *
- * Returns: Public key size in bytes
- */
-gsize gn_key_provider_get_public_key_size(GnKeyProvider *self);
-
-/**
- * gn_key_provider_get_signature_size:
- * @self: A #GnKeyProvider
- *
- * Gets the expected signature size in bytes.
- *
- * Returns: Signature size in bytes
- */
-gsize gn_key_provider_get_signature_size(GnKeyProvider *self);
 
 /**
  * gn_key_provider_derive_public_key:
@@ -251,50 +173,6 @@ gboolean gn_key_provider_verify(GnKeyProvider  *self,
                                 gsize           signature_len,
                                 GError        **error);
 
-/**
- * gn_key_provider_generate_private_key:
- * @self: A #GnKeyProvider
- * @private_key_out: (out) (array length=private_key_len_out): Output buffer for private key
- * @private_key_len_out: (out): Length of output private key
- * @error: (out) (optional): Return location for error
- *
- * Generates a new random private key.
- *
- * Returns: %TRUE on success, %FALSE on error
- */
-gboolean gn_key_provider_generate_private_key(GnKeyProvider  *self,
-                                              guint8         *private_key_out,
-                                              gsize          *private_key_len_out,
-                                              GError        **error);
-
-/**
- * gn_key_provider_is_valid_private_key:
- * @self: A #GnKeyProvider
- * @private_key: The private key bytes to validate
- * @private_key_len: Length of private key
- *
- * Validates a private key.
- *
- * Returns: %TRUE if the key is valid, %FALSE otherwise
- */
-gboolean gn_key_provider_is_valid_private_key(GnKeyProvider *self,
-                                              const guint8  *private_key,
-                                              gsize          private_key_len);
-
-/**
- * gn_key_provider_is_valid_public_key:
- * @self: A #GnKeyProvider
- * @public_key: The public key bytes to validate
- * @public_key_len: Length of public key
- *
- * Validates a public key.
- *
- * Returns: %TRUE if the key is valid, %FALSE otherwise
- */
-gboolean gn_key_provider_is_valid_public_key(GnKeyProvider *self,
-                                             const guint8  *public_key,
-                                             gsize          public_key_len);
-
 /* ============================================================================
  * Key type utilities
  * ============================================================================ */
@@ -319,18 +197,6 @@ const gchar *gn_key_type_to_string(GnKeyType type);
  */
 GnKeyType gn_key_type_from_string(const gchar *str);
 
-/**
- * gn_key_type_detect_from_key:
- * @key_data: Key data (private or public)
- * @key_len: Length of key data
- *
- * Attempts to detect the key type from key data based on length and format.
- * This is a heuristic and may not always be accurate.
- *
- * Returns: The detected #GnKeyType, or %GN_KEY_TYPE_UNKNOWN
- */
-GnKeyType gn_key_type_detect_from_key(const guint8 *key_data, gsize key_len);
-
 /* ============================================================================
  * Provider registry
  * ============================================================================ */
@@ -346,15 +212,6 @@ GnKeyType gn_key_type_detect_from_key(const guint8 *key_data, gsize key_len);
 GnKeyProvider *gn_key_provider_get_for_type(GnKeyType type);
 
 /**
- * gn_key_provider_get_default:
- *
- * Gets the default key provider (secp256k1 for current Nostr).
- *
- * Returns: (transfer none): The default provider
- */
-GnKeyProvider *gn_key_provider_get_default(void);
-
-/**
  * gn_key_provider_register:
  * @type: The #GnKeyType this provider handles
  * @provider: The provider instance to register
@@ -363,15 +220,6 @@ GnKeyProvider *gn_key_provider_get_default(void);
  * takes a reference to the provider.
  */
 void gn_key_provider_register(GnKeyType type, GnKeyProvider *provider);
-
-/**
- * gn_key_provider_list_available:
- *
- * Lists all available (registered) key types.
- *
- * Returns: (transfer container) (element-type GnKeyType): Array of available types
- */
-GArray *gn_key_provider_list_available(void);
 
 /**
  * gn_key_providers_init:

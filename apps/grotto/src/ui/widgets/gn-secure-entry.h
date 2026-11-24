@@ -91,16 +91,6 @@ void gn_secure_entry_clear(GnSecureEntry *self);
 void gn_secure_entry_set_show_password(GnSecureEntry *self, gboolean show);
 
 /**
- * gn_secure_entry_get_show_password:
- * @self: A #GnSecureEntry
- *
- * Gets whether the password is currently visible.
- *
- * Returns: %TRUE if the password is visible
- */
-gboolean gn_secure_entry_get_show_password(GnSecureEntry *self);
-
-/**
  * gn_secure_entry_set_placeholder_text:
  * @self: A #GnSecureEntry
  * @text: (nullable): The placeholder text
@@ -112,16 +102,6 @@ void gn_secure_entry_set_placeholder_text(GnSecureEntry *self, const gchar *text
 void gn_secure_entry_set_accessible_label(GnSecureEntry *self, const gchar *label);
 
 /**
- * gn_secure_entry_get_placeholder_text:
- * @self: A #GnSecureEntry
- *
- * Gets the placeholder text.
- *
- * Returns: (nullable): The placeholder text
- */
-const gchar *gn_secure_entry_get_placeholder_text(GnSecureEntry *self);
-
-/**
  * gn_secure_entry_set_min_length:
  * @self: A #GnSecureEntry
  * @min_length: Minimum required length (0 to disable)
@@ -129,16 +109,6 @@ const gchar *gn_secure_entry_get_placeholder_text(GnSecureEntry *self);
  * Sets the minimum required password length.
  */
 void gn_secure_entry_set_min_length(GnSecureEntry *self, guint min_length);
-
-/**
- * gn_secure_entry_get_min_length:
- * @self: A #GnSecureEntry
- *
- * Gets the minimum required password length.
- *
- * Returns: The minimum length, or 0 if not set
- */
-guint gn_secure_entry_get_min_length(GnSecureEntry *self);
 
 /**
  * gn_secure_entry_set_timeout:
@@ -151,16 +121,6 @@ guint gn_secure_entry_get_min_length(GnSecureEntry *self);
 void gn_secure_entry_set_timeout(GnSecureEntry *self, guint timeout_seconds);
 
 /**
- * gn_secure_entry_get_timeout:
- * @self: A #GnSecureEntry
- *
- * Gets the inactivity timeout.
- *
- * Returns: The timeout in seconds, or 0 if disabled
- */
-guint gn_secure_entry_get_timeout(GnSecureEntry *self);
-
-/**
  * gn_secure_entry_get_strength:
  * @self: A #GnSecureEntry
  *
@@ -169,26 +129,6 @@ guint gn_secure_entry_get_timeout(GnSecureEntry *self);
  * Returns: The password strength level
  */
 GnPasswordStrength gn_secure_entry_get_strength(GnSecureEntry *self);
-
-/**
- * gn_secure_entry_get_strength_text:
- * @self: A #GnSecureEntry
- *
- * Gets a human-readable description of the current password strength.
- *
- * Returns: A localized strength description string
- */
-const gchar *gn_secure_entry_get_strength_text(GnSecureEntry *self);
-
-/**
- * gn_secure_entry_meets_requirements:
- * @self: A #GnSecureEntry
- *
- * Checks if the current password meets all configured requirements.
- *
- * Returns: %TRUE if the password meets requirements
- */
-gboolean gn_secure_entry_meets_requirements(GnSecureEntry *self);
 
 /**
  * gn_secure_entry_set_show_strength_indicator:
@@ -200,16 +140,6 @@ gboolean gn_secure_entry_meets_requirements(GnSecureEntry *self);
 void gn_secure_entry_set_show_strength_indicator(GnSecureEntry *self, gboolean show);
 
 /**
- * gn_secure_entry_get_show_strength_indicator:
- * @self: A #GnSecureEntry
- *
- * Gets whether the strength indicator is shown.
- *
- * Returns: %TRUE if the strength indicator is visible
- */
-gboolean gn_secure_entry_get_show_strength_indicator(GnSecureEntry *self);
-
-/**
  * gn_secure_entry_set_show_caps_warning:
  * @self: A #GnSecureEntry
  * @show: Whether to show caps lock warning
@@ -219,16 +149,6 @@ gboolean gn_secure_entry_get_show_strength_indicator(GnSecureEntry *self);
 void gn_secure_entry_set_show_caps_warning(GnSecureEntry *self, gboolean show);
 
 /**
- * gn_secure_entry_get_show_caps_warning:
- * @self: A #GnSecureEntry
- *
- * Gets whether the caps lock warning is enabled.
- *
- * Returns: %TRUE if caps lock warning is enabled
- */
-gboolean gn_secure_entry_get_show_caps_warning(GnSecureEntry *self);
-
-/**
  * gn_secure_entry_set_requirements_text:
  * @self: A #GnSecureEntry
  * @text: (nullable): The requirements text to display
@@ -236,25 +156,6 @@ gboolean gn_secure_entry_get_show_caps_warning(GnSecureEntry *self);
  * Sets a custom requirements description text.
  */
 void gn_secure_entry_set_requirements_text(GnSecureEntry *self, const gchar *text);
-
-/**
- * gn_secure_entry_get_requirements_text:
- * @self: A #GnSecureEntry
- *
- * Gets the custom requirements text.
- *
- * Returns: (nullable): The requirements text
- */
-const gchar *gn_secure_entry_get_requirements_text(GnSecureEntry *self);
-
-/**
- * gn_secure_entry_reset_timeout:
- * @self: A #GnSecureEntry
- *
- * Resets the auto-clear timeout counter.
- * Call this when the user interacts with related UI elements.
- */
-void gn_secure_entry_reset_timeout(GnSecureEntry *self);
 
 /**
  * gn_secure_entry_grab_focus:
