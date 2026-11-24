@@ -60,7 +60,8 @@ if not get_option('signet_enable_test_hooks')
     link_with: signet_core, include_directories: signet_includes,
     dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
   test('dbus_credential_grants', find_program('python3'),
-    args: [files('test_dbus_credential_grants.py'), signetd_exe, credential_grants_fixture],
+    args: [files('test_dbus_credential_grants.py'), signetd_exe, credential_grants_fixture,
+           session_curl_dep.found() ? '1' : '0'],
     timeout: 90)
 endif
 # W3/W4 deployment packaging and explicitly enabled live drills (separate ownership).

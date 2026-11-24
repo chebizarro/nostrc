@@ -40,6 +40,8 @@ if (NOT DEFINED SIGNET_USE_SQLCIPHER)
   option(SIGNET_USE_SQLCIPHER "Link SQLCipher instead of plain SQLite for AES-256 at-rest DB encryption" OFF)
 endif()
 
+option(SIGNET_ENABLE_SESSION_EXCHANGE "Enable libcurl-backed Signet session exchange when available" ON)
+
 if (PKG_CONFIG_FOUND)
   if (SIGNET_USE_SQLCIPHER)
     # SQLCipher exposes the same sqlite3 C API but encrypts the database at rest.
@@ -50,7 +52,9 @@ if (PKG_CONFIG_FOUND)
   endif()
   pkg_check_modules(SODIUM QUIET IMPORTED_TARGET libsodium)
   pkg_check_modules(MHD QUIET IMPORTED_TARGET libmicrohttpd)
-  pkg_check_modules(CURL QUIET IMPORTED_TARGET libcurl)
+  if (SIGNET_ENABLE_SESSION_EXCHANGE)
+    pkg_check_modules(CURL QUIET IMPORTED_TARGET libcurl)
+  endif()
 endif()
 
 set(SIGNET_CORE_SOURCES
@@ -173,7 +177,9 @@ else()
     ${CMAKE_CURRENT_SOURCE_DIR}/src/health_server_stub.c)
 endif()
 
-if (TARGET PkgConfig::CURL)
+set(signet_session_exchange_enabled 0)
+if (SIGNET_ENABLE_SESSION_EXCHANGE AND TARGET PkgConfig::CURL)
+  set(signet_session_exchange_enabled 1)
   target_compile_definitions(signet_core PRIVATE SIGNET_HAVE_CURL=1)
   target_link_libraries(signet_core PRIVATE PkgConfig::CURL)
 endif()

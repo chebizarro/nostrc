@@ -140,6 +140,7 @@ void signet_mgmt_request_clear(SignetMgmtRequest *req) {
     g_free(req->payload_b64);
   }
   g_free(req->credential_policy_id);
+  g_free(req->credential_service_url);
   memset(req, 0, sizeof(*req));
 }
 
@@ -259,6 +260,20 @@ int signet_mgmt_request_parse(SignetMgmtOp op,
   if (json_object_has_member(o, "policy_id")) {
     const char *v = json_object_get_string_member(o, "policy_id");
     if (v && v[0]) out_req->credential_policy_id = g_strdup(v);
+  }
+  if (json_object_has_member(o, "service_url")) {
+    JsonNode *node = json_object_get_member(o, "service_url");
+    const char *url = (node && JSON_NODE_HOLDS_VALUE(node) &&
+                       json_node_get_value_type(node) == G_TYPE_STRING)
+                          ? json_node_get_string(node) : NULL;
+    if ((op != SIGNET_MGMT_OP_CREATE_CREDENTIAL &&
+         op != SIGNET_MGMT_OP_IMPORT_CREDENTIAL) || !url || !url[0] || strlen(url) > 2048) {
+      if (out_error) *out_error = g_strdup(
+          "service_url must be a nonempty string on credential/create or credential/import");
+      signet_mgmt_request_clear(out_req);
+      return -1;
+    }
+    out_req->credential_service_url = g_strdup(url);
   }
   if (json_object_has_member(o, "expires_at")) {
     out_req->credential_expires_at =
@@ -1642,6 +1657,9 @@ static void signet_mgmt_add_secret_metadata(JsonBuilder *b,
   json_builder_set_member_name(b, "policy_id");
   if (m->policy_id) json_builder_add_string_value(b, m->policy_id);
   else json_builder_add_null_value(b);
+  json_builder_set_member_name(b, "service_url");
+  if (m->service_url) json_builder_add_string_value(b, m->service_url);
+  else json_builder_add_null_value(b);
   json_builder_set_member_name(b, "provenance");
   json_builder_add_string_value(b, m->provenance ? m->provenance : "legacy");
   json_builder_set_member_name(b, "created_by");
@@ -2582,9 +2600,9 @@ static int signet_mgmt_handler_handle_request_ex(
       memset(&metadata, 0, sizeof(metadata));
       const char *provenance =
           req.op == SIGNET_MGMT_OP_IMPORT_CREDENTIAL ? "imported" : "created";
-      SignetSecretResult src = signet_store_create_secret(
+      SignetSecretResult src = signet_store_create_secret_with_service_url(
           base_store, req.agent_id, secret_type, req.label,
-          payload, payload_len, req.credential_policy_id,
+          payload, payload_len, req.credential_policy_id, req.credential_service_url,
           req.has_credential_expires_at ? req.credential_expires_at : 0,
           provenance, event_pubkey_hex, now, &metadata);
       sodium_free(payload);

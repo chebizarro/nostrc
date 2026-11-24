@@ -97,9 +97,9 @@ static void signetctl_usage(FILE *out) {
     "  verify-audit             Verify hash-chained audit log integrity\n"
     "\n"
     "  create-credential <agent_id> --type <api_token|credential> --label <label>\n"
-    "                    [--policy-id <id>] [--expires-at <unix>] (--file <path>|--stdin)\n"
+    "                    [--policy-id <id>] [--service-url <url>] [--expires-at <unix>] (--file <path>|--stdin)\n"
     "  import-credential <agent_id> --type <api_token|credential> --label <label>\n"
-    "                    [--policy-id <id>] [--expires-at <unix>] (--file <path>|--stdin)\n"
+    "                    [--policy-id <id>] [--service-url <url>] [--expires-at <unix>] (--file <path>|--stdin)\n"
     "  list-credentials [agent_id]       List payload-free credential metadata\n"
     "  inspect-credential <id>           Inspect payload-free metadata\n"
     "  deliver-credential <agent_id> <id> --out <path>\n"
@@ -181,6 +181,7 @@ static char *signetctl_build_intent(SignetMgmtOp op, const char *agent_id, const
                                     const char *credential_id, const char *secret_type,
                                     const char *label, const char *payload_b64,
                                     const char *credential_policy_id,
+                                    const char *credential_service_url,
                                     bool has_expires_at, int64_t expires_at,
                                     const char *writer_pubkey) {
   const char *method = signetctl_contextvm_method(op);
@@ -239,6 +240,10 @@ static char *signetctl_build_intent(SignetMgmtOp op, const char *agent_id, const
   if (credential_policy_id) {
     json_builder_set_member_name(b, "policy_id");
     json_builder_add_string_value(b, credential_policy_id);
+  }
+  if (credential_service_url) {
+    json_builder_set_member_name(b, "service_url");
+    json_builder_add_string_value(b, credential_service_url);
   }
   if (has_expires_at) {
     json_builder_set_member_name(b, "expires_at");
@@ -798,6 +803,7 @@ int main(int argc, char **argv) {
   const char *credential_type = NULL;
   const char *credential_label = NULL;
   const char *credential_policy_id = NULL;
+  const char *credential_service_url = NULL;
   const char *credential_input_file = NULL;
   const char *credential_output_file = NULL;
   bool credential_from_stdin = false;
@@ -980,6 +986,13 @@ int main(int argc, char **argv) {
         argi += 2;
       } else if (strcmp(argv[argi], "--policy-id") == 0 && argi + 1 < argc) {
         credential_policy_id = argv[argi + 1];
+        argi += 2;
+      } else if (strcmp(argv[argi], "--service-url") == 0 && argi + 1 < argc) {
+        if (credential_service_url || !argv[argi + 1][0] || strlen(argv[argi + 1]) > 2048) {
+          fprintf(stderr, "signetctl: --service-url must be nonempty and specified only once\n");
+          return 2;
+        }
+        credential_service_url = argv[argi + 1];
         argi += 2;
       } else if (strcmp(argv[argi], "--expires-at") == 0 && argi + 1 < argc) {
         if (!signetctl_parse_i64(argv[argi + 1], &credential_expires_at) ||
@@ -1488,6 +1501,7 @@ int main(int argc, char **argv) {
                                         credential_type, credential_label,
                                         credential_payload_b64,
                                         credential_policy_id,
+                                        credential_service_url,
                                         has_credential_expires_at,
                                         credential_expires_at,
                                         writer_pubkey);

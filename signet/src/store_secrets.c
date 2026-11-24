@@ -181,13 +181,14 @@ static void signet_secret_metadata_from_stmt(sqlite3_stmt *stmt,
                       ? 0 : sqlite3_column_int64(stmt, 10);
   out->version = sqlite3_column_int(stmt, 11);
   out->active_version = sqlite3_column_int(stmt, 12);
+  out->service_url = g_strdup((const char *)sqlite3_column_text(stmt, 13));
   out->status = signet_secret_derive_status(out->revoked_at,
                                              out->expires_at, now);
 }
 
 static const char *SIGNET_SECRET_METADATA_COLUMNS =
     "id, agent_id, secret_type, label, policy_id, provenance, created_by, "
-    "created_at, rotated_at, expires_at, revoked_at, version, active_version";
+    "created_at, rotated_at, expires_at, revoked_at, version, active_version, service_url";
 
 void signet_secret_metadata_clear(SignetSecretMetadata *metadata) {
   if (!metadata) return;
@@ -195,6 +196,7 @@ void signet_secret_metadata_clear(SignetSecretMetadata *metadata) {
   g_free(metadata->agent_id);
   g_free(metadata->label);
   g_free(metadata->policy_id);
+  g_free(metadata->service_url);
   g_free(metadata->provenance);
   g_free(metadata->created_by);
   memset(metadata, 0, sizeof(*metadata));
@@ -245,12 +247,24 @@ SignetSecretResult signet_store_create_secret(
     const char *created_by,
     int64_t now,
     SignetSecretMetadata *out_metadata) {
+  return signet_store_create_secret_with_service_url(
+      store, agent_id, secret_type, label, payload, payload_len, policy_id,
+      NULL, expires_at, provenance, created_by, now, out_metadata);
+}
+
+SignetSecretResult signet_store_create_secret_with_service_url(
+    SignetStore *store, const char *agent_id, SignetSecretType secret_type,
+    const char *label, const uint8_t *payload, size_t payload_len,
+    const char *policy_id, const char *service_url, int64_t expires_at,
+    const char *provenance, const char *created_by, int64_t now,
+    SignetSecretMetadata *out_metadata) {
   sqlite3 *db = signet_store_get_db(store);
   const uint8_t *dek = signet_store_get_dek(store);
   if (!db || !dek ||
       !signet_secret_text_valid(agent_id, 128, false) ||
       !signet_secret_text_valid(label, 256, false) ||
       !signet_secret_text_valid(policy_id, 128, true) ||
+      !signet_secret_text_valid(service_url, 2048, true) ||
       !signet_secret_type_valid(secret_type) ||
       !payload || payload_len == 0 || payload_len > SIGNET_MAX_SECRET_PAYLOAD ||
       (expires_at != 0 && expires_at <= now) ||
@@ -286,8 +300,8 @@ SignetSecretResult signet_store_create_secret(
       "INSERT INTO secrets "
       "(id, agent_id, agent_pubkey, secret_type, label, payload, nonce, "
       " policy_id, created_at, expires_at, version, active_version, "
-      " provenance, created_by, version_created_at) "
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?);";
+      " provenance, created_by, version_created_at, service_url) "
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?);";
   sqlite3_stmt *stmt = NULL;
   int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
   if (rc == SQLITE_OK) {
@@ -308,6 +322,7 @@ SignetSecretResult signet_store_create_secret(
     if (created_by) sqlite3_bind_text(stmt, 12, created_by_lower, -1, SQLITE_TRANSIENT);
     else sqlite3_bind_null(stmt, 12);
     sqlite3_bind_int64(stmt, 13, now);
+    sqlite3_bind_text(stmt, 14, service_url, -1, SQLITE_TRANSIENT);
     rc = sqlite3_step(stmt);
   }
   sqlite3_finalize(stmt);
@@ -467,7 +482,7 @@ SignetSecretResult signet_store_get_secret_at(
   const char *sql =
       "SELECT agent_id, agent_pubkey, secret_type, label, payload, nonce, "
       "policy_id, created_at, rotated_at, expires_at, version, active_version, "
-      "revoked_at FROM secrets WHERE id = ?;";
+      "revoked_at, service_url FROM secrets WHERE id = ?;";
   sqlite3_stmt *stmt = NULL;
   int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
   if (rc != SQLITE_OK) {
@@ -544,9 +559,43 @@ SignetSecretResult signet_store_get_secret_at(
   out_record->expires_at = expires_at;
   out_record->version = sqlite3_column_int(stmt, 10);
   out_record->active_version = sqlite3_column_int(stmt, 11);
+  out_record->service_url = g_strdup((const char *)sqlite3_column_text(stmt, 13));
   sqlite3_finalize(stmt);
   sqlite3_mutex_leave(db_mutex);
   return SIGNET_SECRET_OK;
+}
+
+SignetSecretResult signet_store_find_session_credential(
+    SignetStore *store, const char *agent_id, const char *service_url,
+    char **out_id) {
+  *out_id = NULL;
+  sqlite3 *db = signet_store_get_db(store);
+  if (!db || !agent_id || !service_url || !service_url[0])
+    return SIGNET_SECRET_NOT_FOUND;
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(db,
+      "SELECT id FROM secrets WHERE agent_id = ? AND service_url = ? COLLATE BINARY LIMIT 2;",
+      -1, &stmt, NULL) != SQLITE_OK)
+    return SIGNET_SECRET_ERROR;
+  sqlite3_bind_text(stmt, 1, agent_id, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 2, service_url, -1, SQLITE_TRANSIENT);
+  int rc = sqlite3_step(stmt);
+  SignetSecretResult result = SIGNET_SECRET_NOT_FOUND;
+  if (rc == SQLITE_ROW) {
+    char *id = g_strdup((const char *)sqlite3_column_text(stmt, 0));
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_DONE && id) {
+      *out_id = id;
+      result = SIGNET_SECRET_OK;
+    } else {
+      g_free(id);
+      if (rc != SQLITE_ROW) result = SIGNET_SECRET_ERROR;
+    }
+  } else if (rc != SQLITE_DONE) {
+    result = SIGNET_SECRET_ERROR;
+  }
+  sqlite3_finalize(stmt);
+  return result;
 }
 
 int signet_store_get_secret(SignetStore *store,
@@ -978,6 +1027,7 @@ void signet_secret_record_clear(SignetSecretRecord *rec) {
   g_free(rec->agent_pubkey);
   g_free(rec->label);
   g_free(rec->policy_id);
+  g_free(rec->service_url);
   if (rec->payload) {
     sodium_free(rec->payload);
     rec->payload = NULL;

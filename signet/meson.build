@@ -220,6 +220,13 @@ if get_option('signet_enable_passkeys')
   signet_deps += cbor_dep
 endif
 
+session_curl_dep = dependency('libcurl', required: get_option('signet_session_exchange'))
+signet_core_cargs = []
+if session_curl_dep.found()
+  signet_deps += session_curl_dep
+  signet_core_cargs += '-DSIGNET_HAVE_CURL=1'
+endif
+
 # Include paths to monorepo headers (match existing monorepo patterns)
 root_inc = include_directories('..')
 signet_inc = include_directories('include')
@@ -324,6 +331,7 @@ signet_core = static_library('signet_core',
   signet_core_sources,
   include_directories: signet_includes,
   dependencies: signet_deps,
+  c_args: signet_core_cargs,
   install: false,
 )
 

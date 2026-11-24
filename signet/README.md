@@ -119,7 +119,7 @@ handoff supersedes an earlier unpaired URI.
 - **Credential Leasing** — Time-bound leases for credential access; agents request sessions via D-Bus or NIP-5L, Signet brokers the credential exchange
 - **Version-Tracked Rotation** — Credential rotation archives the previous version; old versions remain in the `secret_versions` table
 - **Transactional Rotation** — `signet_store_rotate_secret` archives the old value and updates the current value in one SQLite transaction
-- **Session Brokering** — Agents call `GetSession(service_url)` to mint a service session token with automatic lease tracking
+- **Session Brokering** — Agents call `GetSession(service_url)` to exchange a provisioned credential for the service’s session token with automatic lease tracking
 
 ### Audit & Observability
 
@@ -437,8 +437,8 @@ management channel.
 
 ```bash
 # Create or import an API token/credential, optionally with a Unix expiry time
-signetctl create-credential <agent-id> --type api_token --label <label> [--policy-id <id>] [--expires-at <unix>] --stdin
-signetctl import-credential <agent-id> --type credential --label <label> [--policy-id <id>] [--expires-at <unix>] --file /secure/owner-only-file
+signetctl create-credential <agent-id> --type api_token --label <label> [--policy-id <id>] [--service-url <url>] [--expires-at <unix>] --stdin
+signetctl import-credential <agent-id> --type credential --label <label> [--policy-id <id>] [--service-url <url>] [--expires-at <unix>] --file /secure/owner-only-file
 
 # List or inspect payload-free metadata
 signetctl list-credentials [agent-id]
@@ -563,7 +563,7 @@ Signet exposes two D-Bus interfaces (see `dbus/net.signet.Signer.xml`):
 - `Decrypt(ciphertext, peer_pubkey, algorithm) → plaintext`
 
 **net.signet.Credentials** — Credential lease operations:
-- `GetSession(service_url) → (session_token, expires_at)` — refuses to mint tokens when no credential store is configured
+- `GetSession(service_url) → (session_token, expires_at)` — requires a unique credential for the agent provisioned with that exact URL. Signet contacts the service and returns its token only after recording a hash-only session lease. See the [service exchange contract](INTEGRATION.md#session-exchange).
 - `GetToken(credential_id) → (token, expires_at)` — enforces per-agent ownership; agents can only retrieve their own credentials
 - `ListCredentials() → credential_ids[]`
 

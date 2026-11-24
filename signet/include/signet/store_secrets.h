@@ -75,6 +75,7 @@ typedef struct {
   int64_t expires_at;
   int version;
   int active_version;
+  char *service_url;        /* nullable provisioned exchange endpoint */
 } SignetSecretRecord;
 
 typedef enum {
@@ -110,6 +111,7 @@ typedef struct {
   int version;
   int active_version;
   SignetSecretStatus status;
+  char *service_url;        /* nullable provisioned exchange endpoint */
 } SignetSecretMetadata;
 
 /* Map secret type to/from string. */
@@ -160,6 +162,19 @@ SignetSecretResult signet_store_create_secret(
     const char *created_by,
     int64_t now,
     SignetSecretMetadata *out_metadata);
+
+/* Insert a credential with a provisioner-supplied session exchange endpoint. */
+SignetSecretResult signet_store_create_secret_with_service_url(
+    struct SignetStore *store, const char *agent_id, SignetSecretType secret_type,
+    const char *label, const uint8_t *payload, size_t payload_len,
+    const char *policy_id, const char *service_url, int64_t expires_at,
+    const char *provenance, const char *created_by, int64_t now,
+    SignetSecretMetadata *out_metadata);
+
+/* Return NOT_FOUND for no match or ambiguous matches. Free out_id with g_free. */
+SignetSecretResult signet_store_find_session_credential(
+    struct SignetStore *store, const char *agent_id, const char *service_url,
+    char **out_id);
 
 /* Metadata-only administrative inspection/listing. agent_id may be NULL for
  * a provisioner listing all credentials. */

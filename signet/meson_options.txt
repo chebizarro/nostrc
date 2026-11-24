@@ -11,6 +11,9 @@ option('signet_enable_tests',
   description: 'Build Signet unit tests'
 )
 
+option('signet_session_exchange', type: 'feature', value: 'auto',
+  description: 'Enable libcurl-backed Signet session exchange')
+
 option('signet_enable_health',
   type: 'boolean',
   value: true,

@@ -126,6 +126,7 @@ typedef struct {
   char *label;
   char *payload_b64;
   char *credential_policy_id;
+  char *credential_service_url;
   int64_t credential_expires_at;
   bool has_credential_expires_at;
   int expected_version;    /* deliver: release only this version (0 = active) */

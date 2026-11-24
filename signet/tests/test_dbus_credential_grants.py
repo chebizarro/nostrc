@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Exercise the stock daemon on a private Unix D-Bus (no test hooks)."""
+import hashlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
@@ -20,9 +22,50 @@ BASE = ['gdbus', 'call', '--system', '--dest', BUS, '--object-path', '/net/signe
 TOKEN = 'credential.get_token'
 SESSION = 'credential.get_session'
 DENIED = 'CapabilityDenied'
+UNBOUND = 'SessionEndpointNotBound'
+EXCHANGE_FAILED = 'SessionExchangeFailed'
+SERVICE_TOKEN = 'fixture-service-token'
+EXPIRY = 2100000000
+RESPONSES = {
+    '/ttl': {'token': SERVICE_TOKEN, 'expires_in': 600},
+    '/default-expiry': {'session_token': SERVICE_TOKEN},
+    '/malformed': {'session_token': 42},
+    '/nul': {'session_token': SERVICE_TOKEN + '\0suffix'},
+    '/expired': {'session_token': SERVICE_TOKEN, 'expires_at': 1},
+    '/bad-expiry': {'session_token': SERVICE_TOKEN, 'expires_at': '2100000000'},
+    '/overflow': {'session_token': SERVICE_TOKEN, 'expires_in': 2**63 - 1},
+}
+FAILURE_PATHS = ('/failed', '/redirect', '/oversize', '/malformed', '/nul',
+                 '/expired', '/bad-expiry', '/overflow')
 
 
-def exercise(daemon, fixture, root, address, agent, methods, deny=False):
+class ExchangeHandler(BaseHTTPRequestHandler):
+    def log_message(self, *_):
+        pass
+
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers['Content-Length']))
+        self.server.requests.append((self.path, self.headers['Content-Type'],
+                                     self.headers['Accept'], json.loads(body)))
+        status, headers = 200, {}
+        payload = json.dumps({'session_token': SERVICE_TOKEN, 'expires_at': EXPIRY}).encode()
+        if self.path == '/failed':
+            status = 503
+        elif self.path == '/redirect':
+            status, headers = 307, {'Location': '/redirect-target'}
+        elif self.path == '/oversize':
+            payload += b' ' * (64 * 1024)  # valid JSON if read without the limit
+        elif self.path in RESPONSES:
+            payload = json.dumps(RESPONSES[self.path]).encode()
+        self.send_response(status)
+        self.send_header('Content-Length', str(len(payload)))
+        for name, value in headers.items():
+            self.send_header(name, value)
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+def exercise(daemon, fixture, root, address, agent, methods, service, curl, deny=False):
     root.mkdir()
     env = {k: v for k, v in os.environ.items() if not k.startswith('SIGNET_')}
     env.update(DBUS_SYSTEM_BUS_ADDRESS=address,
@@ -35,8 +78,40 @@ def exercise(daemon, fixture, root, address, agent, methods, deny=False):
     db = root / 'signet.db'
     policy = root / 'policy.conf'
     policy.touch(mode=0o600)
-    cred_id = subprocess.check_output([fixture, db, agent, 'deny' if deny else 'allow'],
-                                      env=env, text=True, timeout=10).strip()
+    endpoint = f'http://127.0.0.1:{service.server_port}'
+    insecure = f'http://localhost:{service.server_port}/insecure'
+    matched = endpoint + '/session'
+    extra = ['', insecure, endpoint + '/ambiguous', endpoint + '/ambiguous']
+    extra += [endpoint + path for path in (*FAILURE_PATHS, '/ttl', '/default-expiry')]
+    cred_id = subprocess.check_output(
+        [fixture, db, agent, 'deny' if deny else 'allow', matched, *extra],
+        env=env, text=True, timeout=10).strip()
+
+    def leases():
+        return subprocess.check_output([fixture, 'leases', db], env=env, text=True,
+                                       timeout=10).splitlines()
+
+    def session(url, expected_error=None, *, hit=None, ttl=None):
+        previous_requests, previous_leases = len(service.requests), leases()
+        before = int(time.time())
+        expiry = call('GetSession', url, expected_error)
+        after = int(time.time())
+        expected_requests = [] if hit is None else [
+            (hit, 'application/json', 'application/json', {'credential': 'dG9rZW4='})]
+        assert service.requests[previous_requests:] == expected_requests
+        rows = leases()
+        if expected_error:
+            assert rows == previous_leases, (url, expected_error, rows)
+        else:
+            assert rows[:-1] == previous_leases and len(rows) == len(previous_leases) + 1
+            secret_id, owner, lease_expiry, metadata = rows[-1].split('\t', 3)
+            assert secret_id.startswith('cred_') and owner == agent and int(lease_expiry) == expiry
+            if ttl is None:
+                assert expiry == EXPIRY and secret_id == cred_id
+            else:
+                assert before + ttl <= expiry <= after + ttl
+            assert json.loads(metadata) == {
+                'session_token_hash': hashlib.sha256(SERVICE_TOKEN.encode()).hexdigest()}
 
     def set_policy(allow, *, default='deny', identity=agent):
         subprocess.run([fixture, 'set-policy', policy, identity,
@@ -92,26 +167,38 @@ def exercise(daemon, fixture, root, address, agent, methods, deny=False):
                 agent, method, result.stderr, result.returncode)
         else:
             assert result.returncode == 0, (agent, method, result.stderr)
-            token = '746f6b656e' if method == 'GetToken' else '[0-9a-f]{64}'
+            token = '746f6b656e' if method == 'GetToken' else SERVICE_TOKEN
             value = re.fullmatch(rf"\('{token}', (?:int64 )?(\d+)\)", result.stdout.strip())
             assert value and int(value[1]) > time.time(), (agent, method, 'invalid token or expiry')
+            return int(value[1])
 
     try:
         subprocess.run(['gdbus', 'wait', '--system', '--timeout', '10', BUS],
                        check=True, env=env, timeout=12)
         if agent == 'granted':
             call('GetToken', cred_id)
-            call('GetSession', 'https://service.invalid')
+            session(matched, None if curl else EXCHANGE_FAILED, hit='/session' if curl else None)
+            wait_for_audit(method='GetSession', decision='allow' if curl else 'error',
+                           reason='ok' if curl else 'exchange_failed')
+            for url in ('', endpoint + '/unprovisioned', matched + '/', endpoint + '/ambiguous'):
+                session(url, UNBOUND)
+            session(insecure, EXCHANGE_FAILED)
+            wait_for_audit(method='GetSession', decision='error', reason='exchange_failed')
+            for path in FAILURE_PATHS:
+                session(endpoint + path, EXCHANGE_FAILED, hit=path if curl else None)
+            for path, ttl in (('/ttl', 600), ('/default-expiry', 3600)):
+                session(endpoint + path, None if curl else EXCHANGE_FAILED,
+                        hit=path if curl else None, ttl=ttl)
             set_policy([SESSION])
             reload_policy()
             call('GetToken', cred_id, DENIED)
-            call('GetSession', 'https://service.invalid')
+            session(matched, None if curl else EXCHANGE_FAILED, hit='/session' if curl else None)
             set_policy([])
             reload_policy()
-            call('GetSession', 'https://service.invalid', DENIED)
+            session(matched, DENIED)
         else:
             call('GetToken', cred_id, 'NotFound' if deny else DENIED)
-            call('GetSession', 'https://service.invalid', DENIED)
+            session(matched, DENIED)
             if deny:
                 wait_for_audit(method='GetSession', decision='deny', reason='deny_listed')
     except Exception:
@@ -130,6 +217,20 @@ def exercise(daemon, fixture, root, address, agent, methods, deny=False):
 
 def main():
     daemon, fixture = map(os.path.abspath, sys.argv[1:3])
+    assert sys.argv[3] in ('0', '1')
+    curl = sys.argv[3] == '1'
+    with ThreadingHTTPServer(('127.0.0.1', 0), ExchangeHandler) as service:
+        service.requests = []
+        thread = threading.Thread(target=service.serve_forever, daemon=True)
+        thread.start()
+        try:
+            exercise_bus(daemon, fixture, service, curl)
+        finally:
+            service.shutdown()
+            thread.join()
+
+
+def exercise_bus(daemon, fixture, service, curl):
     # Keep the socket path short enough for sockaddr_un, in a mode-0700 directory.
     with tempfile.TemporaryDirectory(prefix='signet-dbus-grants-', dir='/tmp') as tmp:
         root = Path(tmp)
@@ -152,7 +253,8 @@ def main():
                                              ('ungranted', None, False),
                                              ('wildcard', ['*'], False),
                                              ('deny-listed', [TOKEN, SESSION], True)]:
-                    exercise(daemon, fixture, root / agent, address, agent, methods, deny)
+                    exercise(daemon, fixture, root / agent, address, agent, methods,
+                             service, curl, deny)
                     print(f'{agent}: PASS')
             finally:
                 bus.terminate()

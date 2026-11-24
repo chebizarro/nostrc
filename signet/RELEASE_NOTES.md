@@ -4,6 +4,11 @@
 
 ### Incompatible pre-1.0 production changes
 
+- D-Bus `GetSession` no longer mints a Signet token. It contacts the service
+  bound to the agent's credential and returns the service's token. Provision
+  `--service-url` on credential create/import; existing credentials have no
+  endpoint. Calls without a unique binding or a working libcurl exchange fail
+  closed. See the [session exchange contract](INTEGRATION.md#session-exchange).
 - Disabled-profile HTTP `/bootstrap` no longer accepts a bearer token plus public
   key equality. Clients must send a signed, token-bound server-challenge event
   object in `auth_event` (purpose `signet-bootstrap`); the response rotates the

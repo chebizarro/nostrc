@@ -7,10 +7,8 @@
 
 #include "signet/key_store.h"
 #include "signet/capability.h"
-#include "credential_access_internal.h"
+#include "session_broker_internal.h"
 #include "signet/store.h"
-#include "signet/store_audit.h"
-#include "signet/store_leases.h"
 #include "signet/store_secrets.h"
 #include "signet/audit_logger.h"
 #ifdef SIGNET_ENABLE_PASSKEYS
@@ -25,7 +23,6 @@
 #include <time.h>
 
 #include <glib.h>
-#include <json-glib/json-glib.h>
 #include <sodium.h>
 
 #include <nostr-event.h>
@@ -41,50 +38,6 @@ static void bytes_to_hex(const uint8_t *bytes, size_t len, char *out_hex) {
   for (size_t i = 0; i < len; i++)
     sprintf(out_hex + i * 2, "%02x", bytes[i]);
   out_hex[len * 2] = '\0';
-}
-
-static void sha256_hex(const char *input,
-                       char out_hex[crypto_hash_sha256_BYTES * 2 + 1]) {
-  uint8_t hash_raw[crypto_hash_sha256_BYTES];
-  crypto_hash_sha256(hash_raw, (const uint8_t *)input, strlen(input));
-  bytes_to_hex(hash_raw, sizeof(hash_raw), out_hex);
-  sodium_memzero(hash_raw, sizeof(hash_raw));
-}
-
-static char *build_session_metadata(const char *transport,
-                                    const char *service_url,
-                                    const char *session_token_hash) {
-  JsonBuilder *builder = json_builder_new();
-  if (!builder) return NULL;
-
-  json_builder_begin_object(builder);
-
-  json_builder_set_member_name(builder, "session_token_hash");
-  json_builder_add_string_value(builder, session_token_hash ? session_token_hash : "");
-
-  json_builder_set_member_name(builder, "transport");
-  json_builder_add_string_value(builder, transport ? transport : "dbus");
-
-  json_builder_set_member_name(builder, "service_url");
-  json_builder_add_string_value(builder, service_url ? service_url : "");
-
-  json_builder_end_object(builder);
-
-  JsonGenerator *generator = json_generator_new();
-  if (!generator) {
-    g_object_unref(builder);
-    return NULL;
-  }
-
-  JsonNode *root = json_builder_get_root(builder);
-  json_generator_set_root(generator, root);
-  json_generator_set_pretty(generator, FALSE);
-  char *json = json_generator_to_data(generator, NULL);
-
-  json_node_free(root);
-  g_object_unref(generator);
-  g_object_unref(builder);
-  return json;
 }
 
 static const char *transport_name(const SignetDbusDispatchContext *ctx) {
@@ -278,77 +231,50 @@ static void handle_get_session(const SignetDbusDispatchContext *ctx,
   g_variant_get(parameters, "(&s)", &service_url);
 
   if (!ctx->store) {
+    audit_key_access(ctx, agent_id, "GetSession", "error", "store_unavailable");
     g_dbus_method_invocation_return_dbus_error(
         invocation, "net.signet.Error.NotConfigured",
         "Session brokering requires a configured store");
     return;
   }
 
-  int64_t now = signet_now_unix();
   SignetCredentialAccessContext acc = credential_access_context(ctx);
-  SignetCredentialAccessRequest req = {
-    .agent_id = agent_id,
-    .capability = SIGNET_CAP_CREDENTIAL_GET_SESSION,
-  };
-  SignetCredAccessStatus st = signet_credential_access_authorize(&acc, &req, now);
-  if (st != SIGNET_CRED_ACCESS_OK) {
-    bool error = st == SIGNET_CRED_ACCESS_ERROR;
-    audit_key_access(ctx, agent_id, "GetSession", error ? "error" : "deny",
-                     signet_cred_access_reason(st));
-    g_dbus_method_invocation_return_dbus_error(invocation,
-        error ? "net.signet.Error.Internal" : "net.signet.Error.CapabilityDenied",
-        error ? "Credential access failed" : "Operation not permitted by policy");
+  SignetSessionRequest req = { .agent_id = agent_id, .service_url = service_url };
+  SignetSessionResult result;
+  SignetCredAccessStatus access;
+  SignetSessionStatus status = signet_session_broker_get_for_transport(
+      &acc, &req, transport_name(ctx), &result, &access);
+  if (status != SIGNET_SESSION_OK) {
+    const char *code = "net.signet.Error.Internal";
+    const char *message = "Session brokering failed";
+    const char *decision = "error";
+    const char *reason = "lease_or_audit_failed";
+    if (status == SIGNET_SESSION_EXCHANGE_FAILED) {
+      code = "net.signet.Error.SessionExchangeFailed";
+      message = "Service session exchange failed";
+      reason = "exchange_failed";
+    } else if (status == SIGNET_SESSION_ACCESS_FAILED) {
+      reason = signet_cred_access_reason(access);
+      if (access != SIGNET_CRED_ACCESS_ERROR) {
+        decision = "deny";
+        if (access == SIGNET_CRED_ACCESS_NOT_FOUND) {
+          code = "net.signet.Error.SessionEndpointNotBound";
+          message = "No unique credential is bound to this service endpoint";
+        } else {
+          code = "net.signet.Error.CapabilityDenied";
+          message = "Operation not permitted by policy";
+        }
+      }
+    }
+    audit_key_access(ctx, agent_id, "GetSession", decision, reason);
+    g_dbus_method_invocation_return_dbus_error(invocation, code, message);
     return;
   }
 
-  uint8_t raw[32];
-  randombytes_buf(raw, sizeof(raw));
-  char token_hex[65];
-  bytes_to_hex(raw, sizeof(raw), token_hex);
-  sodium_memzero(raw, sizeof(raw));
-
-  int64_t expires_at = now + 24 * 60 * 60;
-
-  uint8_t lid_raw[16];
-  randombytes_buf(lid_raw, sizeof(lid_raw));
-  char lease_id[33];
-  bytes_to_hex(lid_raw, sizeof(lid_raw), lease_id);
-  sodium_memzero(lid_raw, sizeof(lid_raw));
-
-  char token_hash[crypto_hash_sha256_BYTES * 2 + 1];
-  sha256_hex(token_hex, token_hash);
-  char *meta = build_session_metadata(transport_name(ctx), service_url, token_hash);
-  if (!meta) {
-    g_dbus_method_invocation_return_dbus_error(
-        invocation, "net.signet.Error.Internal", "Failed to build lease metadata");
-    return;
-  }
-
-  if (signet_store_issue_lease(ctx->store, lease_id, "session",
-                               agent_id, now, expires_at, meta) != 0) {
-    g_free(meta);
-    audit_key_access(ctx, agent_id, "GetSession", "error", "lease_persist_failed");
-    g_dbus_method_invocation_return_dbus_error(
-        invocation, "net.signet.Error.Internal", "Failed to persist session lease");
-    return;
-  }
-  g_free(meta);
-
-  /* Hash-chained audit for the brokered session (token itself is never
-   * logged; the lease metadata records only its SHA-256). */
-  {
-    char detail[160];
-    snprintf(detail, sizeof(detail),
-             "{\"decision\":\"allow\",\"reason\":\"ok\",\"lease_id\":\"%s\"}",
-             lease_id);
-    (void)signet_audit_log_append(ctx->store, now, agent_id, "session_issue",
-                                  "session", transport_name(ctx), detail);
-  }
   audit_key_access(ctx, agent_id, "GetSession", "allow", "ok");
-
   g_dbus_method_invocation_return_value(invocation,
-      g_variant_new("(sx)", token_hex, (gint64)expires_at));
-  sodium_memzero(token_hex, sizeof(token_hex));
+      g_variant_new("(sx)", result.session_token, (gint64)result.expires_at));
+  signet_session_result_clear(&result);
 }
 
 static void handle_get_token(const SignetDbusDispatchContext *ctx,
