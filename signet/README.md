@@ -593,6 +593,21 @@ grant, remove its literal entry and submit the updated policy. The running
 daemon applies management updates directly; an out-of-process update to the
 policy file takes effect on `SIGHUP`. See [the integration guide](INTEGRATION.md#d-bus-credential-grants).
 
+**net.signet.Passkeys** — Programmatic WebAuthn (requires a passkey-enabled
+build and `[passkeys] enabled = true`). Map the Unix caller to its provisioned
+agent as above, then grant only the methods it needs, for example:
+
+```bash
+signetctl set-policy my-agent '{"default":"deny","allow_methods":["passkey.get_info","passkey.make_credential","passkey.get_assertion"]}'
+```
+
+Export and import are separate opt-in grants (`passkey.export` and
+`passkey.import`); don't give them to an agent that only performs WebAuthn
+ceremonies. Wildcard/default-allow policies don't grant passkey methods, and the
+deny list takes precedence. To revoke a policy-store grant, remove it from the
+replacement policy while keeping the other intended rules. See [Passkeys /
+WebAuthn](INTEGRATION.md#passkeys--webauthn-programmatic-api) for the full mapping.
+
 ## Health Endpoint
 
 ```bash
