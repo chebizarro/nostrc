@@ -40,6 +40,7 @@
 
 ### Other operator-visible changes
 
+- Both release images now use digest-pinned Debian 13 (trixie) for the build and runtime (`nostrc-y01id`).
 - `[nostr] reconnect_interval_s` is deprecated and ignored with a one-time
   warning. Reconnect timing continues to use libnostr backoff.
 
