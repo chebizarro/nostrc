@@ -431,8 +431,7 @@ fixture_up(Fixture *f)
   f->relays = gh_account_relays_new(f->accounts, f->settings, &scope_transport, f->scopes);
   f->resolver = g_object_new(FAKE_TYPE_RESOLVER, NULL);
   f->clock = gh_clock_new_fake(T0 * G_USEC_PER_SEC);
-  f->sender = gh_dm_sender_new(f->accounts, f->relays, GH_INBOX_RESOLVER(f->resolver), NULL, NULL);
-  gh_dm_sender_set_publish_deadline(f->sender, 10);
+  f->sender = gh_dm_sender_new(f->accounts, f->relays, GH_INBOX_RESOLVER(f->resolver));
   f->data_dir = g_dir_make_tmp("groundhog-multi-send-XXXXXX", NULL);
   g_assert_nonnull(f->data_dir);
   f->store = store_open(f->data_dir, f->clock);
@@ -1469,6 +1468,21 @@ test_wire_spacing(void)
   gh_clock_fake_advance(f.clock, 3 * G_USEC_PER_SEC);
   wait_for_count(&bob_only.events, 1);
   wait_until(&f, item, GH_MESSAGE_STATUS_SENT);
+  /* Cancel while the first recipient's OK and the second wrap are pending. */
+  carol_only.hold_oks = TRUE;
+  gh_clock_fake_push_random(f.clock, 0); /* Carol first */
+  gh_clock_fake_push_random(f.clock, 3);
+  g_autoptr(GhOutboxItem) cancelled = send_room(&f, "never both", hex[KEY_BOB],
+                                                hex[KEY_CAROL], NULL);
+  wait_for_count(&carol_only.events, 2);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_outbox_cancel(f.outbox, gh_outbox_item_get_outbox_id(cancelled), &error));
+  g_assert_no_error(error);
+  wire_relay_release_oks(&carol_only);
+  gh_clock_fake_advance(f.clock, 3 * G_USEC_PER_SEC);
+  drain();
+  g_assert_cmpint(gh_outbox_item_get_status(cancelled), ==, GH_MESSAGE_STATUS_CANCELLED);
+  g_assert_cmpuint(bob_only.events, ==, 1);
   fixture_down(&f);
   WireRelay *relays[] = { &bob_only, &carol_only, &dave_only, &own };
   for (guint i = 0; i < G_N_ELEMENTS(relays); i++)
@@ -1547,138 +1561,6 @@ test_wire_retry_spacing(void)
 }
 
 /* ---- GhDmSender directly ------------------------------------------------------ */
-
-typedef struct {
-  GhDmSend *send;
-} DoneWait;
-
-static gboolean
-send_done(gpointer data)
-{
-  return gh_dm_send_is_done(((DoneWait *) data)->send);
-}
-
-static const GhDmSendStatus *
-send_and_wait(Fixture *f, GhDmSend **out, const gchar *const *recipients, const gchar *text)
-{
-  *out = gh_dm_sender_send_room(f->sender, recipients, text, NULL);
-  DoneWait wait = { *out };
-  gh_test_spin_until(send_done, &wait);
-  drain();
-  return gh_dm_send_get_status(*out);
-}
-
-/* The pipeline itself: one wrap per recipient, a recipient without a list
- * reported (FLAG_RECIPIENT_NO_INBOX, no targets, PARTIALLY_SENT), nobody
- * reachable before any signer call, and the limit. */
-static void
-test_wire_dm_sender(void)
-{
-  WireRelay bob_only = { 0 }, own = { 0 };
-  store_relay(&bob_only);
-  store_relay(&own);
-  Fixture f;
-  fixture_up(&f);
-  fake_resolver_set(f.resolver, hex[KEY_BOB], GH_INBOX_FOUND, bob_only.url, NULL);
-  settle_own(&f, own.url, NULL);
-
-  const gchar *const bob_carol[] = { hex[KEY_BOB], hex[KEY_CAROL], NULL };
-  g_autoptr(GhDmSend) send = NULL;
-  const GhDmSendStatus *status = send_and_wait(&f, &send, bob_carol, "direct");
-  g_assert_cmpint(status->result, ==, GH_DM_SEND_RESULT_PARTIALLY_SENT);
-  g_assert_true(status->flags & GH_DM_SEND_FLAG_RECIPIENT_NO_INBOX);
-  g_assert_cmpuint(status->recipients->len, ==, 2);
-  GhDmSendLeg *bob = g_ptr_array_index(status->recipients, 0);
-  GhDmSendLeg *carol = g_ptr_array_index(status->recipients, 1);
-  g_assert_cmpstr(bob->pubkey, ==, hex[KEY_BOB]);
-  g_assert_cmpuint(bob->accepted, ==, 1);
-  g_assert_cmpint(carol->inbox, ==, GH_INBOX_NOT_FOUND);
-  g_assert_cmpuint(carol->relays->len, ==, 0);
-  g_assert_nonnull(carol->wrap_json); /* sealed, never published */
-  g_assert_cmpstr(carol->wrap_id, !=, bob->wrap_id);
-  g_assert_cmpint(gh_dm_send_status_get_message_status(status), ==,
-                  GH_MESSAGE_STATUS_PARTIALLY_SENT);
-  g_assert_true(gh_dm_send_status_self_copy_stored(status));
-  g_assert_cmpuint(bob_only.events, ==, 1);
-  g_assert_cmpuint(own.events, ==, 1);
-
-  /* Republishing the sealed status keeps Carol targetless. */
-  g_autoptr(GhDmSend) again = gh_dm_sender_publish(f.sender, status, NULL);
-  DoneWait wait = { again };
-  gh_test_spin_until(send_done, &wait);
-  g_assert_cmpint(gh_dm_send_get_status(again)->result, ==, GH_DM_SEND_RESULT_PARTIALLY_SENT);
-
-  guint calls = f.mock.calls;
-  const gchar *const nobody[] = { hex[KEY_CAROL], hex[KEY_DAVE], NULL };
-  g_autoptr(GhDmSend) none = NULL;
-  g_assert_cmpint(send_and_wait(&f, &none, nobody, "hello?")->result, ==,
-                  GH_DM_SEND_RESULT_NO_RECIPIENT_INBOX);
-  fake_resolver_set(f.resolver, hex[KEY_DAVE], GH_INBOX_UNREACHABLE);
-  g_autoptr(GhDmSend) unknown = NULL;
-  g_assert_cmpint(send_and_wait(&f, &unknown, nobody, "hello?")->result, ==,
-                  GH_DM_SEND_RESULT_INBOX_UNKNOWN);
-  g_assert_cmpuint(f.mock.calls, ==, calls);
-
-  g_autoptr(GPtrArray) eleven = g_ptr_array_new_with_free_func(g_free);
-  for (guint i = 0; i <= GH_NIP17_MAX_SEND_RECIPIENTS; i++)
-    g_ptr_array_add(eleven, numbered_key("many", i));
-  g_ptr_array_add(eleven, NULL);
-  g_autoptr(GhDmSend) too_many =
-    gh_dm_sender_send_room(f.sender, (const gchar *const *) eleven->pdata, "x", NULL);
-  g_assert_true(gh_dm_send_is_done(too_many));
-  g_assert_cmpint(gh_dm_send_get_status(too_many)->failure, ==, GH_DM_SEND_FAILURE_INVALID);
-  fixture_down(&f);
-  relay_clear(&bob_only);
-  relay_clear(&own);
-}
-
-/* nostrc-yp69, the direct path: gh_dm_sender_send_room() spaces a room's
- * wraps too, on the sender's clock. With scripted draws Carol goes at once
- * and Bob 2 s later; the self-copy goes at once. */
-static void
-test_wire_dm_sender_spacing(void)
-{
-  WireRelay bob_only = { 0 }, carol_only = { 0 }, own = { 0 };
-  store_relay(&bob_only);
-  store_relay(&carol_only);
-  store_relay(&own);
-  Fixture f;
-  fixture_up(&f);
-  gh_dm_sender_set_clock(f.sender, f.clock);
-  fake_resolver_set(f.resolver, hex[KEY_BOB], GH_INBOX_FOUND, bob_only.url, NULL);
-  fake_resolver_set(f.resolver, hex[KEY_CAROL], GH_INBOX_FOUND, carol_only.url, NULL);
-  settle_own(&f, own.url, NULL);
-  /* The shuffle of Bob, Carol (j = 0: Carol first) and the gap. */
-  gh_clock_fake_push_random(f.clock, 0);
-  gh_clock_fake_push_random(f.clock, 2);
-  const gchar *const bob_carol[] = { hex[KEY_BOB], hex[KEY_CAROL], NULL };
-  g_autoptr(GhDmSend) send = gh_dm_sender_send_room(f.sender, bob_carol, "spaced directly",
-                                                    NULL);
-  wait_for_count(&carol_only.events, 1);
-  wait_for_count(&own.events, 1);
-  drain();
-  g_assert_cmpuint(bob_only.events, ==, 0);
-  g_assert_false(gh_dm_send_is_done(send));
-  gh_clock_fake_advance(f.clock, 2 * G_USEC_PER_SEC);
-  wait_for_count(&bob_only.events, 1);
-  DoneWait wait = { send };
-  gh_test_spin_until(send_done, &wait);
-  g_assert_cmpint(gh_dm_send_get_status(send)->result, ==, GH_DM_SEND_RESULT_SENT);
-  /* Cancelled while a wrap waits: nothing more goes out. */
-  gh_clock_fake_push_random(f.clock, 0);
-  gh_clock_fake_push_random(f.clock, 3);
-  g_autoptr(GhDmSend) cancelled = gh_dm_sender_send_room(f.sender, bob_carol, "never both",
-                                                         NULL);
-  wait_for_count(&carol_only.events, 2);
-  gh_dm_send_cancel(cancelled);
-  gh_clock_fake_advance(f.clock, 3 * G_USEC_PER_SEC);
-  drain();
-  g_assert_cmpuint(bob_only.events, ==, 1);
-  fixture_down(&f);
-  relay_clear(&bob_only);
-  relay_clear(&carol_only);
-  relay_clear(&own);
-}
 
 #if GROUNDHOG_TEST_ATTACHMENTS
 /* A small JPEG whose APP1 carries a GPS canary (stripped before sending)
@@ -1865,8 +1747,6 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/multi-send/wire/disappearing", test_wire_disappearing);
   g_test_add_func("/groundhog/multi-send/wire/spacing", test_wire_spacing);
   g_test_add_func("/groundhog/multi-send/wire/retry-spacing", test_wire_retry_spacing);
-  g_test_add_func("/groundhog/multi-send/wire/dm-sender-spacing", test_wire_dm_sender_spacing);
-  g_test_add_func("/groundhog/multi-send/wire/dm-sender", test_wire_dm_sender);
 #if GROUNDHOG_TEST_ATTACHMENTS
   g_test_add_func("/groundhog/multi-send/wire/room-file", test_wire_room_file);
 #endif

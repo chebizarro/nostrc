@@ -96,9 +96,7 @@ gh_app_outbox_new(const GhAppOutboxConfig *config)
     self->custom_transport = TRUE;
     self->transport_data = config->transport_data;
   }
-  self->sender = gh_dm_sender_new(config->accounts, config->account_relays, self->inboxes,
-                                  self->custom_transport ? &self->transport : NULL,
-                                  self->transport_data);
+  self->sender = gh_dm_sender_new(config->accounts, config->account_relays, self->inboxes);
   return self;
 }
 

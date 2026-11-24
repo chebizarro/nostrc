@@ -664,8 +664,7 @@ fixture_up(Fixture *f, const gchar *data_dir, NostrcTestBus *daemon)
   f->transport.opens = g_ptr_array_new_with_free_func(pub_open_free);
   f->transport.answers = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, answer_free);
   f->transport.clock = f->clock;
-  f->sender = gh_dm_sender_new(f->accounts, f->relays, GH_INBOX_RESOLVER(f->resolver),
-                               &pub_transport, &f->transport);
+  f->sender = gh_dm_sender_new(f->accounts, f->relays, GH_INBOX_RESOLVER(f->resolver));
   if (data_dir) {
     f->data_dir = g_strdup(data_dir);
   } else {
@@ -1945,6 +1944,7 @@ test_ob7_account_switch(void)
   g_autoptr(GhOutboxItem) item = send_text(&f, hex_bob, "mid publish");
   gint64 id = gh_outbox_item_get_outbox_id(item);
   wait_opens(&f, 3);
+  relay_ok(&f.transport, hex_alice, ALICE_INBOX, TRUE, "");
   PubOpen *stale = last_open(&f.transport, hex_bob, BOB_A);
   g_autofree gchar *wrap_id = g_strdup(stale->event_id);
 
@@ -1962,6 +1962,8 @@ test_ob7_account_switch(void)
   g_assert_cmpint(paused->state, ==, GH_STORE_OUTBOX_PUBLISHING);
   GhStoreOutboxEvent *wrap = entry_event(paused, GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP);
   g_assert_cmpint(event_target(wrap, BOB_A)->outcome, ==, GH_RELAY_PUBLISH_PENDING);
+  GhStoreOutboxEvent *copy = entry_event(paused, GH_STORE_OUTBOX_ROLE_SELF_WRAP);
+  g_assert_cmpint(event_target(copy, ALICE_INBOX)->outcome, ==, GH_RELAY_PUBLISH_ACCEPTED);
   g_assert_cmpint(gh_outbox_item_get_status(item), ==, GH_MESSAGE_STATUS_QUEUED_OFFLINE);
   /* Nothing is sent while the other account is active, whatever happens. */
   g_autoptr(GError) send_error = NULL;
@@ -1977,7 +1979,8 @@ test_ob7_account_switch(void)
   /* Reselecting the account resumes the same stored wraps. */
   g_assert_true(gh_account_controller_select(f.accounts, npub_alice, &error));
   g_assert_no_error(error);
-  wait_opens(&f, opens + 3);
+  wait_opens(&f, opens + 2);
+  g_assert_cmpuint(count_opens(&f.transport, hex_alice, ALICE_INBOX), ==, 1);
   g_assert_true(gh_outbox_is_active(f.outbox));
   g_assert_cmpstr(last_open(&f.transport, hex_bob, BOB_A)->event_id, ==, wrap_id);
   g_assert_cmpstr(last_open(&f.transport, hex_bob, BOB_A)->event_json, ==, wrap->event_json);
@@ -2565,6 +2568,44 @@ on_item_removed(GhOutbox *outbox, GhOutboxItem *item, gpointer data)
 }
 
 static void
+test_cancel_mid_publish(void)
+{
+  Fixture f;
+  fixture_up(&f, NULL, NULL);
+  settle_own(&f, ALICE_INBOX, NULL);
+  fixture_outbox(&f);
+  g_autoptr(GhOutboxItem) first = send_text(&f, hex_bob, "to cancel");
+  wait_opens(&f, 3);
+  PubOpen *pending = last_open(&f.transport, hex_bob, BOB_A);
+  relay_ok(&f.transport, hex_alice, ALICE_INBOX, TRUE, "");
+
+  g_autoptr(GError) error = NULL;
+  gint64 first_id = gh_outbox_item_get_outbox_id(first);
+  g_assert_true(gh_outbox_cancel(f.outbox, first_id, &error));
+  g_assert_no_error(error);
+  g_assert_cmpint(gh_outbox_item_get_status(first), ==, GH_MESSAGE_STATUS_CANCELLED);
+  g_autoptr(GhStoreOutboxEntry) cancelled = load_entry(&f, first_id);
+  g_assert_cmpint(cancelled->state, ==, GH_STORE_OUTBOX_CANCELLED);
+  g_assert_cmpint(cancelled->message_id, >, 0); /* the text stays */
+
+  for (guint i = 0; i < f.transport.opens->len; i++)
+    g_assert_true(((PubOpen *)g_ptr_array_index(f.transport.opens, i))->closed);
+  gh_relay_publish_ok(pending->publish, BOB_A, pending->event_id, TRUE, "");
+  g_assert_cmpint(gh_outbox_item_get_status(first), ==, GH_MESSAGE_STATUS_CANCELLED);
+  g_autoptr(GhStoreOutboxEntry) after_ok = load_entry(&f, first_id);
+  g_assert_cmpint(stored_class(event_target(
+    entry_event(after_ok, GH_STORE_OUTBOX_ROLE_SELF_WRAP), ALICE_INBOX)), ==,
+    GH_TARGET_CLASS_ACCEPTED);
+  g_assert_cmpint(event_target(entry_event(after_ok, GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP),
+                              BOB_A)->outcome, ==, GH_RELAY_PUBLISH_PENDING);
+
+  guint opens = f.transport.opens->len;
+  advance_seconds(&f, 7 * 24 * 3600);
+  g_assert_cmpuint(f.transport.opens->len, ==, opens);
+  fixture_down(&f);
+}
+
+static void
 test_cancel_and_delete(void)
 {
   Fixture f;
@@ -2997,6 +3038,10 @@ test_ob4_wire(void)
   g_assert_cmpint(stored_class(event_target(wrap, auth.url)), ==, GH_TARGET_CLASS_ACCEPTED);
   g_assert_cmpuint(auth.auth_pubkeys->len, ==, 1);
   g_assert_cmpstr(g_ptr_array_index(auth.auth_pubkeys, 0), !=, hex_alice);
+  g_assert_cmpuint(ok.events, ==, 1);
+  g_assert_cmpuint(ok.reqs + own.reqs, ==, 0);
+  g_assert_cmpuint(ok.connections->len, ==, 1);
+  g_assert_cmpuint(own.connections->len, ==, 1);
   g_assert_cmpuint(own.events, ==, 1);
   g_assert_cmpuint(f.mock.calls, ==, 4);
   fixture_down(&f);
@@ -3205,6 +3250,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/outbox/no-inbox-retry", test_no_inbox_and_retry);
   g_test_add_func("/groundhog/outbox/signer-refusal", test_signer_refusal_and_retry);
   g_test_add_func("/groundhog/outbox/cancel-delete", test_cancel_and_delete);
+  g_test_add_func("/groundhog/outbox/cancel-mid-publish", test_cancel_mid_publish);
   g_test_add_func("/groundhog/outbox/custom-emoji-payloads", test_custom_emoji_payloads);
   g_test_add_func("/groundhog/outbox/reaction-utf8", test_reaction_utf8);
   g_test_add_func("/groundhog/outbox/reaction-same-second-toggle",

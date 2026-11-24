@@ -592,10 +592,8 @@ if (TARGET groundhog-account-relays AND TARGET groundhog-conversations)
   endif()
 endif()
 
-# NIP-17 send pipeline: recipient kind-10050 lookup (URL-scoped REQ, no
-# kind-10002 fallback) and per-relay publication of the recipient wrap and the
-# sender self-copy. Part of the executable like the envelope codec it drives;
-# no UI or durable outbox uses it yet.
+# NIP-17 sealing for the durable outbox: recipient kind-10050 lookup
+# (URL-scoped REQ, no kind-10002 fallback) and gift-wrap construction.
 if (TARGET groundhog-account-relays AND TARGET nostr_nip17_core AND TARGET nostr_nip59_core)
   set(GROUNDHOG_DM_SEND_SOURCES src/app/gh-inbox-resolver.c src/app/gh-inbox-lookup.c
     src/app/gh-dm-send.c)
@@ -749,8 +747,8 @@ if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCH
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals,fatal-warnings")
   endif()
 
-  # Send pipeline against recording scope/publish transports and the mock
-  # signer bus and, when libsoup is present, real local WebSocket relays.
+  # Sealing against a recording lookup transport and mock signer bus;
+  # when libsoup is present, also exercise inbox discovery over WebSockets.
   if (GROUNDHOG_DM_SEND_SOURCES)
     add_executable(test-groundhog-dm-send tests/app/test_dm_send.c
       ${GROUNDHOG_DM_SEND_SOURCES} src/app/gh-nip17-envelope.c)
@@ -1878,8 +1876,8 @@ else()
 endif()
 # --- end G16 private notifications ---
 # --- G08 GhAuthPolicy ---
-# Every executable that compiles the NIP-17 send sources (gh-dm-send.c,
-# gh-inbox-lookup.c) or the outbox asks GhAuthPolicy for each connection's
+# Every executable that compiles the inbox lookup (gh-inbox-lookup.c) or
+# the outbox asks GhAuthPolicy for each connection's
 # NIP-42 identity, so each links the policy library defined above.
 foreach (groundhog_g08_target test-groundhog-dm-send test-groundhog-outbox
          test-groundhog-account-store test-groundhog-expiry)
@@ -3496,24 +3494,6 @@ else()
 endif()
 # --- end W27 voice messages ---
 # --- W18 messaging polish (nostrc-qp24.75, .83, .84, .86, yp69, 9cho, lff5) ---
-#  - GhDmSender spaces a room's wraps on a GhClock (charter §4.5 S4 on the
-#    direct path, nostrc-yp69): every executable that compiles gh-dm-send.c
-#    gets the clock, GTK-free and without the store (groundhog-clock; linked
-#    beside groundhog-store too, its object is then simply not pulled twice).
-if (TARGET PkgConfig::GROUNDHOG_STORE_DEPS)
-  add_library(groundhog-clock STATIC src/store/gh-clock.c)
-  target_include_directories(groundhog-clock PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
-  target_link_libraries(groundhog-clock PUBLIC PkgConfig::GROUNDHOG_STORE_DEPS)
-  target_compile_options(groundhog-clock PRIVATE -Wall -Wextra -Werror)
-  get_property(GROUNDHOG_W18_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
-  foreach (target IN LISTS GROUNDHOG_W18_TARGETS)
-    get_target_property(type ${target} TYPE)
-    get_target_property(sources ${target} SOURCES)
-    if (type STREQUAL "EXECUTABLE" AND sources MATCHES "gh-dm-send\\.c")
-      target_link_libraries(${target} PRIVATE groundhog-clock)
-    endif()
-  endforeach()
-endif()
 #  - The conversation timeline's rows (nostrc-qp24.83): a message or a local
 #    event such as the disappearing timer's change (GhTimelineRow,
 #    data/ui/gh-timeline-row.blp; the list item binds it).
