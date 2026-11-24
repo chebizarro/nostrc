@@ -8,6 +8,7 @@
  */
 
 #include "signet/nip5l_transport.h"
+#include "secret_json.h"
 #include "signet/key_store.h"
 #include "signet/capability.h"
 #include "signet/nostr_auth.h"
@@ -92,26 +93,42 @@ static int nip5l_sign_event_in_custody(const uint8_t secret_key[32],
   return rc;
 }
 
+/* One-level JSON object of string members, built with JSON-GLib so values are
+ * escaped as JSON (UTF-8 passes through; quotes, backslashes and control
+ * characters are escaped). g_strescape is C escaping: it turns every byte
+ * >= 0x80 into an octal \ooo sequence, which is not valid JSON. Values can be
+ * decrypted plaintext, so the tree and output are wiped. */
+static char *nip5l_json_object(const char *k1, const char *v1,
+                               const char *k2, const char *v2) {
+  JsonBuilder *b = json_builder_new();
+  json_builder_begin_object(b);
+  json_builder_set_member_name(b, k1);
+  json_builder_add_string_value(b, v1 ? v1 : "");
+  if (k2) {
+    json_builder_set_member_name(b, k2);
+    json_builder_add_string_value(b, v2 ? v2 : "");
+  }
+  json_builder_end_object(b);
+  JsonNode *root = json_builder_get_root(b);
+  JsonGenerator *gen = json_generator_new();
+  json_generator_set_root(gen, root);
+  char *json = json_generator_to_data(gen, NULL);
+  signet_secret_json_node_unref(root);
+  signet_secret_json_generator_unref(gen);
+  signet_secret_json_builder_unref(b);
+  return json;
+}
+
 static char *nip5l_json_result_string(const char *value) {
-  char *escaped = g_strescape(value ? value : "", NULL);
-  char *resp = g_strdup_printf("{\"result\":\"%s\"}", escaped ? escaped : "");
-  g_free(escaped);
-  return resp;
+  return nip5l_json_object("result", value, NULL, NULL);
 }
 
 static char *nip5l_json_error_string(const char *value) {
-  char *escaped = g_strescape(value ? value : "", NULL);
-  char *resp = g_strdup_printf("{\"error\":\"%s\"}", escaped ? escaped : "error");
-  g_free(escaped);
-  return resp;
+  return nip5l_json_object("error", value ? value : "error", NULL, NULL);
 }
 
 static char *nip5l_json_auth_result(const char *agent_id) {
-  char *escaped = g_strescape(agent_id ? agent_id : "", NULL);
-  char *resp = g_strdup_printf("{\"result\":\"authenticated\",\"agent_id\":\"%s\"}",
-                               escaped ? escaped : "");
-  g_free(escaped);
-  return resp;
+  return nip5l_json_object("result", "authenticated", "agent_id", agent_id);
 }
 
 static char *nip5l_json_get_relays(SignetNip5lServer *ns) {
