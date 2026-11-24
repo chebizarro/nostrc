@@ -334,6 +334,13 @@ add_test(NAME db_migration COMMAND test_db_migration)
 add_test(NAME adopt_existing COMMAND test_adopt_existing)
 add_test(NAME reissue_connect COMMAND test_reissue_connect)
 add_test(NAME mgmt_replay COMMAND test_mgmt_replay)
+add_test(NAME mgmt_agent_id COMMAND test_mgmt_replay --agent-id)
+if (SIGNET_ENABLE_TEST_HOOKS)
+  target_compile_definitions(test_mgmt_replay PRIVATE SIGNET_ENABLE_TEST_HOOKS=1)
+  target_include_directories(test_mgmt_replay PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+  add_test(NAME mgmt_result_json COMMAND test_mgmt_replay --result-json)
+  add_test(NAME nip46_result_json COMMAND test_client_bindings --result-json)
+endif()
 add_test(NAME backend_admission COMMAND test_backend_admission)
 add_test(NAME pubkey_backfill COMMAND test_pubkey_backfill)
 add_test(NAME reissue_self_service COMMAND test_reissue_self_service)
@@ -405,6 +412,18 @@ if(COMMAND nostrc_describe_test)
            "${CMAKE_CURRENT_SOURCE_DIR}/test_relay_pool_wire.py")
 endif()
 # End management ingress boundary block.
+
+if (SIGNET_ENABLE_TEST_HOOKS)
+  add_test(NAME mgmt_delivery_json COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_mgmt_ingress_wire.py $<TARGET_FILE:test_mgmt_replay>
+    --delivery-json)
+  set_tests_properties(mgmt_delivery_json PROPERTIES TIMEOUT 30)
+  if(COMMAND nostrc_describe_test)
+    nostrc_describe_test(mgmt_delivery_json OWNER signet TARGETS test_mgmt_replay
+      INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_mgmt_ingress_wire.py"
+             "${CMAKE_CURRENT_SOURCE_DIR}/test_relay_pool_wire.py")
+  endif()
+endif()
 
 # A real daemon, ordinary local relay and crypto-only disposable peer. No hooks.
 add_test(NAME backend_admission_daemon COMMAND ${Python3_EXECUTABLE}
