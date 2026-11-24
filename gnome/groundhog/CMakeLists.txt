@@ -935,6 +935,11 @@ if (BUILD_TESTING)
   add_test(NAME groundhog-two-instance COMMAND test-groundhog-two-instance)
   set_tests_properties(groundhog-two-instance PROPERTIES TIMEOUT 30
     ENVIRONMENT "GROUNDHOG_BIN=$<TARGET_FILE:groundhog>;GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR};GSETTINGS_BACKEND=memory")
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (GNOSTR_ENABLE_ASAN OR GO_ENABLE_ASAN))
+    # The Xvfb startup check exercises the real GTK application and CLI, not GL.
+    set_property(TEST groundhog-two-instance APPEND PROPERTY ENVIRONMENT
+      "GSK_RENDERER=cairo" "GDK_DISABLE=gl")
+  endif()
 
   add_test(NAME groundhog-schema
     COMMAND ${GLIB_COMPILE_SCHEMAS} --strict --dry-run ${CMAKE_CURRENT_BINARY_DIR})
