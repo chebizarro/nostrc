@@ -517,7 +517,7 @@ jobs:
           cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
             -DBUILD_TESTING=ON -DBUILD_GROUNDHOG=ON \
             -DBUILD_NOSTR_GOBJECT=ON -DBUILD_NOSTR_GTK=ON \
-            -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF \
+            -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF -DBUILD_FIPS=OFF \
             -DGNOSTR_ENABLE_ASAN=ON -DGNOSTR_ENABLE_UBSAN=ON
 
       - name: Build the service and widget tests
@@ -669,7 +669,7 @@ jobs:
           cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
             -DBUILD_TESTING=ON -DBUILD_GROUNDHOG=ON \
             -DBUILD_NOSTR_GOBJECT=ON -DBUILD_NOSTR_GTK=ON \
-            -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF \
+            -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF -DBUILD_FIPS=OFF \
             -DGNOSTR_ENABLE_ASAN=ON -DGNOSTR_ENABLE_UBSAN=ON
       - name: Build selected checks and shared prerequisites
         run: cmake --build build-asan --parallel 2

@@ -58,7 +58,7 @@ done
   "$(printf '%s\n' "${expected_targets[@]}" | sort -u)" ] || fail "real executable target mapping"
 [ "$GH_SAN_DISPLAY_WRAP" = 1 ] || fail "GUI display/bus policy"
 [ "${GH_SAN_CONFIGURE[0]} ${GH_SAN_CONFIGURE[1]}" = "-G Ninja" ] || fail "configure starts ${GH_SAN_CONFIGURE[*]}"
-for flag in -DGNOSTR_ENABLE_ASAN=ON -DGNOSTR_ENABLE_UBSAN=ON -DBUILD_GROUNDHOG=ON -DBUILD_APPS=OFF; do
+for flag in -DGNOSTR_ENABLE_ASAN=ON -DGNOSTR_ENABLE_UBSAN=ON -DBUILD_GROUNDHOG=ON -DBUILD_APPS=OFF -DBUILD_FIPS=OFF; do
     has "$flag" "${GH_SAN_CONFIGURE[@]}" || fail "configure lacks $flag"
 done
 has ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:verify_asan_link_order=0:malloc_context_size=64 "${GH_SAN_ENV[@]}" ||

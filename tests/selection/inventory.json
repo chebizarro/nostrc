@@ -31171,6 +31171,7 @@
         "-DBUILD_APPS=OFF",
         "-DBUILD_RELAYD=OFF",
         "-DSIGNET_ENABLE=OFF",
+        "-DBUILD_FIPS=OFF",
         "-DGNOSTR_ENABLE_ASAN=ON",
         "-DGNOSTR_ENABLE_UBSAN=ON"
       ],
@@ -31392,6 +31393,7 @@
           "-DBUILD_APPS=OFF",
           "-DBUILD_RELAYD=OFF",
           "-DSIGNET_ENABLE=OFF",
+          "-DBUILD_FIPS=OFF",
           "-DGNOSTR_ENABLE_ASAN=ON",
           "-DGNOSTR_ENABLE_UBSAN=ON"
         ],
@@ -32900,7 +32902,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "0caa9deb5e88c90839e5fcbcbb8444c9f129cf29f8b3139aed8e847d906969ce",
       "unsupported_reason": "Ordinary and live MDK011 registrations are separate diagnostic profiles. Ordinary selection does not claim live Docker lifecycle coverage; the dedicated live lane preserves docker/display/private_bus and visibly refuses without guarded custody. Full legacy job union, runtime/header audits and original image custody remain unaccepted.",
-      "workflow_sha256": "fe1d5678b8b3bc82977fc0ceabf0152a8ec7c01b189402647e65cab7cdbdb892"
+      "workflow_sha256": "c55756d26f58782cdd42e3a2f1eaded081f223f4f358c7a409f16ead9b2f1463"
     },
     ".github/workflows/groundhog-ci.yml:groundhog-sanitizers": {
       "matrix_source": "",
@@ -32908,9 +32910,9 @@
         "groundhog.linux.sanitizers"
       ],
       "coverage_gap": "groundhog_sanitizer_execution_contract",
-      "source_sha256": "9329e9a95f69ae28b1903dab82f69bd6399449407ca4562999d89a5af9f35f53",
+      "source_sha256": "63daaaaae45a9afcb0aea235d80e69360880ba8016a818132a9824395d3a8589",
       "unsupported_reason": "Ordinary Groundhog suite/MDK011 application configuration is authored but full registration/runtime/header closure and Docker image custody remain unaccepted.",
-      "workflow_sha256": "fe1d5678b8b3bc82977fc0ceabf0152a8ec7c01b189402647e65cab7cdbdb892"
+      "workflow_sha256": "c55756d26f58782cdd42e3a2f1eaded081f223f4f358c7a409f16ead9b2f1463"
     },
     ".github/workflows/groundhog-release.yml:identity": {
       "matrix_source": "",
@@ -33491,8 +33493,8 @@
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "The selected sanitizer runner executes affected checks; it is not unrestricted legacy sanitizer union or native attested profile acceptance.",
       "matrix_source": "",
-      "source_sha256": "a63f12a9b4123906e2c1e458af3b84b23d3c1c8c5ea2ca003670f20e3fb5bbcc",
-      "workflow_sha256": "fe1d5678b8b3bc82977fc0ceabf0152a8ec7c01b189402647e65cab7cdbdb892"
+      "source_sha256": "5510dfb1a67e74540bd094a45022cc4c1b1ef4e836bfcd927953bac01b2998ee",
+      "workflow_sha256": "c55756d26f58782cdd42e3a2f1eaded081f223f4f358c7a409f16ead9b2f1463"
     },
     ".github/workflows/groundhog-release.yml:manual-broad": {
       "profiles": [],
