@@ -355,7 +355,7 @@ static void call(GDBusConnection *bus, const gchar *sender, const gchar *path, c
     g_variant_builder_add_value(&rows, g_variant_builder_end(&b));
   } else if (!strcmp(method, "ListPermissions")) {
     if (fail_permission_read) { g_variant_builder_clear(&rows); g_dbus_method_invocation_return_dbus_error(inv, "org.nostr.Grotto.Control1.Error.Unavailable", "read failed"); return; }
-    g_variant_builder_clear(&rows); g_dbus_method_invocation_return_value(inv, g_variant_new("(@aa{sv})", g_variant_ref(permission_rows))); return;
+    g_variant_builder_clear(&rows); g_dbus_method_invocation_return_value(inv, g_variant_new("(@aa{sv})", permission_rows)); return;
   } else if (!strcmp(method, "ListActivity")) {
     GVariantBuilder b; g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
     ADD("principal", g_variant_new_string("https://jank.example")); ADD("operation", g_variant_new_string("sign_event")); ADD("outcome", g_variant_new_string("success"));
@@ -1990,10 +1990,11 @@ int main(int argc, char **argv) {
   gtk_icon_theme_set_search_path(theme, icon_paths);
   g_assert_true(gtk_icon_theme_has_icon(theme, "org.nostr.Grotto"));
   g_autoptr(GtkIconPaintable) icon = gtk_icon_theme_lookup_icon(theme, "org.nostr.Grotto", NULL, 128, 1, GTK_TEXT_DIR_LTR, 0);
-  g_assert_nonnull(gtk_icon_paintable_get_file(icon));
+  g_autoptr(GFile) loaded_icon = gtk_icon_paintable_get_file(icon);
+  g_assert_nonnull(loaded_icon);
   g_autoptr(GFile) shipped_icons = g_file_new_for_path(G10_ICON_DIR);
-  g_assert_true(g_file_has_prefix(gtk_icon_paintable_get_file(icon), shipped_icons));
-  g_autofree gchar *icon_file = g_file_get_basename(gtk_icon_paintable_get_file(icon));
+  g_assert_true(g_file_has_prefix(loaded_icon, shipped_icons));
+  g_autofree gchar *icon_file = g_file_get_basename(loaded_icon);
   g_assert_cmpstr(icon_file, ==, "org.nostr.Grotto.png");
   gpointer panel_class = g_type_class_ref(GROTTO_TYPE_IDENTITY_PANEL); g_type_class_unref(panel_class);
   bindtextdomain("grotto-panels", G10_TEST_LOCALE_DIR); bind_textdomain_codeset("grotto-panels", "UTF-8");
