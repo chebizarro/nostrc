@@ -36,6 +36,12 @@ test_nip5l_wire_exe = executable('test_nip5l_wire', 'test_nip5l_wire.c',
   link_with: signet_core, include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
 test('nip5l_wire', test_nip5l_wire_exe, timeout: 60)
+test_nip5l_wipe_exe = executable('test_nip5l_wipe', 'test_nip5l_wire.c',
+  '../src/nip5l_transport.c', '../src/secret_json.c',
+  link_with: signet_core, include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args + ['-DSIGNET_ENABLE_TEST_HOOKS=1'], install: false)
+test('nip5l_wipe', test_nip5l_wipe_exe, timeout: 60)
 test_nip5l_line_cap_exe = executable('test_nip5l_line_cap', 'test_nip5l_line_cap.c',
   link_with: signet_core, include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
