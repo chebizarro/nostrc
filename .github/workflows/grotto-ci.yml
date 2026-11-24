@@ -177,7 +177,7 @@ jobs:
         if: matrix.mode == 'asan-ubsan'
         run: |
           set -eu
-          # Same packages as linux-ci.Dockerfile (nostrc-ydtdf / nostrc-ojtu3).
+          # Same packages as linux-ci.Dockerfile (nostrc-ydtdf / nostrc-ojtu3 / nostrc-ccg7l).
           sudo apt-get install -y --no-install-recommends ubuntu-dbgsym-keyring
           for suite in noble noble-updates noble-proposed; do
             echo "deb [signed-by=/usr/share/keyrings/ubuntu-dbgsym-keyring.gpg] http://ddebs.ubuntu.com $suite main universe"
@@ -197,7 +197,7 @@ jobs:
               "gir1.2-gtk-4.0=$gtk_version" "libgtk-4-media-gstreamer=$gtk_version"
           fi
           set --
-          for package in libfontconfig1 libgtk-4-1 libglib2.0-0t64 libpangoft2-1.0-0; do
+          for package in libfontconfig1 libgtk-4-1 libglib2.0-0t64 libpangoft2-1.0-0 libadwaita-1-0; do
             version="$(dpkg-query -W -f='${Version}' "$package")"
             echo "Required symbols: $package-dbgsym=$version"
             set -- "$@" "$package-dbgsym=$version"
