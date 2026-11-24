@@ -60,6 +60,12 @@ test('memory_hardening_daemon', find_program('python3'),
   args: [files('test_memory_hardening_daemon.py'), signetd_exe], timeout: 30)
 test('daemon_startup', find_program('sh'),
   args: [files('test_daemon_startup.sh'), signetd_exe, signetctl_exe], timeout: 120)
+test_dbus_tcp_exe = executable('test_dbus_tcp', 'test_dbus_tcp.c',
+  link_with: signet_core, include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
+test('dbus_tcp_daemon', find_program('python3'),
+  args: [files('test_dbus_tcp_daemon.py'), signetd_exe, test_dbus_tcp_exe], timeout: 120)
+test('dbus_tcp_authorized', test_dbus_tcp_exe, timeout: 30)
 # W3/W4 deployment packaging and explicitly enabled live drills (separate ownership).
 nip46_reference_client = executable('nip46_reference_client',
   'integration/nip46_reference_client.c',

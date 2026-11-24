@@ -65,7 +65,7 @@ for acceptance commands and capability limits.
 Agents on the same machine or LAN can use the `net.signet.Signer` D-Bus interface:
 
 - **Unix socket** (system bus): Auth via `SO_PEERCRED` UID → agent_id mapping. Enable with `[dbus] unix_enabled = true`.
-- **TCP**: For LAN agents. Enable with `[dbus] tcp_enabled = true` and `tcp_port = 47472`.
+- **TCP**: Enable with `[dbus] tcp_enabled = true`. It binds to `127.0.0.1:47472` by default; set `tcp_host` explicitly to reach a LAN interface. This transport is plaintext. `GetToken` and `GetSession` are blocked unless `tcp_allow_credentials = true`, and even then normal capability checks apply. Prefer Unix D-Bus or an encrypted tunnel.
 
 ### NIP-5L (Unix Socket)
 
