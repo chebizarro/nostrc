@@ -659,6 +659,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (GNOSTR_ENABLE_ASAN OR GO_ENABLE_ASAN)
   # Breakpoint snapshot ownership (nostrc-ccg7l) appears beneath nested GTK
   # renders. Preserve inherited sanitizer settings while retaining that frame.
   foreach(gui_suite signer/ui-layout signer/ui-accessibility)
+    # CI's Xvfb has no hardware GL. Render the same GTK scene directly in
+    # software rather than spending sanitizer time in Mesa's software GL path.
+    set_property(TEST ${gui_suite} APPEND PROPERTY ENVIRONMENT
+      "GSK_RENDERER=cairo" "GDK_DISABLE=gl")
     set_property(TEST ${gui_suite} APPEND PROPERTY ENVIRONMENT_MODIFICATION
       "ASAN_OPTIONS=string_append::malloc_context_size=100")
   endforeach()

@@ -98,21 +98,36 @@ static void send_key(GtkWindow *window, const char *key) {
   send_key_event(window, key);
   wait_frames(GTK_WIDGET(window));
 }
-static graphene_point_t assert_about_caret_visible(GtkTextView *about, SignerWindow *window) {
+static gboolean about_caret_bounds(GtkTextView *about, SignerWindow *window,
+                                   graphene_point_t *point, graphene_rect_t *clip,
+                                   int *height) {
   GdkRectangle cursor; int x, y;
   gtk_text_view_get_cursor_locations(about, NULL, &cursor, NULL);
   gtk_text_view_buffer_to_window_coords(about, GTK_TEXT_WINDOW_WIDGET, cursor.x, cursor.y, &x, &y);
-  graphene_point_t point;
-  g_assert_true(gtk_widget_compute_point(GTK_WIDGET(about), GTK_WIDGET(window), &GRAPHENE_POINT_INIT(x, y), &point));
   GtkWidget *scroller = gtk_widget_get_ancestor(GTK_WIDGET(about), GTK_TYPE_SCROLLED_WINDOW);
   g_assert_nonnull(scroller);
   GtkWidget *viewport = gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(scroller));
-  graphene_rect_t clip;
-  g_assert_true(gtk_widget_compute_bounds(viewport, GTK_WIDGET(window), &clip));
-  g_test_message("About caret y=%.1f..%.1f, page clip=%.1f..%.1f", point.y, point.y + cursor.height, clip.origin.y, clip.origin.y + clip.size.height);
+  *height = cursor.height;
+  return gtk_widget_compute_point(GTK_WIDGET(about), GTK_WIDGET(window), &GRAPHENE_POINT_INIT(x, y), point) &&
+         gtk_widget_compute_bounds(viewport, GTK_WIDGET(window), clip);
+}
+static gboolean about_caret_visible(GtkTextView *about, SignerWindow *window) {
+  graphene_point_t point; graphene_rect_t clip; int height;
+  return about_caret_bounds(about, window, &point, &clip, &height) &&
+         point.y >= clip.origin.y && point.y + height <= clip.origin.y + clip.size.height;
+}
+static graphene_point_t assert_about_caret_visible(GtkTextView *about, SignerWindow *window) {
+  graphene_point_t point; graphene_rect_t clip; int height;
+  g_assert_true(about_caret_bounds(about, window, &point, &clip, &height));
+  g_test_message("About caret y=%.1f..%.1f, page clip=%.1f..%.1f", point.y, point.y + height, clip.origin.y, clip.origin.y + clip.size.height);
   g_assert_cmpfloat(point.y, >=, clip.origin.y);
-  g_assert_cmpfloat(point.y + cursor.height, <=, clip.origin.y + clip.size.height);
+  g_assert_cmpfloat(point.y + height, <=, clip.origin.y + clip.size.height);
   return point;
+}
+static int text_cursor_offset(GtkTextBuffer *buffer) {
+  GtkTextIter iter;
+  gtk_text_buffer_get_iter_at_mark(buffer, &iter, gtk_text_buffer_get_insert(buffer));
+  return gtk_text_iter_get_offset(&iter);
 }
 static void scroll_about_with_wheel(SignerWindow *window, graphene_point_t caret) {
   GdkSurface *surface = gtk_native_get_surface(GTK_NATIVE(window));
@@ -1186,17 +1201,23 @@ static void layout_activate(GApplication *application, gpointer data) {
   const int profile_widths[] = {360, 798};
   for (guint i = 0; i < G_N_ELEMENTS(profile_widths); i++) {
     gtk_window_set_default_size(GTK_WINDOW(window), profile_widths[i] + profile_inset, 720);
-    wait_for_frames(GTK_WIDGET(window), 30);
+    WAIT(gtk_widget_get_width(GTK_WIDGET(window)) == profile_widths[i]);
     g_assert_cmpint(gtk_widget_get_width(GTK_WIDGET(window)), ==, profile_widths[i]);
     gtk_text_buffer_set_text(profile_buffer, biography->str, -1);
     g_assert_true(gtk_widget_grab_focus(GTK_WIDGET(profile_about))); send_key(GTK_WINDOW(window), "ctrl+End");
-    wait_for_frames(GTK_WIDGET(window), 30);
+    WAIT(text_cursor_offset(profile_buffer) == gtk_text_buffer_get_char_count(profile_buffer) &&
+         gtk_widget_get_height(GTK_WIDGET(profile_about)) > gtk_widget_get_height(GTK_WIDGET(profile_scroll)) &&
+         gtk_adjustment_get_value(profile_adjustment) > 0 && about_caret_visible(profile_about, window));
     g_assert_cmpint(gtk_widget_get_height(GTK_WIDGET(profile_about)), >, gtk_widget_get_height(GTK_WIDGET(profile_scroll)));
     assert_about_caret_visible(profile_about, window);
     g_assert_cmpfloat(gtk_adjustment_get_value(profile_adjustment), >, 0);
-    send_key(GTK_WINDOW(window), "a"); wait_for_frames(GTK_WIDGET(window), 30);
+    int chars_before_key = gtk_text_buffer_get_char_count(profile_buffer);
+    send_key(GTK_WINDOW(window), "a");
+    WAIT(gtk_text_buffer_get_char_count(profile_buffer) == chars_before_key + 1 &&
+         about_caret_visible(profile_about, window));
     assert_about_caret_visible(profile_about, window);
-    send_key(GTK_WINDOW(window), "Return"); wait_for_frames(GTK_WIDGET(window), 30);
+    send_key(GTK_WINDOW(window), "Return");
+    WAIT(gtk_text_buffer_get_line_count(profile_buffer) == 82 && about_caret_visible(profile_about, window));
     g_assert_cmpint(gtk_text_buffer_get_line_count(profile_buffer), ==, 82);
     assert_about_caret_visible(profile_about, window);
     g_assert_true(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == profile_dialog);
@@ -1204,10 +1225,11 @@ static void layout_activate(GApplication *application, gpointer data) {
     snapshot(GTK_WIDGET(window), end_capture);
     /* Leave the field, scroll its retained end caret out of view, then use
      * actual backward keyboard traversal to re-enter it without moving the mark. */
-    send_key(GTK_WINDOW(window), "Tab"); wait_for_frames(GTK_WIDGET(window), 30);
+    send_key(GTK_WINDOW(window), "Tab");
+    WAIT(gtk_root_get_focus(GTK_ROOT(window)) != GTK_WIDGET(profile_about));
     g_assert_true(gtk_root_get_focus(GTK_ROOT(window)) != GTK_WIDGET(profile_about));
     gtk_adjustment_set_value(profile_adjustment, gtk_adjustment_get_lower(profile_adjustment));
-    wait_for_frames(GTK_WIDGET(window), 30);
+    wait_frames(GTK_WIDGET(window));
     GdkRectangle insertion; int x, y; graphene_point_t offscreen;
     gtk_text_view_get_cursor_locations(profile_about, NULL, &insertion, NULL);
     gtk_text_view_buffer_to_window_coords(profile_about, GTK_TEXT_WINDOW_WIDGET, insertion.x, insertion.y, &x, &y);
@@ -1215,15 +1237,19 @@ static void layout_activate(GApplication *application, gpointer data) {
     graphene_rect_t clip;
     g_assert_true(gtk_widget_compute_bounds(gtk_scrolled_window_get_child(profile_scroll), GTK_WIDGET(window), &clip));
     g_assert_cmpfloat(offscreen.y, >, clip.origin.y + clip.size.height);
-    send_key(GTK_WINDOW(window), "shift+Tab"); wait_for_frames(GTK_WIDGET(window), 30);
+    send_key(GTK_WINDOW(window), "shift+Tab");
+    WAIT(gtk_root_get_focus(GTK_ROOT(window)) == GTK_WIDGET(profile_about) &&
+         about_caret_visible(profile_about, window));
     g_assert_true(gtk_root_get_focus(GTK_ROOT(window)) == GTK_WIDGET(profile_about));
     assert_about_caret_visible(profile_about, window);
     g_autofree char *focus_capture = g_strdup_printf("profile-about-focus-reentry-%d", profile_widths[i]);
     snapshot(GTK_WIDGET(window), focus_capture);
-    send_key(GTK_WINDOW(window), "ctrl+Home"); wait_for_frames(GTK_WIDGET(window), 30);
+    send_key(GTK_WINDOW(window), "ctrl+Home");
+    WAIT(text_cursor_offset(profile_buffer) == 0 && about_caret_visible(profile_about, window));
     graphene_point_t caret = assert_about_caret_visible(profile_about, window);
     double before_wheel = gtk_adjustment_get_value(profile_adjustment);
-    scroll_about_with_wheel(window, caret); wait_for_frames(GTK_WIDGET(window), 30);
+    scroll_about_with_wheel(window, caret);
+    WAIT(gtk_adjustment_get_value(profile_adjustment) > before_wheel);
     g_assert_cmpfloat(gtk_adjustment_get_value(profile_adjustment), >, before_wheel);
     g_assert_cmpfloat(gtk_adjustment_get_value(gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(profile_about))), ==, 0);
   }
