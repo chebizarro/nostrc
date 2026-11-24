@@ -75,6 +75,7 @@ typedef enum {
  * @store: (not nullable): backing store (secrets, leases, audit chain).
  * @policy: (nullable): capability registry. NULL fails closed: every
  *   capability-gated request is denied.
+ * @identity_policy: (nullable): live policy store for exact credential grants.
  * @deny: (nullable): live deny list; NULL skips the deny check (no store-backed
  *   deny list configured).
  * @logger: (nullable): optional structured JSONL audit logger, in addition to

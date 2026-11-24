@@ -19,6 +19,11 @@
 - A configured passkey service that is unavailable now prevents startup instead of
   silently continuing without that service.
 
+### New functionality
+
+- Provisioners can grant D-Bus `GetToken` and `GetSession` per agent through
+  `set-policy`; wildcard policies do not grant either method.
+
 This release also includes replay, credential, backup, HTTP resource-bound and
 secret/event ownership corrections from the quick-fix integration. No published
 release or tag is created by this version declaration.

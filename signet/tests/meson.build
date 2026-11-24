@@ -54,6 +54,15 @@ test('memory_hardening_daemon', find_program('python3'),
   args: [files('test_memory_hardening_daemon.py'), signetd_exe], timeout: 30)
 test('daemon_startup', find_program('sh'),
   args: [files('test_daemon_startup.sh'), signetd_exe, signetctl_exe], timeout: 120)
+# Stock daemon: exercise the production [uid_map] resolver, not the fixture override.
+if not get_option('signet_enable_test_hooks')
+  credential_grants_fixture = executable('credential_grants_fixture', 'credential_grants_fixture.c',
+    link_with: signet_core, include_directories: signet_includes,
+    dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
+  test('dbus_credential_grants', find_program('python3'),
+    args: [files('test_dbus_credential_grants.py'), signetd_exe, credential_grants_fixture],
+    timeout: 90)
+endif
 # W3/W4 deployment packaging and explicitly enabled live drills (separate ownership).
 nip46_reference_client = executable('nip46_reference_client',
   'integration/nip46_reference_client.c',

@@ -810,6 +810,38 @@ bool signet_policy_store_has_exact_delivery_grant(
   return allowed;
 }
 
+bool signet_policy_store_has_exact_method_grant(
+    SignetPolicyStore *ps, const char *identity, const char *client_pubkey_hex,
+    const char *method, int64_t now) {
+  if (!ps || ps->backend != SIGNET_POLICY_STORE_BACKEND_FILE ||
+      !identity || !identity[0] || strcmp(identity, "*") == 0 ||
+      !client_pubkey_hex || !method || !method[0] || strcmp(method, "*") == 0)
+    return false;
+
+  g_autofree char *client = signet_pubkey_canon_dup(client_pubkey_hex);
+  if (!client || strcmp(client, "*") == 0) return false;
+
+  g_mutex_lock(&ps->mu);
+  signet_policy_store_maybe_reload_locked(ps, now);
+  SignetIdentityPolicy *p = ps->identities
+      ? g_hash_table_lookup(ps->identities, identity) : NULL;
+  bool allowed = false;
+  if (p && !p->lossy && p->allow_methods &&
+      !signet_list_match_string(p->deny_clients, client) &&
+      !signet_list_match_string(p->deny_methods, method) &&
+      (!signet_list_has_any_strings(p->allow_clients) ||
+       signet_list_match_string(p->allow_clients, client))) {
+    for (guint i = 0; i < p->allow_methods->len; i++) {
+      if (strcmp(g_ptr_array_index(p->allow_methods, i), method) == 0) {
+        allowed = true;
+        break;
+      }
+    }
+  }
+  g_mutex_unlock(&ps->mu);
+  return allowed;
+}
+
 /* ---- set_identity_json: parse JSON → SignetIdentityPolicy, persist ---- */
 
 /* Helper: serialize an identity policy back to GKeyFile under [identity.<id>]. */

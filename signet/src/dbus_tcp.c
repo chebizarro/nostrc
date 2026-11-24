@@ -129,6 +129,7 @@ struct SignetDbusTcpServer {
   char *listen_address;
   SignetKeyStore *keys;
   SignetPolicyRegistry *policy;
+  struct SignetPolicyStore *identity_policy;
   SignetStore *store;
   SignetChallengeStore *challenges;
   SignetAuditLogger *audit;
@@ -257,6 +258,7 @@ static void signet_tcp_handle_method(GDBusConnection *connection,
   SignetDbusDispatchContext ctx = {
     .keys = ds->keys,
     .policy = ds->policy,
+    .identity_policy = ds->identity_policy,
     .store = ds->store,
     .audit = ds->audit,
     .fido = ds->fido,
@@ -357,6 +359,7 @@ SignetDbusTcpServer *signet_dbus_tcp_server_new(const SignetDbusTcpServerConfig 
       ? cfg->listen_address : "tcp:host=127.0.0.1,port=47472");
   ds->keys = cfg->keys;
   ds->policy = cfg->policy;
+  ds->identity_policy = cfg->identity_policy;
   ds->store = cfg->store;
   ds->challenges = cfg->challenges;
   ds->audit = cfg->audit;

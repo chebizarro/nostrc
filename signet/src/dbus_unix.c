@@ -100,6 +100,7 @@ static const char *signet_dbus_introspection_xml =
 struct SignetDbusServer {
   SignetKeyStore *keys;
   SignetPolicyRegistry *policy;
+  struct SignetPolicyStore *identity_policy;
   SignetStore *store;
   SignetAuditLogger *audit;
   struct SignetFidoService *fido;
@@ -168,6 +169,7 @@ static void signet_dbus_handle_method(GDBusConnection *connection,
   SignetDbusDispatchContext ctx = {
     .keys = ds->keys,
     .policy = ds->policy,
+    .identity_policy = ds->identity_policy,
     .store = ds->store,
     .audit = ds->audit,
     .fido = ds->fido,
@@ -261,6 +263,7 @@ SignetDbusServer *signet_dbus_server_new(const SignetDbusServerConfig *cfg) {
 
   ds->keys = cfg->keys;
   ds->policy = cfg->policy;
+  ds->identity_policy = cfg->identity_policy;
   ds->store = cfg->store;
   ds->audit = cfg->audit;
   ds->fido = cfg->fido;

@@ -7,7 +7,7 @@
 
 #include "signet/key_store.h"
 #include "signet/capability.h"
-#include "signet/credential_access.h"
+#include "credential_access_internal.h"
 #include "signet/store.h"
 #include "signet/store_audit.h"
 #include "signet/store_leases.h"
@@ -259,6 +259,17 @@ static void handle_decrypt(const SignetDbusDispatchContext *ctx,
   free(result_pt);
 }
 
+static SignetCredentialAccessContext credential_access_context(
+    const SignetDbusDispatchContext *ctx) {
+  return (SignetCredentialAccessContext){
+    .store = ctx->store,
+    .policy = ctx->policy,
+    .identity_policy = ctx->identity_policy,
+    .deny = ctx->deny,
+    .logger = ctx->audit,
+  };
+}
+
 static void handle_get_session(const SignetDbusDispatchContext *ctx,
                                const char *agent_id,
                                GVariant *parameters,
@@ -266,25 +277,37 @@ static void handle_get_session(const SignetDbusDispatchContext *ctx,
   const char *service_url = NULL;
   g_variant_get(parameters, "(&s)", &service_url);
 
+  if (!ctx->store) {
+    g_dbus_method_invocation_return_dbus_error(
+        invocation, "net.signet.Error.NotConfigured",
+        "Session brokering requires a configured store");
+    return;
+  }
+
+  int64_t now = signet_now_unix();
+  SignetCredentialAccessContext acc = credential_access_context(ctx);
+  SignetCredentialAccessRequest req = {
+    .agent_id = agent_id,
+    .capability = SIGNET_CAP_CREDENTIAL_GET_SESSION,
+  };
+  SignetCredAccessStatus st = signet_credential_access_authorize(&acc, &req, now);
+  if (st != SIGNET_CRED_ACCESS_OK) {
+    bool error = st == SIGNET_CRED_ACCESS_ERROR;
+    audit_key_access(ctx, agent_id, "GetSession", error ? "error" : "deny",
+                     signet_cred_access_reason(st));
+    g_dbus_method_invocation_return_dbus_error(invocation,
+        error ? "net.signet.Error.Internal" : "net.signet.Error.CapabilityDenied",
+        error ? "Credential access failed" : "Operation not permitted by policy");
+    return;
+  }
+
   uint8_t raw[32];
   randombytes_buf(raw, sizeof(raw));
   char token_hex[65];
   bytes_to_hex(raw, sizeof(raw), token_hex);
   sodium_memzero(raw, sizeof(raw));
 
-  int64_t now = signet_now_unix();
   int64_t expires_at = now + 24 * 60 * 60;
-
-  if (!ctx->store) {
-    /* No store means no lease tracking. Refuse rather than hand out an
-     * untracked, unvalidatable bearer token (previously returned as an
-     * "opaque token"). */
-    sodium_memzero(token_hex, sizeof(token_hex));
-    g_dbus_method_invocation_return_dbus_error(
-        invocation, "net.signet.Error.NotConfigured",
-        "Session brokering requires a configured store");
-    return;
-  }
 
   uint8_t lid_raw[16];
   randombytes_buf(lid_raw, sizeof(lid_raw));
@@ -345,12 +368,7 @@ static void handle_get_token(const SignetDbusDispatchContext *ctx,
    * deny-list precedence, explicit capability, owner-before-decrypt, type
    * deny rules, expiry/revocation, tracking lease, and a hash-chained audit
    * entry on every outcome. */
-  SignetCredentialAccessContext acc = {
-    .store = ctx->store,
-    .policy = ctx->policy,
-    .deny = ctx->deny,
-    .logger = ctx->audit,
-  };
+  SignetCredentialAccessContext acc = credential_access_context(ctx);
   SignetCredentialAccessRequest areq = {
     .agent_id = agent_id,
     .credential_id = cred_id,
@@ -364,10 +382,12 @@ static void handle_get_token(const SignetDbusDispatchContext *ctx,
       &acc, &areq, signet_now_unix(), &grant);
 
   if (st != SIGNET_CRED_ACCESS_OK) {
-    /* Uniform NotFound for every denial so callers cannot probe for other
-     * agents' credential ids or lifecycle states. Internal errors are
-     * distinguishable (nothing about the credential is revealed). */
-    if (st == SIGNET_CRED_ACCESS_ERROR) {
+    /* Authorization errors are independent of the credential ID. Keep
+     * credential-specific denials indistinguishable from a missing ID. */
+    if (st == SIGNET_CRED_ACCESS_NO_CAPABILITY || st == SIGNET_CRED_ACCESS_RATE_LIMITED) {
+      g_dbus_method_invocation_return_dbus_error(
+          invocation, "net.signet.Error.CapabilityDenied", "Operation not permitted by policy");
+    } else if (st == SIGNET_CRED_ACCESS_ERROR) {
       g_dbus_method_invocation_return_dbus_error(
           invocation, "net.signet.Error.Internal", "Credential access failed");
     } else {
@@ -589,7 +609,12 @@ void signet_dbus_dispatch_authenticated(const SignetDbusDispatchContext *ctx,
     return;
   }
 
-  if (ctx->policy && !signet_policy_evaluate(ctx->policy, agent_id, method_name, -1)) {
+  /* GetToken/GetSession authorize in their handlers, so the deny list runs
+   * first and the rate bucket is charged just once. */
+  bool credential_read = strcmp(interface_name, "net.signet.Credentials") == 0 &&
+      (strcmp(method_name, "GetToken") == 0 || strcmp(method_name, "GetSession") == 0);
+  if (!credential_read && ctx->policy &&
+      !signet_policy_evaluate(ctx->policy, agent_id, method_name, -1)) {
     g_dbus_method_invocation_return_dbus_error(
         invocation, "net.signet.Error.CapabilityDenied",
         "Operation not permitted by policy");

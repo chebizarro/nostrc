@@ -75,6 +75,19 @@ add_test(NAME http_listen COMMAND test_http_listen)
 add_test(NAME http_routes COMMAND test_http_routes)
 add_test(NAME daemon_startup COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/test_daemon_startup.sh $<TARGET_FILE:signetd> $<TARGET_FILE:signetctl>)
 set_tests_properties(daemon_startup PROPERTIES TIMEOUT 120)
+# Stock daemon: exercise the production [uid_map] resolver, not the fixture override.
+if (NOT SIGNET_ENABLE_TEST_HOOKS)
+  signet_add_test_executable(credential_grants_fixture)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME dbus_credential_grants COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_dbus_credential_grants.py
+    $<TARGET_FILE:signetd> $<TARGET_FILE:credential_grants_fixture>)
+  set_tests_properties(dbus_credential_grants PROPERTIES TIMEOUT 90)
+  if (COMMAND nostrc_describe_test)
+    nostrc_describe_test(dbus_credential_grants OWNER signet TARGETS signetd credential_grants_fixture
+      INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_dbus_credential_grants.py")
+  endif()
+endif()
 signet_add_test_executable(test_replay_cache)
 signet_add_test_executable(test_ssh_agent_wire)
 signet_add_test_executable(test_memory_hardening)

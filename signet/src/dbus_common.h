@@ -11,6 +11,7 @@
 struct SignetAuditLogger;
 struct SignetKeyStore;
 struct SignetPolicyRegistry;
+struct SignetPolicyStore;
 struct SignetStore;
 struct SignetFidoService;
 struct SignetDenyList;
@@ -18,6 +19,7 @@ struct SignetDenyList;
 typedef struct {
   struct SignetKeyStore *keys;
   struct SignetPolicyRegistry *policy;
+  struct SignetPolicyStore *identity_policy;
   struct SignetStore *store;
   struct SignetAuditLogger *audit;
   struct SignetFidoService *fido;

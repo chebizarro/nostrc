@@ -34,6 +34,7 @@ struct SignetAuditLogger;
 struct SignetFleetRegistry;
 struct SignetFidoService;
 struct SignetDenyList;
+struct SignetPolicyStore;
 
 /**
  * SignetDbusTcpServerConfig:
@@ -60,6 +61,7 @@ typedef struct {
   struct SignetFidoService *fido;
   struct SignetDenyList *deny;  /* live deny list (deny > capability) */
   const struct SignetFleetRegistry *fleet;
+  struct SignetPolicyStore *identity_policy;  /* borrowed live policy store */
 } SignetDbusTcpServerConfig;
 
 /* Create D-Bus TCP server. Returns NULL on OOM. */

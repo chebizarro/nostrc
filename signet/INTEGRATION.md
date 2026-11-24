@@ -274,6 +274,32 @@ past. A client subscribing for replies (`kinds:[1059]`, `#p:[<client pubkey>]`)
 must therefore use a `since` at least 48 hours back (or none) and match replies
 by `id`, not by arrival time.
 
+### D-Bus credential grants
+
+`net.signet.Credentials.GetToken` and `GetSession` authorize the authenticated
+agent, not an identity supplied as a method argument. Unix D-Bus resolves the
+caller's OS UID via `[uid_map]`. A provisioner can grant both methods with:
+
+```bash
+signetctl set-policy my-agent '{"default":"deny","allow_methods":["credential.get_token","credential.get_session"]}'
+```
+
+Each name grants only its own method. Include only the required names in the
+agent's policy; wildcard identities, wildcard methods and default-allow do not
+substitute for a literal grant. On the policy-store path, client rules apply
+to the agent's stored pubkey, and matching method or client denies take
+precedence. The daemon deny list and registry rate limits still apply to both
+methods, and `GetToken` only retrieves credentials owned by the calling agent.
+Explicit capabilities from a custom registry remain valid independently of
+the policy-store grant. Remove the literal entries to revoke the policy-store
+grant, preserving other intended rules because `set-policy` replaces the
+identity policy. Send `SIGHUP` if the policy file was updated out of process.
+
+A grant does not enable a D-Bus listener or replace transport authentication.
+Use Unix D-Bus for local credential reads; D-Bus TCP does not encrypt replies.
+These grants do not authorize the delegated management `credential/deliver`
+operation below.
+
 ### Credential methods
 
 Credentials are generic secrets owned by an agent (`agent_id`). Their id is

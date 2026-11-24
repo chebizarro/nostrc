@@ -119,7 +119,7 @@ handoff supersedes an earlier unpaired URI.
 - **Credential Leasing** — Time-bound leases for credential access; agents request sessions via D-Bus or NIP-5L, Signet brokers the credential exchange
 - **Version-Tracked Rotation** — Credential rotation archives the previous version; old versions remain in the `secret_versions` table
 - **Transactional Rotation** — `signet_store_rotate_secret` archives the old value and updates the current value in one SQLite transaction
-- **Session Brokering** — Agents call `GetSession(credential_id)` to exchange a stored credential for a service session token with automatic lease tracking
+- **Session Brokering** — Agents call `GetSession(service_url)` to mint a service session token with automatic lease tracking
 
 ### Audit & Observability
 
@@ -564,8 +564,22 @@ Signet exposes two D-Bus interfaces (see `dbus/net.signet.Signer.xml`):
 
 **net.signet.Credentials** — Credential lease operations:
 - `GetSession(service_url) → (session_token, expires_at)` — refuses to mint tokens when no credential store is configured
-- `GetToken(credential_type) → (token, expires_at)` — enforces per-agent ownership; agents can only retrieve their own credentials
-- `ListCredentials() → credential_types[]`
+- `GetToken(credential_id) → (token, expires_at)` — enforces per-agent ownership; agents can only retrieve their own credentials
+- `ListCredentials() → credential_ids[]`
+
+For Unix D-Bus, enable `[dbus] unix_enabled` and map the client's OS UID to
+its provisioned agent ID in `[uid_map]`. As a provisioner, add only the
+credential methods that agent needs to its policy's `allow_methods`:
+
+```bash
+signetctl set-policy my-agent '{"default":"deny","allow_methods":["credential.get_token","credential.get_session"]}'
+```
+
+`set-policy` replaces the identity policy: preserve any other intended rules.
+A wildcard or default-allow alone does not grant either operation. To revoke a
+grant, remove its literal entry and submit the updated policy. The running
+daemon applies management updates directly; an out-of-process update to the
+policy file takes effect on `SIGHUP`. See [the integration guide](INTEGRATION.md#d-bus-credential-grants).
 
 ## Health Endpoint
 
