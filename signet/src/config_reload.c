@@ -448,7 +448,6 @@ int signet_config_reload_apply(const SignetReloadCtx *ctx, int64_t now,
               cand.log_level);
     live->log_level = cand.log_level;
   }
-  live->reconnect_interval_s = cand.reconnect_interval_s;
   live->rate_limit_rpm = cand.rate_limit_rpm;
   g_strlcpy(live->policy_default_decision, cand.policy_default_decision,
             sizeof(live->policy_default_decision));
