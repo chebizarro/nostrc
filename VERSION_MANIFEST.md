@@ -230,7 +230,7 @@ other components and all version/release/tag values are unchanged.
 
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
-| libnostr | `libnostr/` | 2.5.2 | Unreleased | — | `libnostr/CMakeLists.txt` |
+| libnostr | `libnostr/` | 2.5.3 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libjson (libnostr-json) | `libjson/` | 2.0.2 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
 | libgo | `libgo/` | 0.3.1 | Unreleased | — | `libgo/CMakeLists.txt` |
 | libfips-core | `libfips-core/` | 0.1.0 | Unreleased | — | `libfips-core/CMakeLists.txt` (`declare_component_version`); nostrc-s50dj.6: no bump, additive host-interface APIs fold into the initial pre-release 0.1.0; no published release/tag change |
