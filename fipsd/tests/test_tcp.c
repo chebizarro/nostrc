@@ -135,17 +135,16 @@ static void peer_removed(fixture *f)
     free(event(f->eb, FIPSD_TRANSPORT_DISCONNECTED));
     pool_drained(f->b->user);
 }
-/* libgo's trace hook reports committed I/O parking; a native notifier cancels
- * only after a real gof_connect or read has reached that boundary. */
+/* Observe a real I/O wait at arm or committed park, depending on the
+ * boundary the scenario exercises. */
 static pthread_mutex_t park_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t park_cv = PTHREAD_COND_INITIALIZER;
 static int watch_fd = -1, watch_events;
 static bool parked, intercept_arm, release_arm;
 void gof_trace_on_io_armed(int fd, int events)
 {
-    (void)fd;
     pthread_mutex_lock(&park_mu);
-    if (intercept_arm && watch_fd == -2 && (events & watch_events)) {
+    if (intercept_arm && (watch_fd == -2 || watch_fd == fd) && (events & watch_events)) {
         parked = true; pthread_cond_signal(&park_cv);
         while (!release_arm) pthread_cond_wait(&park_cv, &park_mu);
     }
@@ -284,21 +283,41 @@ static void scenario(void *arg)
 /* Lane frames carry their tag in the last byte: stalled 3, control 2, data 1. */
 enum { LANE_BIG = 60000, LANE_SMALL = 114 };
 static void lane_frame(uint8_t *p, size_t n, uint8_t tag) { frame(p, n); p[n - 1] = tag; }
-/* Hold the writer inside one frame larger than both 4 KiB socket buffers can
- * take, so nothing more leaves either lane until the far end reads. The park
- * trace on the connection's fd, not a delay, says the writer is there. */
-static void stall_writer(fixture *f, const fips_transport_addr *remote, int fd, const uint8_t *big)
-{
-    pthread_mutex_lock(&park_mu); watch_fd = fd; watch_events = 2; parked = false; pthread_mutex_unlock(&park_mu);
-    assert(f->b->ops->send(f->b, remote, big, LANE_BIG) == 0);
-    go_blocking_submit(wait_parked, NULL);
-}
 static size_t fill(fixture *f, const fips_transport_addr *remote, fipsd_transport_lane lane, uint8_t tag)
 {
     uint8_t bytes[LANE_SMALL]; lane_frame(bytes, sizeof bytes, tag);
     size_t n = 0;
     while (n < 1024 && fipsd_transport_send_lane(f->b, lane, remote, bytes, sizeof bytes) == 0) ++n;
     return n;
+}
+typedef struct {
+    fixture *f;
+    const fips_transport_addr *remote;
+    size_t depth;
+    bool close;
+} lane_batch;
+static void *queue_while_armed(void *arg)
+{
+    lane_batch *batch = arg;
+    wait_parked(NULL);
+    assert(fill(batch->f, batch->remote, FIPSD_TRANSPORT_LANE_DATA, 1) == batch->depth);
+    assert(fill(batch->f, batch->remote, FIPSD_TRANSPORT_LANE_CONTROL, 2) == FIPSD_TCP_CONTROL_DEPTH);
+    if (batch->close) batch->f->b->ops->close_connection(batch->f->b, batch->remote);
+    pthread_mutex_lock(&park_mu);
+    intercept_arm = false; release_arm = true; pthread_cond_signal(&park_cv);
+    pthread_mutex_unlock(&park_mu);
+    return NULL;
+}
+static void stall_and_queue(lane_batch *batch, int fd, const uint8_t *big)
+{
+    /* Readiness after registering can bypass committed park. Hold the real
+     * backpressured write at arm instead, and fill from a native worker so
+     * progress does not depend on the scheduler thread held by the hook. */
+    pthread_mutex_lock(&park_mu);
+    watch_fd = fd; watch_events = 2; parked = false; intercept_arm = true; release_arm = false;
+    pthread_mutex_unlock(&park_mu);
+    assert(batch->f->b->ops->send(batch->f->b, batch->remote, big, LANE_BIG) == 0);
+    go_blocking_submit(queue_while_armed, batch);
 }
 /* The stalled frame, then every control frame, then the data queued before
  * them: what the far end must read once it reads again. */
@@ -325,19 +344,16 @@ static void lanes(void *arg)
     nsync_mu_lock(&b->mu); tcp_conn *conn = tcp_pool_find(b, &remote); assert(conn); int fd = conn->fd; nsync_mu_unlock(&b->mu);
     /* A full data lane refuses data but still takes control frames, up to
      * their own bound, and the writer sends every one before that data. */
-    stall_writer(f, &remote, fd, big);
-    assert(fill(f, &remote, FIPSD_TRANSPORT_LANE_DATA, 1) == depth);
-    assert(fill(f, &remote, FIPSD_TRANSPORT_LANE_CONTROL, 2) == FIPSD_TCP_CONTROL_DEPTH);
+    lane_batch batch = {.f = f, .remote = &remote, .depth = depth};
+    stall_and_queue(&batch, fd, big);
     assert(atomic_load(&d->data_dropped) == 1 && atomic_load(&d->control_dropped) == 1);
     assert(atomic_load(&d->dropped) == 2 && atomic_load(&b->shared.stats.send_errors) == 2);
     expect_order(raw, buf, FIPSD_TCP_CONTROL_DEPTH, depth);
     assert(atomic_load(&d->control_sent) == FIPSD_TCP_CONTROL_DEPTH);
     puts("lanes: full data lane still queues control, written before the queued data; per-lane refusals: ok");
     /* Deliberate close drains both lanes in the same order, then closes. */
-    stall_writer(f, &remote, fd, big);
-    assert(fill(f, &remote, FIPSD_TRANSPORT_LANE_DATA, 1) == depth);
-    assert(fill(f, &remote, FIPSD_TRANSPORT_LANE_CONTROL, 2) == FIPSD_TCP_CONTROL_DEPTH);
-    f->b->ops->close_connection(f->b, &remote);
+    batch.close = true;
+    stall_and_queue(&batch, fd, big);
     expect_order(raw, buf, FIPSD_TCP_CONTROL_DEPTH, depth);
     size_t n = 0; assert(fipsd_stream_read(raw, buf, UINT16_MAX, &n) == 0);
     pool_drained(b); tcp_fd_close(raw);
