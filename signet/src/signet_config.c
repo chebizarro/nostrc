@@ -322,7 +322,11 @@ static void signet_config_load_keyfile(GKeyFile *kf, SignetConfig *cfg) {
   }
 
   if (g_key_file_has_key(kf, "nostr", "reconnect_interval_s", NULL)) {
-    cfg->reconnect_interval_s = (uint32_t)g_key_file_get_integer(kf, "nostr", "reconnect_interval_s", NULL);
+    static gsize warned = 0;
+    if (g_once_init_enter(&warned)) {
+      g_once_init_leave(&warned, 1);
+      g_warning("[nostr] reconnect_interval_s is deprecated and ignored; reconnect uses libnostr backoff");
+    }
   }
 
   val = g_key_file_get_string(kf, "nostr", "provisioner_pubkeys", NULL);

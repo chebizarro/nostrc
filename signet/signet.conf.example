@@ -22,7 +22,7 @@
 # the audit log and reloads the policy file.
 #
 # Live-reloadable:
-#   [nostr] relays, provisioner_pubkeys, reconnect_interval_s
+#   [nostr] relays, provisioner_pubkeys
 #   [policy_defaults] default_decision, allowed_kinds, rate_limit_rpm
 #   [server] log_level
 #   the policy file's contents
@@ -73,8 +73,6 @@ db_path = /data/signet.db
 
 # Relay URLs (semicolon-separated)
 relays = wss://relay.example.com
-
-reconnect_interval_s = 30
 
 # Pubkeys authorized to send management events (hex, semicolon-separated)
 provisioner_pubkeys = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

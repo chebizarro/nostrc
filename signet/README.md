@@ -267,7 +267,6 @@ db_path = /data/signet.db
 
 [nostr]
 relays = wss://relay.example.com
-reconnect_interval_s = 30
 provisioner_pubkeys = <hex pubkey>
 identity = default
 

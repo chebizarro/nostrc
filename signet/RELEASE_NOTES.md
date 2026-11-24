@@ -19,6 +19,11 @@
 - A configured passkey service that is unavailable now prevents startup instead of
   silently continuing without that service.
 
+### Other operator-visible changes
+
+- `[nostr] reconnect_interval_s` is deprecated and ignored with a one-time
+  warning. Reconnect timing continues to use libnostr backoff.
+
 This release also includes replay, credential, backup, HTTP resource-bound and
 secret/event ownership corrections from the quick-fix integration. No published
 release or tag is created by this version declaration.
