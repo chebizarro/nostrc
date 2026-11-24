@@ -126,7 +126,9 @@ class TransportTests(unittest.TestCase):
         self.sources = self.root / "apt/sources.list.d"
         self.sources.mkdir(parents=True)
         self.source = self.sources / "ubuntu.sources"
-        self.source.write_text("URIs: http://azure.archive.ubuntu.com/ubuntu/ https://ports.ubuntu.com/ubuntu-ports\n")
+        self.source.write_text(
+            "URIs: http://azure.archive.ubuntu.com/ubuntu/ https://ports.ubuntu.com/ubuntu-ports\n"
+            "URIs: http://us-east-2.ec2.archive.ubuntu.com/ubuntu\n")
         (self.root / "apt/sources.list").write_text(
             "deb https://deb.debian.org/debian bookworm main\n"
             "deb https://deb.debian.org/debian-security bookworm-security main\n"
@@ -219,12 +221,14 @@ sys.exit(results[min(len(calls), len(results)-1)])
         self.assertIn("APT::Update::Error-Mode=any", calls[0])
 
     def test_install_failure_refreshes_alternate_mirror_and_retries_same_args(self):
-        result, calls = self.run_apt([100, 0, 0], "install", "-y", "libfoo=1.2")
+        result, calls = self.run_apt([124, 0, 0], "install", "-y", "libfoo=1.2")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(len(calls), 3)
         self.assertIn("update", calls[1])
         self.assertEqual(calls[0], calls[2])
         self.assertIn("mirrors.edge.kernel.org/ubuntu/", self.source.read_text())
+        self.assertIn("URIs: http://mirrors.edge.kernel.org/ubuntu\n", self.source.read_text())
+        self.assertNotIn("us-east-2.ec2.archive", self.source.read_text())
         self.assertIn("mirrors.mit.edu/ubuntu-ports", self.source.read_text())
         debian = (self.root / "apt/sources.list").read_text()
         self.assertIn("ftp.us.debian.org/debian bookworm", debian)

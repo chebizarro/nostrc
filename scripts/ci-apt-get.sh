@@ -3,7 +3,8 @@
 set -euo pipefail
 
 apt_get() {
-  local limit=12m
+  # Cold GUI dependency closures can still be downloading at twelve minutes.
+  local limit=20m
   [[ " $* " != *' update '* ]] || limit=2m
   # Retain the real download summary even when a caller uses -qq or >/dev/null.
   timeout --signal=TERM --kill-after=30s "$limit" /usr/bin/apt-get \
@@ -19,7 +20,7 @@ alternate_mirrors() {
   for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
     [[ -f "$source" ]] || continue
     sed -i -E \
-      -e 's@(https?://)([a-z]+\.)?(archive|security)\.ubuntu\.com/ubuntu(/|[[:space:]]|$)@\1mirrors.edge.kernel.org/ubuntu\4@g' \
+      -e 's@(https?://)([a-z][a-z0-9-]*\.ec2\.|[a-z]+\.)?(archive|security)\.ubuntu\.com/ubuntu(/|[[:space:]]|$)@\1mirrors.edge.kernel.org/ubuntu\4@g' \
       -e 's@(https?://)ports\.ubuntu\.com/ubuntu-ports(/|[[:space:]]|$)@\1mirrors.mit.edu/ubuntu-ports\2@g' \
       -e 's@(https?://)deb\.debian\.org/debian(/|[[:space:]]|$)@\1ftp.us.debian.org/debian\2@g' \
       "$source"
