@@ -502,38 +502,6 @@ typedef struct {
   int64_t revoked_at;
 } SignetClientBinding;
 
-/* Bind (or re-bind) a client pubkey to an agent. Upsert keyed on
- * client_pubkey; clears any prior revocation (a fresh one-time secret is the
- * authorized recovery path from a revoked binding). The binding is pinned to
- * @agent_pubkey (the agent identity at pairing time): rotation or
- * reprovisioning under a new key invalidates it. @pairing_secret, when given,
- * is stored as a SHA-256 hash so a stale reconnect can prove it presented
- * ITS OWN former secret. Pubkeys must be 64-hex; stored lowercase.
- * Returns 0 on success, -1 on error. */
-/**
- * signet_store_bind_client:
- * @store: (nullable): a #SignetStore
- * @agent_id: (not nullable): agent identifier
- * @agent_pubkey: (nullable): 64-hex agent identity pubkey to pin
- * @client_pubkey: (not nullable): 64-hex NIP-46 client pubkey
- * @pairing_secret: (nullable): one-time secret used to pair (stored hashed)
- * @now: current Unix time in seconds
- *
- * Binds a client pubkey to an agent (upsert; clears prior revocation).
- *
- * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
- *
- * Returns: operation-specific status or value as documented by the function
- *
- * Since: 1.2
- */
-int signet_store_bind_client(SignetStore *store,
-                             const char *agent_id,
-                             const char *agent_pubkey,
-                             const char *client_pubkey,
-                             const char *pairing_secret,
-                             int64_t now);
-
 /* Resolve the agent bound to client_pubkey. Only active bindings whose
  * pinned agent_pubkey still matches the agent's CURRENT identity pubkey
  * resolve (rotate/reprovision invalidates). last_used is persisted at most

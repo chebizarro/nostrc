@@ -24,6 +24,8 @@
 #include <nostr-keys.h>
 #include <nostr/nip44/nip44.h>
 
+#include "test_connect_admission.h"
+#include "test_deny_list_fixture.h"
 #include "test_check.h"
 #include <stdbool.h>
 #include <stdio.h>
@@ -228,12 +230,12 @@ static void test_agent_can_reissue_itself(void) {
   char *fresh = read_connect_secret(&f, "stew");
   CHECK(fresh && strcmp(fresh, "stew-initial") != 0);
   char *agent = NULL;
-  CHECK(signet_key_store_consume_connect_secret(f.ks, "stew-initial", now, &agent) == 1);
-  CHECK(signet_key_store_consume_connect_secret(f.ks, fresh, now, &agent) == 0);
+  CHECK(test_admit_client(f.ks, "stew-initial", f.other_pk_hex, now, &agent) == 1);
+  CHECK(test_admit_client(f.ks, fresh, f.other_pk_hex, now, &agent) == 0);
   CHECK(agent && strcmp(agent, "stew") == 0);
   g_free(agent);
   agent = NULL;
-  CHECK(signet_key_store_consume_connect_secret(f.ks, fresh, now, &agent) == 1);
+  CHECK(test_admit_client(f.ks, fresh, f.other_pk_hex, now, &agent) == 1);
   sodium_memzero(fresh, strlen(fresh)); g_free(fresh);
 
   fixture_teardown(&f);
@@ -361,7 +363,9 @@ static void test_suspended_agent_cannot_bypass(void) {
   int64_t now = 1752380000;
 
   /* Suspend stew: deny-list its pubkey WITHOUT revoking/wiping the key. */
-  CHECK(signet_deny_list_add(f.deny, f.stew_pk_hex, "stew", "suspended", now) == 0);
+  SignetStore *store = signet_key_store_get_store(f.ks);
+  f.deny = test_set_denied(store, f.deny, f.stew_pk_hex, "stew", now, true);
+  signet_mgmt_handler_set_deny_list(f.mgmt, f.deny);
 
   /* Self-service reissue is refused; the stored secret is untouched. */
   CHECK(send_reissue(&f, f.stew_sk_hex, f.stew_pk_hex, "stew", "evt-d1", now) == -1);
@@ -379,7 +383,8 @@ static void test_suspended_agent_cannot_bypass(void) {
   CHECK(send_reissue(&f, f.other_sk_hex, f.other_pk_hex, "other", "evt-d3", now) == 0);
 
   /* Lifting the suspension restores self-service. */
-  CHECK(signet_deny_list_remove(f.deny, f.stew_pk_hex) == 0);
+  f.deny = test_set_denied(store, f.deny, f.stew_pk_hex, "stew", now, false);
+  signet_mgmt_handler_set_deny_list(f.mgmt, f.deny);
   CHECK(send_reissue(&f, f.stew_sk_hex, f.stew_pk_hex, "stew", "evt-d4", now) == 0);
   s = read_connect_secret(&f, "stew");
   CHECK(s && strcmp(s, "stew-initial") != 0);

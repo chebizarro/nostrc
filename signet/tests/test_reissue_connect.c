@@ -22,6 +22,7 @@
 
 #include <nostr-keys.h>
 
+#include "test_connect_admission.h"
 #include "test_check.h"
 #include <ctype.h>
 #include <stdbool.h>
@@ -90,6 +91,9 @@ static bool is_hex64(const char *s) {
 
 /* 1 + 2: reissue returns a fresh secret, invalidates the old one, and the
  * fresh one resolves+consumes exactly once. */
+static const char pairing_client[] =
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
 static void test_reissue_success(void) {
   char *db_path = NULL;
   SignetKeyStore *ks = open_ks(&db_path);
@@ -118,15 +122,15 @@ static void test_reissue_success(void) {
 
   /* The OLD secret must no longer resolve. */
   char *agent = NULL;
-  CHECK(signet_key_store_consume_connect_secret(ks, old_secret, 1000, &agent) == 1);
+  CHECK(test_admit_client(ks, old_secret, pairing_client, 1000, &agent) == 1);
   CHECK(agent == NULL);
 
   /* The FRESH secret resolves to the agent and consumes exactly once. */
-  CHECK(signet_key_store_consume_connect_secret(ks, fresh, 1000, &agent) == 0);
+  CHECK(test_admit_client(ks, fresh, pairing_client, 1000, &agent) == 0);
   CHECK(agent && strcmp(agent, "stew") == 0);
   g_free(agent);
   agent = NULL;
-  CHECK(signet_key_store_consume_connect_secret(ks, fresh, 1000, &agent) == 1);
+  CHECK(test_admit_client(ks, fresh, pairing_client, 1000, &agent) == 1);
 
   g_free(uri);
   sodium_memzero(fresh, strlen(fresh));
@@ -151,12 +155,13 @@ static void test_reissue_after_consumption(void) {
   CHECK(signet_key_store_adopt_agent(ks, "stew", sk_raw, pk_hex, secret,
                                       BUNKER_PK, RELAYS, 1, out_pk, NULL) == SIGNET_ADOPT_OK);
 
-  /* First connect consumes the secret. A replayed consumed secret must not
-   * resolve any agent via the consume-by-value path used by NIP-46 connect. */
-  CHECK(signet_key_store_validate_connect_secret(ks, "stew", secret) == 0);
+  /* First admission binds the client and consumes the secret. It cannot be
+   * used again for pairing (reconnect via the existing binding is separate). */
+  test_pair_store_client(signet_key_store_get_store(ks), "stew", secret,
+                         pairing_client, 1000);
   {
     char *agent = NULL;
-    CHECK(signet_key_store_consume_connect_secret(ks, secret, 1000, &agent) == 1);
+    CHECK(test_admit_client(ks, secret, pairing_client, 1000, &agent) == 1);
   }
 
   /* Reissue mints a fresh secret that validates again. */
@@ -165,7 +170,8 @@ static void test_reissue_after_consumption(void) {
   CHECK(signet_key_store_reissue_connect_secret(ks, "stew", NULL, NULL, NULL, 0,
                                                  re_pk, &fresh, NULL) == 0);
   CHECK(fresh && is_hex64(fresh));
-  CHECK(signet_key_store_validate_connect_secret(ks, "stew", fresh) == 0);
+  test_pair_store_client(signet_key_store_get_store(ks), "stew", fresh,
+                         pairing_client, 1000);
 
   /* Identity pinning: reissue with a mismatched expected pubkey is refused
    * (2) and does not mutate — the concurrent-rotate guard. */
@@ -193,8 +199,8 @@ static void test_reissue_after_consumption(void) {
   CHECK(strcmp(fresh2, fresh3) != 0);
   {
     char *agent = NULL;
-    CHECK(signet_key_store_consume_connect_secret(ks, fresh2, 1000, &agent) == 1);
-    CHECK(signet_key_store_consume_connect_secret(ks, fresh3, 1000, &agent) == 0);
+    CHECK(test_admit_client(ks, fresh2, pairing_client, 1000, &agent) == 1);
+    CHECK(test_admit_client(ks, fresh3, pairing_client, 1000, &agent) == 0);
     CHECK(agent && strcmp(agent, "stew") == 0);
     g_free(agent);
   }

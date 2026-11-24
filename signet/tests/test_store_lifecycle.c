@@ -17,6 +17,7 @@
 #include "test_custody_key.h"
 #include "signet/audit_logger.h"
 
+#include "test_connect_admission.h"
 #include "test_check.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -126,8 +127,8 @@ static void test_revoke_deny_precedence(void) {
       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   CHECK(signet_store_issue_lease(store, "lease-1", "secret-1", "victim",
                                   1900, 3000, NULL) == 0);
-  CHECK(signet_store_bind_client(store, "victim", pub, client_pub,
-                                  NULL, 1900) == 0);
+  CHECK(signet_store_reissue_connect_secret(store, "victim", "victim-pair", 1900) == 0);
+  test_pair_store_client(store, "victim", "victim-pair", client_pub, 1900);
 
   /* Force a failure after the deny-list and lease updates. Every durable
    * mutation must roll back, and neither hot cache may change. */
@@ -166,11 +167,7 @@ static void test_revoke_deny_precedence(void) {
   CHECK(signet_deny_list_contains(deny, pub)); /* deny precedence now applies */
 
   memset(&lk, 0, sizeof(lk));
-  CHECK(!signet_key_store_load_agent_key(ks, "victim", &lk)); /* key gone */
-
-  /* Un-deny works too. */
-  CHECK(signet_deny_list_remove(deny, pub) == 0);
-  CHECK(!signet_deny_list_contains(deny, pub));
+  CHECK(!test_load_key_via_custody(ks, "victim", &lk)); /* key gone */
 
   signet_deny_list_free(deny);
   signet_key_store_free(ks);
