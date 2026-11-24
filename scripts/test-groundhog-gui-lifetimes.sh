@@ -61,8 +61,13 @@ for seed in "${seeds[@]}"; do
   cmd=(ctest --test-dir "$build" --no-tests=error --output-on-failure --parallel 4
        --repeat "until-fail:$repeats" -R "$regex")
   status=0
-  if [ "$(uname -s)" = Linux ] && [ -z "${DISPLAY:-}" ]; then
-    dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' "${cmd[@]}" || status=$?
+  if [ "$(uname -s)" = Linux ]; then
+    # Like the main GUI gate, own a display and its Xauthority cookie instead
+    # of treating an inherited DISPLAY as evidence the server is usable.
+    # Keep Xvfb alive without resetting between parallel accessibility clients.
+    # Start the bus inside Xvfb's environment so activation sees the same display.
+    xvfb-run -a -e /dev/stderr -s '-screen 0 1280x800x24 -noreset' \
+      dbus-run-session -- "${cmd[@]}" || status=$?
   else
     "${cmd[@]}" || status=$?
   fi
