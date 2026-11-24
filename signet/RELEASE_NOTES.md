@@ -26,6 +26,11 @@
 - A configured passkey service that is unavailable now prevents startup instead of
   silently continuing without that service.
 
+### New functionality
+
+- Provisioners can grant D-Bus `GetToken` and `GetSession` per agent through
+  `set-policy`; wildcard policies do not grant either method.
+
 ### Other operator-visible changes
 
 - `[nostr] reconnect_interval_s` is deprecated and ignored with a one-time

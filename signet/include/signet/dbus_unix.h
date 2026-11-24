@@ -36,6 +36,7 @@ struct SignetStore;
 struct SignetAuditLogger;
 struct SignetFidoService;
 struct SignetDenyList;
+struct SignetPolicyStore;
 
 /* UID → agent_id mapping callback.
  * Returns agent_id string (caller frees with g_free), or NULL if unknown. */
@@ -77,6 +78,7 @@ typedef struct {
   SignetUidResolver uid_resolver;
   void *uid_resolver_data;
   bool use_system_bus;  /* true = system bus, false = session bus */
+  struct SignetPolicyStore *identity_policy;  /* borrowed live policy store */
 } SignetDbusServerConfig;
 
 /* Create D-Bus server. Does not connect yet. Returns NULL on OOM. */

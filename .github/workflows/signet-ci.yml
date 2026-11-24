@@ -87,7 +87,7 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake meson ninja-build pkg-config clang dbus-daemon \
+            build-essential cmake meson ninja-build pkg-config clang dbus-daemon libglib2.0-bin \
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libglib2.0-dev libsoup-3.0-dev \
             libjson-glib-dev libgit2-dev libnsync-dev libyaml-dev \

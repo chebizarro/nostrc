@@ -127,6 +127,14 @@ bool signet_policy_store_has_exact_delivery_grant(
     SignetPolicyStore *ps, const char *identity,
     const char *requester_pubkey_hex, int64_t now);
 
+/* Require a literal allow_methods entry for this identity and method.
+ * Default-allow and wildcard identities/methods are not grants. Client
+ * restrictions and explicit denies still apply to the authenticated pubkey.
+ * This is not the delegated credential.deliver grant check above. */
+bool signet_policy_store_has_exact_method_grant(
+    SignetPolicyStore *ps, const char *identity, const char *client_pubkey_hex,
+    const char *method, int64_t now);
+
 /* Free the policy store. Safe on NULL. */
 /**
  * signet_policy_store_free:

@@ -7,7 +7,7 @@
  * denies, an unauditable success is rolled back and denied.
  */
 
-#include "signet/credential_access.h"
+#include "credential_access_internal.h"
 
 #include "signet/capability.h"
 #include "signet/revocation.h"
@@ -124,6 +124,47 @@ static SignetCredAccessStatus signet_cred_access_map_secret_result(
   }
 }
 
+SignetCredAccessStatus signet_credential_access_authorize(
+    const SignetCredentialAccessContext *ctx,
+    const SignetCredentialAccessRequest *req, int64_t now) {
+  /* Resolve the owner's pubkey from custody, not request data. Neither a
+   * registry assignment nor a persisted grant overrides the live deny list. */
+  SignetAgentMeta meta = {0};
+  int rc = signet_store_get_agent_meta(ctx->store, req->agent_id, &meta);
+  if (rc < 0) return SIGNET_CRED_ACCESS_ERROR;
+  if (rc == 1) {
+    signet_agent_meta_clear(&meta);
+    return SIGNET_CRED_ACCESS_NOT_OWNER;
+  }
+  bool denied = ctx->deny &&
+      ((meta.pubkey && meta.pubkey[0] && signet_deny_list_contains(ctx->deny, meta.pubkey)) ||
+       (req->requester_pubkey && req->requester_pubkey[0] &&
+        signet_deny_list_contains(ctx->deny, req->requester_pubkey)));
+  if (denied) {
+    signet_agent_meta_clear(&meta);
+    return SIGNET_CRED_ACCESS_DENY_LISTED;
+  }
+
+  bool granted;
+  if (strcmp(req->capability, SIGNET_CAP_CREDENTIAL_DELIVER) == 0) {
+    granted = signet_policy_store_has_exact_delivery_grant(
+        ctx->identity_policy, req->agent_id, req->requester_pubkey, now);
+  } else {
+    granted = signet_policy_has_capability(ctx->policy, req->agent_id, req->capability);
+    if (!granted && ctx->policy &&
+        (strcmp(req->capability, SIGNET_CAP_CREDENTIAL_GET_TOKEN) == 0 ||
+         strcmp(req->capability, SIGNET_CAP_CREDENTIAL_GET_SESSION) == 0)) {
+      granted = signet_policy_store_has_exact_method_grant(
+          ctx->identity_policy, req->agent_id, meta.pubkey, req->capability, now);
+    }
+  }
+  signet_agent_meta_clear(&meta);
+  if (!granted) return SIGNET_CRED_ACCESS_NO_CAPABILITY;
+  if (!signet_policy_rate_limit_check(ctx->policy, req->agent_id, req->capability))
+    return SIGNET_CRED_ACCESS_RATE_LIMITED;
+  return SIGNET_CRED_ACCESS_OK;
+}
+
 SignetCredAccessStatus signet_credential_access_acquire(
     const SignetCredentialAccessContext *ctx,
     const SignetCredentialAccessRequest *req,
@@ -144,60 +185,10 @@ SignetCredAccessStatus signet_credential_access_acquire(
     goto audited_out;
   }
 
-  /* 1) Deny-list precedence: resolve the caller's pubkey from custody
-   * metadata (never from the request) and refuse deny-listed identities
-   * before any capability grant is considered. An unknown caller identity
-   * fails closed as not-owner (it cannot own anything). */
-  {
-    SignetAgentMeta meta;
-    memset(&meta, 0, sizeof(meta));
-    int arc = signet_store_get_agent_meta(ctx->store, req->agent_id, &meta);
-    if (arc < 0) {
-      status = SIGNET_CRED_ACCESS_ERROR;
-      goto audited_out;
-    }
-    if (arc == 1) {
-      signet_agent_meta_clear(&meta);
-      status = SIGNET_CRED_ACCESS_NOT_OWNER;
-      goto audited_out;
-    }
-    bool denied = false;
-    if (ctx->deny && meta.pubkey && meta.pubkey[0])
-      denied = signet_deny_list_contains(ctx->deny, meta.pubkey);
-    /* A mediated delivery's recipient is held to the same deny list: a
-     * deny-listed requester loses even with an exact delivery grant. */
-    if (!denied && ctx->deny && req->requester_pubkey &&
-        req->requester_pubkey[0])
-      denied = signet_deny_list_contains(ctx->deny, req->requester_pubkey);
-    signet_agent_meta_clear(&meta);
-    if (denied) {
-      status = SIGNET_CRED_ACCESS_DENY_LISTED;
-      goto audited_out;
-    }
-  }
-
-  /* 2) Explicit capability. No policy registry means nothing was ever
-   * granted: fail closed. */
-  if (strcmp(req->capability, SIGNET_CAP_CREDENTIAL_DELIVER) == 0) {
-    if (!ctx->identity_policy || !req->requester_pubkey ||
-        !signet_policy_store_has_exact_delivery_grant(
-            ctx->identity_policy, req->agent_id, req->requester_pubkey, now)) {
-      status = SIGNET_CRED_ACCESS_NO_CAPABILITY;
-      goto audited_out;
-    }
-  } else if (!ctx->policy ||
-             !signet_policy_has_capability(ctx->policy, req->agent_id,
-                                           req->capability)) {
-    status = SIGNET_CRED_ACCESS_NO_CAPABILITY;
-    goto audited_out;
-  }
-
-  /* 3) Rate limit. */
-  if (!signet_policy_rate_limit_check(ctx->policy, req->agent_id,
-                                      req->capability)) {
-    status = SIGNET_CRED_ACCESS_RATE_LIMITED;
-    goto audited_out;
-  }
+  /* 1–3) Deny list, explicit capability, and per-capability rate limit. */
+  status = signet_credential_access_authorize(ctx, req, now);
+  if (status != SIGNET_CRED_ACCESS_OK) goto audited_out;
+  status = SIGNET_CRED_ACCESS_ERROR;
 
   /* 4) Metadata-only gate: ownership, status and the expected version are
    * decided BEFORE any lease or decryption. Revocation takes precedence over

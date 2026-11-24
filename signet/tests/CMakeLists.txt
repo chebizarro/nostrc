@@ -86,6 +86,19 @@ add_test(NAME dbus_tcp_daemon COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_d
 set_tests_properties(dbus_tcp_daemon PROPERTIES TIMEOUT 120)
 add_test(NAME dbus_tcp_authorized COMMAND test_dbus_tcp)
 set_tests_properties(dbus_tcp_authorized PROPERTIES TIMEOUT 30)
+# Stock daemon: exercise the production [uid_map] resolver, not the fixture override.
+if (NOT SIGNET_ENABLE_TEST_HOOKS)
+  signet_add_test_executable(credential_grants_fixture)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME dbus_credential_grants COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_dbus_credential_grants.py
+    $<TARGET_FILE:signetd> $<TARGET_FILE:credential_grants_fixture>)
+  set_tests_properties(dbus_credential_grants PROPERTIES TIMEOUT 90)
+  if (COMMAND nostrc_describe_test)
+    nostrc_describe_test(dbus_credential_grants OWNER signet TARGETS signetd credential_grants_fixture
+      INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_dbus_credential_grants.py")
+  endif()
+endif()
 signet_add_test_executable(test_replay_cache)
 signet_add_test_executable(test_ssh_agent_wire)
 signet_add_test_executable(test_memory_hardening)

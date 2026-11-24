@@ -1027,6 +1027,7 @@ bool passkeys_start_failed = false;
   /* 8d) D-Bus Unix transport */
   if (cfg.dbus_unix_enabled) {
     SignetDbusServerConfig du_cfg = {
+      .identity_policy = store,
       .keys = keys,
       .policy = cap_registry,
       .store = base_store,
@@ -1065,6 +1066,7 @@ bool passkeys_start_failed = false;
       .policy = cap_registry,
       .store = base_store,
       .challenges = tcp_challenges,
+      .identity_policy = store,
       .audit = audit,
       .fido = fido,
       .deny = deny,

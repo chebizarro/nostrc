@@ -30,6 +30,8 @@ RUN cmake -B build-docker -G Ninja \
  && dpkg-query -W > /src/build-docker/package-inputs.txt
 
 FROM builder AS test
+RUN apt-get update && apt-get install -y --no-install-recommends dbus-daemon libglib2.0-bin \
+ && rm -rf /var/lib/apt/lists/*
 # Keep testing out of the runtime builder; compile only the outbound TLS regression
 # and its dependencies, without the unrelated GObject/test-framework trees.
 RUN cmake -B build-docker -DBUILD_TESTING=ON \
