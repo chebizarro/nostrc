@@ -7,7 +7,7 @@
 int main(void) {
   const char *policy = "{\"default\":\"deny\",\"methods\":[\"sign_event\"],\"nested\":{\"client\":\"client-key\"}}";
   char *intent = signetctl_build_intent(SIGNET_MGMT_OP_SET_POLICY, "agent", "id",
-      policy, NULL, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, false, 0, NULL);
+      policy, NULL, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, false, 0, NULL);
   CHECK(intent);
   JsonParser *parser = json_parser_new();
   CHECK(json_parser_load_from_data(parser, intent, -1, NULL));
