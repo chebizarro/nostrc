@@ -283,14 +283,24 @@ int signet_store_cleanup_expired_leases(SignetStore *store, int64_t cutoff) {
   if (!db) return -1;
 
   const char *sql = "DELETE FROM leases WHERE expires_at < ?;";
+
+  /* The daemon shares this connection; keep the DELETE and its count paired
+   * and never join another caller's transaction. */
+  sqlite3_mutex *mutex = sqlite3_db_mutex(db);
+  sqlite3_mutex_enter(mutex);
   sqlite3_stmt *stmt = NULL;
-  int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
-  if (rc != SQLITE_OK) return -1;
+  int rc = sqlite3_get_autocommit(db)
+      ? sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) : SQLITE_BUSY;
+  if (rc != SQLITE_OK) {
+    sqlite3_mutex_leave(mutex);
+    return -1;
+  }
 
   sqlite3_bind_int64(stmt, 1, cutoff);
   rc = sqlite3_step(stmt);
   int changes = sqlite3_changes(db);
   sqlite3_finalize(stmt);
+  sqlite3_mutex_leave(mutex);
 
   return (rc == SQLITE_DONE) ? changes : -1;
 }

@@ -323,8 +323,10 @@ static char *nip5l_handle_message(SignetNip5lServer *ns,
       resp = nip5l_json_result_string(result);
     }
     free(peer_pk);
+    /* The JSON accessor allocates input with malloc, not GLib. */
+    if (input) sodium_memzero(input, strlen(input));
     free(input);
-    g_free(result);
+    signet_secret_gfree(result);
 
   } else if (strcmp(method, "ping") == 0) {
     resp = g_strdup("{\"result\":\"pong\"}");
@@ -368,6 +370,8 @@ static GIOStatus nip5l_read_line_bounded(GIOChannel *ch, GString *pending,
       if (n > NIP5L_MAX_LINE) { *too_long = TRUE; return G_IO_STATUS_ERROR; }
       *out_line = g_strndup(pending->str, n);
       g_string_erase(pending, 0, (gssize)(n + 1));
+      /* Erase the stale tail left after moving any pipelined requests. */
+      sodium_memzero(pending->str + pending->len + 1, n + 1);
       return G_IO_STATUS_NORMAL;
     }
     scanned = pending->len;
@@ -375,7 +379,10 @@ static GIOStatus nip5l_read_line_bounded(GIOChannel *ch, GString *pending,
     char chunk[4096];
     gsize got = 0;
     GIOStatus st = g_io_channel_read_chars(ch, chunk, sizeof(chunk), &got, err);
-    if (got > 0) g_string_append_len(pending, chunk, (gssize)got);
+    if (got > 0) {
+      g_string_append_len(pending, chunk, (gssize)got);
+      sodium_memzero(chunk, got);
+    }
     if (st == G_IO_STATUS_AGAIN) continue;
     if (st != G_IO_STATUS_NORMAL) return st;
   }
@@ -396,7 +403,7 @@ static gpointer nip5l_client_thread(gpointer data) {
     if (!line) break;
 
     char *resp = nip5l_handle_message(ns, cs, line);
-    g_free(line);
+    signet_secret_gfree(line);
     line = NULL;
 
     if (resp) {
@@ -405,7 +412,7 @@ static gpointer nip5l_client_thread(gpointer data) {
       g_io_channel_write_chars(cs->channel, resp, -1, &written, NULL);
       g_io_channel_write_chars(cs->channel, "\n", 1, &written, NULL);
       g_io_channel_flush(cs->channel, NULL);
-      g_free(resp);
+      signet_secret_gfree(resp);
     }
   }
 
@@ -416,7 +423,8 @@ static gpointer nip5l_client_thread(gpointer data) {
     g_io_channel_flush(cs->channel, NULL);
   }
   if (err) g_error_free(err);
-  g_free(line);
+  signet_secret_gfree(line);
+  sodium_memzero(pending->str, pending->len);
   g_string_free(pending, TRUE);
 
   g_mutex_lock(&ns->mu);

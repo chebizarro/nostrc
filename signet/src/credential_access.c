@@ -153,7 +153,15 @@ SignetCredAccessStatus signet_credential_access_authorize(
     granted = signet_policy_has_capability(ctx->policy, req->agent_id, req->capability);
     if (!granted && ctx->policy &&
         (strcmp(req->capability, SIGNET_CAP_CREDENTIAL_GET_TOKEN) == 0 ||
-         strcmp(req->capability, SIGNET_CAP_CREDENTIAL_GET_SESSION) == 0)) {
+         strcmp(req->capability, SIGNET_CAP_CREDENTIAL_GET_SESSION) == 0
+#ifdef SIGNET_ENABLE_PASSKEYS
+         || strcmp(req->capability, SIGNET_CAP_PASSKEY_GET_INFO) == 0
+         || strcmp(req->capability, SIGNET_CAP_PASSKEY_MAKE_CREDENTIAL) == 0
+         || strcmp(req->capability, SIGNET_CAP_PASSKEY_GET_ASSERTION) == 0
+         || strcmp(req->capability, SIGNET_CAP_PASSKEY_EXPORT) == 0
+         || strcmp(req->capability, SIGNET_CAP_PASSKEY_IMPORT) == 0
+#endif
+        )) {
       granted = signet_policy_store_has_exact_method_grant(
           ctx->identity_policy, req->agent_id, meta.pubkey, req->capability, now);
     }

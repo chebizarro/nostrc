@@ -47,6 +47,16 @@ class RepresentativeSelectionTests(unittest.TestCase):
                 self.assertEqual(result['families'], ['fips'])
                 self.assertFalse(result['run_reference'])
 
+    def test_signet_daemon_version_owner_routes_checks_without_vault(self):
+        result = self.select(['signet/src/signetd_main.c', 'signet/src/store_leases.c',
+                              'signet/tests/lease_prune_fixture.c',
+                              'signet/tests/test_lease_prune_daemon.py',
+                              'signet/tests/CMakeLists.txt', 'signet/tests/meson.build'])
+        self.assertFalse(result['broad'], result['reasons'])
+        self.assertEqual(result['families'],
+                         ['core', 'grotto', 'groundhog', 'mdk011', 'mdk08', 'signet', 'static'])
+        self.assertTrue(result['run_reference'])
+
     def test_groundhog_ui_omits_reference_mdk_core_and_libgo(self):
         self.assertTrue((ROOT / 'gnome/groundhog/data/ui/gh-window.blp').is_file())
         result = self.select(['gnome/groundhog/data/ui/gh-window.blp'])

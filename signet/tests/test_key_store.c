@@ -9,6 +9,7 @@
 #include "signet/store.h"
 #include "signet/audit_logger.h"
 
+#include "test_connect_admission.h"
 #include "test_check.h"
 #include "../src/key_store_private.h"
 #include <stdio.h>
@@ -112,21 +113,17 @@ static void test_provision_is_idempotent(void) {
         second, sizeof(second), &second_uri) == 0);
     CHECK(strcmp(first, second) == 0);
     CHECK(second_uri != NULL && strcmp(first_uri, second_uri) != 0);
-    CHECK((durable ? signet_key_store_consume_connect_secret(ks, first_secret, 1, &agent)
-        : signet_key_store_ephemeral_pair_client(ks, first_secret, client, &agent)) == 1);
+    CHECK(test_admit_client(ks, first_secret, client, 1, &agent) == 1);
     CHECK(agent == NULL);
     const char *second_secret = strstr(second_uri, "secret=");
     CHECK(second_secret != NULL);
     second_secret += strlen("secret=");
     SignetStore *store = signet_key_store_get_store(ks);
-    CHECK((durable ? signet_store_consume_connect_secret_and_bind(store, second_secret,
-        client, 1, &agent) : signet_key_store_ephemeral_pair_client(ks,
-        second_secret, client, &agent)) == 0);
+    CHECK(test_admit_client(ks, second_secret, client, 1, &agent) == 0);
     CHECK(strcmp(agent, "stable-agent") == 0);
     g_free(agent);
     agent = NULL;
-    CHECK((durable ? signet_key_store_consume_connect_secret(ks, second_secret, 1, &agent)
-        : signet_key_store_ephemeral_pair_client(ks, second_secret, client, &agent)) == 1);
+    CHECK(test_admit_client(ks, second_secret, client, 1, &agent) == 1);
     CHECK(agent == NULL);
     if (durable) {
       signet_key_store_free(ks);
@@ -214,7 +211,7 @@ static void test_load_nonexistent(void) {
 
   SignetLoadedKey lk;
   memset(&lk, 0, sizeof(lk));
-  bool ok = signet_key_store_load_agent_key(ks, "no-such-agent", &lk);
+  bool ok = test_load_key_via_custody(ks, "no-such-agent", &lk);
   CHECK(!ok);
 
   char pub[65] = {0};
@@ -242,7 +239,7 @@ static void test_revoke_agent(void) {
   /* Should no longer be loadable. */
   SignetLoadedKey lk;
   memset(&lk, 0, sizeof(lk));
-  bool ok = signet_key_store_load_agent_key(ks, "revoke-me", &lk);
+  bool ok = test_load_key_via_custody(ks, "revoke-me", &lk);
   CHECK(!ok);
 
   /* Revoking again should return 1 (not found). */
@@ -519,9 +516,14 @@ static void test_fenced_nip44_custody(void) {
   char pubkey[65];
   CHECK(signet_key_store_provision_agent(ks, "service", NULL, NULL, 0,
                                          pubkey, sizeof(pubkey), NULL) == 0);
-  /* Never fenced: any authenticated client (and the legacy path) works. */
+  SignetStore *store = signet_key_store_get_store(ks);
+  CHECK(signet_store_reissue_connect_secret(store, "service", "owner-a-pair", 1) == 0);
+  test_pair_store_client(store, "service", "owner-a-pair", OWNER_A, 1);
+  CHECK(signet_store_reissue_connect_secret(store, "service", "owner-b-pair", 2) == 0);
+  test_pair_store_client(store, "service", "owner-b-pair", OWNER_B, 2);
+  /* Never fenced: any paired client (and the legacy path) works. */
   char *ciphertext = NULL, *plain = NULL;
-  CHECK(signet_key_store_crypt_nip44(ks, "service", OWNER_B,
+  CHECK(test_crypt_bound_client(ks, "service", OWNER_B,
       "nip44_encrypt", pubkey, "unfenced", &ciphertext) == 0);
   g_free(ciphertext);
   ciphertext = NULL;
@@ -530,22 +532,22 @@ static void test_fenced_nip44_custody(void) {
   CHECK(signet_key_store_crypt_legacy(ks, "service", "nip44_encrypt",
                                       pubkey, "secret", &ciphertext) != 0);
   CHECK(ciphertext == NULL);
-  CHECK(signet_key_store_crypt_nip44(ks, "service", OWNER_B,
+  CHECK(test_crypt_bound_client(ks, "service", OWNER_B,
       "nip44_encrypt", pubkey, "secret", &ciphertext) != 0);
   CHECK(ciphertext == NULL);
-  CHECK(signet_key_store_crypt_nip44(ks, "service", NULL,
+  CHECK(signet_key_store_crypt_bound(ks, "service", NULL, NULL, 0,
       "nip44_encrypt", pubkey, "secret", &ciphertext) != 0);
   CHECK(ciphertext == NULL);
-  CHECK(signet_key_store_crypt_nip44(ks, "service", OWNER_A,
+  CHECK(test_crypt_bound_client(ks, "service", OWNER_A,
       "nip04_encrypt", pubkey, "secret", &ciphertext) != 0);
   CHECK(ciphertext == NULL);
-  CHECK(signet_key_store_crypt_nip44(ks, "service", OWNER_A,
+  CHECK(test_crypt_bound_client(ks, "service", OWNER_A,
       "nip44_encrypt", pubkey, "secret", &ciphertext) == 0);
   CHECK(ciphertext && ciphertext[0]);
-  CHECK(signet_key_store_crypt_nip44(ks, "service", OWNER_B,
+  CHECK(test_crypt_bound_client(ks, "service", OWNER_B,
       "nip44_decrypt", pubkey, ciphertext, &plain) != 0);
   CHECK(plain == NULL);
-  CHECK(signet_key_store_crypt_nip44(ks, "service", OWNER_A,
+  CHECK(test_crypt_bound_client(ks, "service", OWNER_A,
       "nip44_decrypt", pubkey, ciphertext, &plain) == 0);
   CHECK(strcmp(plain, "secret") == 0);
   g_free(plain);
@@ -553,17 +555,17 @@ static void test_fenced_nip44_custody(void) {
 
   const uint8_t binary[] = {0, 0xff, 0x80, 0x01, 0};
   char *encoded = g_base64_encode(binary, sizeof(binary));
-  CHECK(signet_key_store_crypt_nip44(ks, "service", OWNER_B,
+  CHECK(test_crypt_bound_client(ks, "service", OWNER_B,
       "nip44_encrypt_b64", pubkey, encoded, &ciphertext) != 0);
   CHECK(ciphertext == NULL);
-  CHECK(signet_key_store_crypt_nip44(ks, "service", OWNER_A,
+  CHECK(test_crypt_bound_client(ks, "service", OWNER_A,
       "nip44_encrypt_b64", pubkey, encoded, &ciphertext) == 0);
-  CHECK(signet_key_store_crypt_nip44(ks, "service", OWNER_A,
+  CHECK(test_crypt_bound_client(ks, "service", OWNER_A,
       "nip44_decrypt_b64", pubkey, ciphertext, &plain) == 0);
   CHECK(strcmp(plain, encoded) == 0);
   g_free(plain);
   plain = NULL;
-  CHECK(signet_key_store_crypt_nip44(ks, "service", OWNER_A,
+  CHECK(test_crypt_bound_client(ks, "service", OWNER_A,
       "nip44_decrypt", pubkey, ciphertext, &plain) == -2);
   CHECK(plain == NULL);
   g_free(encoded);
@@ -571,19 +573,19 @@ static void test_fenced_nip44_custody(void) {
   ciphertext = NULL;
   const uint8_t invalid_utf8[] = {0xff, 0xfe, 0x80};
   encoded = g_base64_encode(invalid_utf8, sizeof(invalid_utf8));
-  CHECK(signet_key_store_crypt_nip44(ks, "service", OWNER_A,
+  CHECK(test_crypt_bound_client(ks, "service", OWNER_A,
       "nip44_encrypt_b64", pubkey, encoded, &ciphertext) == 0);
-  CHECK(signet_key_store_crypt_nip44(ks, "service", OWNER_A,
+  CHECK(test_crypt_bound_client(ks, "service", OWNER_A,
       "nip44_decrypt", pubkey, ciphertext, &plain) == -2);
   CHECK(plain == NULL);
-  CHECK(signet_key_store_crypt_nip44(ks, "service", OWNER_A,
+  CHECK(test_crypt_bound_client(ks, "service", OWNER_A,
       "nip44_decrypt_b64", pubkey, ciphertext, &plain) == 0);
   CHECK(strcmp(plain, encoded) == 0);
   g_free(plain);
   g_free(encoded);
   g_free(ciphertext);
   ciphertext = NULL;
-  CHECK(signet_key_store_crypt_nip44(ks, "service", OWNER_A,
+  CHECK(test_crypt_bound_client(ks, "service", OWNER_A,
       "nip44_encrypt_b64", pubkey, "not base64!", &ciphertext) != 0);
   CHECK(ciphertext == NULL);
 
@@ -591,21 +593,21 @@ static void test_fenced_nip44_custody(void) {
   SignetKeyStoreConfig cfg = {.db_path = path, .master_key = MASTER_KEY};
   ks = signet_key_store_new(NULL, &cfg);
   CHECK(ks != NULL);
-  CHECK(signet_key_store_crypt_nip44(ks, "service", OWNER_A,
+  CHECK(test_crypt_bound_client(ks, "service", OWNER_A,
       "nip44_encrypt", pubkey, "after restart", &ciphertext) == 0);
   g_free(ciphertext);
   ciphertext = NULL;
   CHECK(signet_key_store_writer_acquire(ks, "service", OWNER_B, &epoch) == 0);
-  CHECK(signet_key_store_crypt_nip44(ks, "service", OWNER_A,
+  CHECK(test_crypt_bound_client(ks, "service", OWNER_A,
       "nip44_encrypt", pubkey, "former owner", &ciphertext) != 0);
   CHECK(ciphertext == NULL);
-  CHECK(signet_key_store_crypt_nip44(ks, "service", OWNER_B,
+  CHECK(test_crypt_bound_client(ks, "service", OWNER_B,
       "nip44_encrypt", pubkey, "current", &ciphertext) == 0);
   g_free(ciphertext);
   ciphertext = NULL;
   int64_t revoked = 0;
   CHECK(signet_key_store_writer_revoke(ks, "service", &revoked) == 0);
-  CHECK(signet_key_store_crypt_nip44(ks, "service", OWNER_B,
+  CHECK(test_crypt_bound_client(ks, "service", OWNER_B,
       "nip44_encrypt", pubkey, "revoked", &ciphertext) != 0);
   CHECK(ciphertext == NULL);
   signet_key_store_free(ks);
@@ -649,8 +651,6 @@ static void test_writer_fence_persists_and_fails_closed(void) {
   char pubkey[65];
   CHECK(signet_key_store_provision_agent(ks, "service", NULL, NULL, 0,
                                          pubkey, sizeof(pubkey), NULL) == 0);
-  SignetLoadedKey raw = {0};
-  CHECK(!signet_key_store_load_agent_key(ks, "service", &raw));
   /* Never fenced: legacy transports and any NIP-46 client may sign. */
   char *ciphertext = NULL;
   CHECK(signet_key_store_crypt_legacy(ks, "service", "nip44_encrypt",
@@ -665,7 +665,6 @@ static void test_writer_fence_persists_and_fails_closed(void) {
   int64_t epoch_a = 0;
   CHECK(signet_key_store_writer_acquire(ks, "service", OWNER_A, &epoch_a) == 0);
   CHECK(epoch_a == 1);
-  CHECK(!signet_key_store_load_agent_key(ks, "service", &raw));
   CHECK(signet_key_store_crypt_legacy(ks, "service", "nip44_encrypt",
       pubkey, "denied", &ciphertext) != 0);
   CHECK(ciphertext == NULL);
@@ -683,7 +682,6 @@ static void test_writer_fence_persists_and_fails_closed(void) {
   SignetKeyStoreConfig cfg = {.db_path = path, .master_key = MASTER_KEY};
   ks = signet_key_store_new(NULL, &cfg);
   CHECK(ks != NULL);
-  CHECK(!signet_key_store_load_agent_key(ks, "service", &raw));
   CHECK(signet_key_store_with_signing_key(ks, "service", OWNER_A,
                                           count_sign, &count) == 0);
   int64_t epoch_b = 0;
@@ -724,7 +722,6 @@ static void test_writer_fence_persists_and_fails_closed(void) {
                                           count_sign, &count) != 0);
   CHECK(signet_key_store_with_signing_key(ks, "service", OWNER_C,
                                           count_sign, &count) != 0);
-  CHECK(!signet_key_store_load_agent_key(ks, "service", &raw));
   signet_key_store_free(ks);
   ks = signet_key_store_new(NULL, &cfg);
   CHECK(ks != NULL);
@@ -849,6 +846,9 @@ static void test_writer_transfer_serializes_with_sign(void) {
   char pubkey[65];
   CHECK(signet_key_store_provision_agent(first, "service", NULL, NULL, 0,
                                          pubkey, sizeof(pubkey), NULL) == 0);
+  SignetStore *store = signet_key_store_get_store(first);
+  CHECK(signet_store_reissue_connect_secret(store, "service", "owner-a-pair", 1) == 0);
+  test_pair_store_client(store, "service", "owner-a-pair", OWNER_A, 1);
   int64_t epoch = 0;
   CHECK(signet_key_store_writer_acquire(first, "service", OWNER_A, &epoch) == 0);
   CHECK(epoch == 1);
@@ -880,7 +880,7 @@ static void test_writer_transfer_serializes_with_sign(void) {
   CHECK(signet_key_store_with_signing_key(first, "service", OWNER_A,
                                           count_sign, &count) != 0);
   char *result = NULL;
-  CHECK(signet_key_store_crypt_nip44(first, "service", OWNER_A,
+  CHECK(test_crypt_bound_client(first, "service", OWNER_A,
       "nip44_encrypt", pubkey, "stale", &result) != 0);
   CHECK(result == NULL);
   CHECK(signet_key_store_with_signing_key(first, "service", OWNER_B,

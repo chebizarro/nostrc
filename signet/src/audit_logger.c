@@ -35,24 +35,8 @@ struct SignetAuditLogger {
 
 static volatile sig_atomic_t g_reopen_requested = 0;
 
-static void signet_sighup_handler(int signo) {
-  (void)signo;
-  g_reopen_requested = 1;
-}
-
 void signet_audit_logger_request_reopen(void) {
   g_reopen_requested = 1;
-}
-
-int signet_audit_logger_install_sighup_handler(void) {
-  struct sigaction sa;
-  memset(&sa, 0, sizeof(sa));
-  sa.sa_handler = signet_sighup_handler;
-  sigemptyset(&sa.sa_mask);
-  sa.sa_flags = SA_RESTART;
-
-  if (sigaction(SIGHUP, &sa, NULL) != 0) return -1;
-  return 0;
 }
 
 const char *signet_audit_event_type_to_string(SignetAuditEventType type) {
@@ -284,18 +268,6 @@ void signet_audit_logger_free(SignetAuditLogger *l) {
   free(l->path);
   g_mutex_clear(&l->mu);
   free(l);
-}
-
-int signet_audit_logger_reopen(SignetAuditLogger *l) {
-  if (!l) return -1;
-  if (!l->enabled) return 0;
-  if (l->to_stdout) return 0;
-
-  g_mutex_lock(&l->mu);
-  int rc = signet_audit_logger_reopen_locked(l);
-  g_mutex_unlock(&l->mu);
-
-  return rc;
 }
 
 static JsonNode *signet_parse_json_object_node(const char *json_object) {

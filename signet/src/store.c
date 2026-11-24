@@ -2056,28 +2056,6 @@ static int signet_store_bind_client_stmt(SignetStore *store,
   return (rc == SQLITE_DONE) ? 0 : -1;
 }
 
-int signet_store_bind_client(SignetStore *store,
-                             const char *agent_id,
-                             const char *agent_pubkey,
-                             const char *client_pubkey,
-                             const char *pairing_secret,
-                             int64_t now) {
-  if (!store || !store->open || !agent_id || !agent_id[0]) return -1;
-  char canonical[65];
-  if (!signet_store_canonical_pubkey(client_pubkey, canonical)) return -1;
-  char agent_pk_canonical[65];
-  const char *apk = NULL;
-  if (agent_pubkey && agent_pubkey[0]) {
-    if (!signet_store_canonical_pubkey(agent_pubkey, agent_pk_canonical)) return -1;
-    apk = agent_pk_canonical;
-  }
-  char *hash = signet_store_secret_hash(pairing_secret);
-  int rc = signet_store_bind_client_stmt(store, agent_id, apk, canonical, hash, now);
-  if (hash) sodium_memzero(hash, strlen(hash));
-  g_free(hash);
-  return rc;
-}
-
 int signet_store_lookup_client_binding(SignetStore *store,
                                        const char *client_pubkey,
                                        int64_t now,

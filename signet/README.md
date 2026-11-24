@@ -40,13 +40,13 @@ or shipped in this release**; a future native sidecar is separate work.
 - **Runtime Policy Updates** — SET_POLICY management command parses submitted JSON and applies policies in-memory with file persistence
 - **Capability Engine** — Fine-grained capability model (`nostr.sign`, `nostr.encrypt`, `credential.get_token`, `ssh.sign`, etc.) with rate limiting via token bucket
 - **Fleet Registry** — Pluggable authorization backend (NIP-51 fleet lists, deny lists, internal mint tables) checked on every request
-- **Deny List** — SQLCipher-backed pubkey deny list with emergency and normal revocation paths; deny list takes precedence over all other authorization
+- **Deny List** — SQLCipher-backed pubkey deny list updated by `agent/revoke`; deny-list checks take precedence over other authorization.
 
 ### Transports
 
 - **NIP-46 over Relays** — Primary transport; encrypted NIP-44 v2 sessions over WebSocket relays with exponential backoff reconnect
 - **D-Bus Unix** — `net.signet.Signer` and `net.signet.Credentials` interfaces on the system bus; auth via `SO_PEERCRED` UID-to-agent mapping
-- **D-Bus TCP** — Same interfaces over TCP for LAN agents; configurable port (default 47472)
+- **D-Bus TCP** — Optional plaintext transport, bound to `127.0.0.1:47472` by default when enabled; LAN access requires an explicit bind host
 - **NIP-5L Unix Socket** — Line-delimited NIP-46 JSON framing over `/run/signet/nip5l.sock` with Nostr challenge auth; supports systemd socket activation
 - **SSH Agent** — OpenSSH agent protocol on `/run/signet/ssh-agent.sock`; `SSH_AGENTC_SIGN_REQUEST` signs from the hot cache; supports systemd socket activation
 - **Bootstrap HTTP** — `POST /bootstrap`, `GET /challenge`, `POST /auth` endpoints for agent onboarding and re-authentication
@@ -267,7 +267,6 @@ db_path = /data/signet.db
 
 [nostr]
 relays = wss://relay.example.com
-reconnect_interval_s = 30
 provisioner_pubkeys = <hex pubkey>
 identity = default
 
@@ -294,7 +293,9 @@ trusted_proxy_cidrs = 127.0.0.0/8;::1/128;
 [dbus]
 unix_enabled = false
 tcp_enabled = false
+# tcp_host = 127.0.0.1
 # tcp_port = 47472
+# tcp_allow_credentials = false
 
 [nip5l]
 # enabled = false
@@ -336,6 +337,7 @@ New 0.8.0 file-key and bootstrap-trust inputs are the release contract in
 | `SIGNET_DBUS_UNIX`            | Enable D-Bus Unix (`true`/`false`)       |
 | `SIGNET_DBUS_TCP`             | Enable D-Bus TCP (`true`/`false`)        |
 | `SIGNET_DBUS_TCP_PORT`        | D-Bus TCP port                           |
+| `SIGNET_DBUS_TCP_HOST`        | D-Bus TCP bind host (default `127.0.0.1`) |
 | `SIGNET_NIP5L`                | Enable NIP-5L (`true`/`false`)           |
 | `SIGNET_NIP5L_SOCKET`         | NIP-5L socket path                       |
 | `SIGNET_SSH_AGENT`            | Enable SSH agent (`true`/`false`)        |
@@ -567,6 +569,16 @@ Signet exposes two D-Bus interfaces (see `dbus/net.signet.Signer.xml`):
 - `GetToken(credential_id) → (token, expires_at)` — enforces per-agent ownership; agents can only retrieve their own credentials
 - `ListCredentials() → credential_ids[]`
 
+Both calls require their normal capabilities. Plaintext D-Bus TCP also refuses
+these two calls with `net.signet.Error.CredentialsOverTcpDisabled` by default.
+`[dbus] tcp_allow_credentials = true` lifts only the transport restriction and
+logs a startup warning; it does not grant either capability. Unix D-Bus is
+unchanged. Authentication and signing remain available over TCP under their
+existing rules. Use Unix D-Bus where possible; keep TCP on loopback or protect
+it with an encrypted tunnel. To bind directly to a LAN interface, set `[dbus]
+tcp_host` (or `SIGNET_DBUS_TCP_HOST`) explicitly. Both new settings require a
+restart; SIGHUP does not change them.
+
 For Unix D-Bus, enable `[dbus] unix_enabled` and map the client's OS UID to
 its provisioned agent ID in `[uid_map]`. As a provisioner, add only the
 credential methods that agent needs to its policy's `allow_methods`:
@@ -580,6 +592,21 @@ A wildcard or default-allow alone does not grant either operation. To revoke a
 grant, remove its literal entry and submit the updated policy. The running
 daemon applies management updates directly; an out-of-process update to the
 policy file takes effect on `SIGHUP`. See [the integration guide](INTEGRATION.md#d-bus-credential-grants).
+
+**net.signet.Passkeys** — Programmatic WebAuthn (requires a passkey-enabled
+build and `[passkeys] enabled = true`). Map the Unix caller to its provisioned
+agent as above, then grant only the methods it needs, for example:
+
+```bash
+signetctl set-policy my-agent '{"default":"deny","allow_methods":["passkey.get_info","passkey.make_credential","passkey.get_assertion"]}'
+```
+
+Export and import are separate opt-in grants (`passkey.export` and
+`passkey.import`); don't give them to an agent that only performs WebAuthn
+ceremonies. Wildcard/default-allow policies don't grant passkey methods, and the
+deny list takes precedence. To revoke a policy-store grant, remove it from the
+replacement policy while keeping the other intended rules. See [Passkeys /
+WebAuthn](INTEGRATION.md#passkeys--webauthn-programmatic-api) for the full mapping.
 
 ## Health Endpoint
 

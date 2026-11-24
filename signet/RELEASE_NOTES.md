@@ -4,6 +4,13 @@
 
 ### Incompatible pre-1.0 production changes
 
+- When enabled, D-Bus TCP now binds to `127.0.0.1` instead of all IPv4
+  interfaces. LAN deployments must set `[dbus] tcp_host` (or
+  `SIGNET_DBUS_TCP_HOST`) explicitly. TCP `GetToken` and `GetSession` are now
+  disabled by default; `tcp_allow_credentials = true` restores transport access
+  only, retains normal authorization, and logs a plaintext warning. Unix D-Bus
+  is unchanged. Restart to apply either new setting (`nostrc-y0q09`).
+
 - D-Bus `GetSession` no longer mints a Signet token. It contacts the service
   bound to the agent's credential and returns the service's token. Provision
   `--service-url` on credential create/import; existing credentials have no
@@ -28,7 +35,17 @@
 
 - Provisioners can grant D-Bus `GetToken` and `GetSession` per agent through
   `set-policy`; wildcard policies do not grant either method.
+- Provisioners can grant the five D-Bus passkey methods individually per agent
+  through `set-policy`, including separate export and import grants.
+
+### Other operator-visible changes
+
+- `[nostr] reconnect_interval_s` is deprecated and ignored with a one-time
+  warning. Reconnect timing continues to use libnostr backoff.
 
 This release also includes replay, credential, backup, HTTP resource-bound and
 secret/event ownership corrections from the quick-fix integration. No published
 release or tag is created by this version declaration.
+
+Signet now prunes credential leases that expired more than 24 hours ago, at
+most once per hour, and logs the number removed when non-zero.

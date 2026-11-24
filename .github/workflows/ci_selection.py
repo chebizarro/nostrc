@@ -40,7 +40,12 @@ FAMILY_NODES = {
     'mdk011': {'libmarmot', 'marmot.gobject', 'marmot.vector_inputs', 'mdk011.peer_inputs',
                'mdk09.peer_inputs'},
 }
-REFERENCE_NODES = {'groundhog.mls_store', 'groundhog.mls_service', 'groundhog.mls_media',
+# version.contract selects checks in these existing runner families, plus
+# the two reference profiles below. It has no Vault filesystem check.
+for family in ('core', 'grotto', 'groundhog', 'static'):
+    FAMILY_NODES[family].add('version.contract')
+
+REFERENCE_NODES = {'version.contract', 'groundhog.mls_store', 'groundhog.mls_service', 'groundhog.mls_media',
                    'groundhog.mls_files', 'groundhog.mls_ui', 'groundhog.voice'}
 
 

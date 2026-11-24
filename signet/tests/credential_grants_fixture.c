@@ -3,6 +3,7 @@
 #include "signet/revocation.h"
 #include "signet/store.h"
 #include "signet/store_secrets.h"
+#include "test_deny_list_fixture.h"
 #include "test_check.h"
 
 #include <sodium.h>
@@ -70,10 +71,7 @@ int main(int argc, char **argv) {
         0, "imported", NULL, now, NULL) == SIGNET_SECRET_OK);
   }
   if (strcmp(argv[3], "deny") == 0) {
-    SignetDenyList *deny = signet_deny_list_new(store);
-    CHECK(deny);
-    CHECK(signet_deny_list_add(deny, pubkey, agent, "fixture", now) == 0);
-    signet_deny_list_free(deny);
+    signet_deny_list_free(test_set_denied(store, NULL, pubkey, agent, now, true));
   }
   signet_store_close(store);
   return 0;

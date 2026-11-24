@@ -65,7 +65,7 @@ for acceptance commands and capability limits.
 Agents on the same machine or LAN can use the `net.signet.Signer` D-Bus interface:
 
 - **Unix socket** (system bus): Auth via `SO_PEERCRED` UID → agent_id mapping. Enable with `[dbus] unix_enabled = true`.
-- **TCP**: For LAN agents. Enable with `[dbus] tcp_enabled = true` and `tcp_port = 47472`.
+- **TCP**: Enable with `[dbus] tcp_enabled = true`. It binds to `127.0.0.1:47472` by default; set `tcp_host` explicitly to reach a LAN interface. This transport is plaintext. `GetToken` and `GetSession` are blocked unless `tcp_allow_credentials = true`, and even then normal capability checks apply. Prefer Unix D-Bus or an encrypted tunnel.
 
 ### NIP-5L (Unix Socket)
 
@@ -82,6 +82,29 @@ With a passkey-enabled build/image, persistent store, mounted fleet PSK and
 
 - D-Bus `net.signet.Passkeys`: `GetInfo()`, `MakeCredential(request_json)`, `GetAssertion(request_json)`, `ExportCredential(request_json)`, `ImportCredential(request_json)`
 - NIP-46: `webauthn_get_info`, `webauthn_make_credential`, `webauthn_get_assertion`, `webauthn_export`, `webauthn_import`
+
+For Unix D-Bus, map the caller's UID to its provisioned agent in `[uid_map]`.
+Use `signetctl set-policy <agent> '<policy-json>'` to add only the following
+literal entries to that agent's `allow_methods`:
+
+| D-Bus method | Exact grant |
+|---|---|
+| `GetInfo` | `passkey.get_info` |
+| `MakeCredential` | `passkey.make_credential` |
+| `GetAssertion` | `passkey.get_assertion` |
+| `ExportCredential` | `passkey.export` |
+| `ImportCredential` | `passkey.import` |
+
+The policy must belong to that agent, not the `*` identity. Neither `"*"` in
+`allow_methods` nor `"default":"allow"` grants any of these methods. The deny
+list wins over both policy-store and existing registry grants. Export and import
+move wrapped key material across the custody boundary; grant them separately
+and only to agents that need to transfer credentials. These grants are for D-Bus,
+not NIP-46 or CTAP-HID.
+
+To revoke, use `set-policy` with a replacement policy that omits the grant but
+keeps all other intended rules. Management updates take effect directly; for a
+policy-file update made outside the running daemon, send `SIGHUP` to reload it.
 
 `MakeCredential` request JSON fields: `rpId`, base64 `clientDataHash` (32 bytes), base64 `userHandle`, optional `userName`, `userDisplayName`, `discoverable`, `userVerification`, `pubKeyCredParams` (must include `-7`), and `excludeCredentials` (base64 IDs or objects with `id`).
 

@@ -622,6 +622,46 @@ static void count_env_warning(const gchar *domain, GLogLevelFlags level,
     ++*(unsigned int *)data;
 }
 
+static void count_reconnect_warning(const gchar *domain, GLogLevelFlags level,
+                                    const gchar *message, gpointer data) {
+  (void)domain; (void)level;
+  if (strstr(message, "reconnect_interval_s") && strstr(message, "ignored") &&
+      strstr(message, "libnostr backoff"))
+    ++*(unsigned int *)data;
+}
+
+static void test_reconnect_interval_ignored(void) {
+  char *path = tmp_path("deprecated-reconnect.conf");
+  const char *base = "[nostr]\nrelays=wss://127.0.0.1:1\n";
+  SignetConfig defaults, live;
+  write_file(path, base);
+  CHECK(signet_config_load(path, &defaults) == 0);
+
+  unsigned int warnings = 0;
+  guint handler = g_log_set_handler(NULL, G_LOG_LEVEL_WARNING, count_reconnect_warning, &warnings);
+  char *contents = g_strconcat(base, "reconnect_interval_s=1\n", NULL);
+  write_file(path, contents);
+  g_free(contents);
+  CHECK(signet_config_load(path, &live) == 0);
+  CHECK(warnings == 1);
+  CHECK(live.reconnect_interval_s == defaults.reconnect_interval_s);
+
+  contents = g_strconcat(base, "reconnect_interval_s=999\n", NULL);
+  write_file(path, contents);
+  g_free(contents);
+  SignetReloadCtx ctx = {.config_path = path, .live = &live};
+  SignetReloadReport report;
+  live.reconnect_interval_s = 42;
+  CHECK(signet_config_reload_apply(&ctx, time(NULL), &report) == 0);
+  CHECK(live.reconnect_interval_s == 42);
+  CHECK(warnings == 1);
+  g_log_remove_handler(NULL, handler);
+  signet_config_clear(&live);
+  signet_config_clear(&defaults);
+  g_unlink(path);
+  g_free(path);
+}
+
 static void test_signed_d2_writeback(void) {
   const char *sk_a = "2222222222222222222222222222222222222222222222222222222222222222";
   const char *sk_b = "3333333333333333333333333333333333333333333333333333333333333333";
@@ -810,6 +850,7 @@ int main(void) {
   g_setenv("SIGNET_BUNKER_NSEC_FILE", nsec_path, TRUE);
 
   printf("test_config_reload:\n");
+  test_reconnect_interval_ignored();
   test_production_relays_require_tls();
   test_protected_passkey_psk();
   test_adoption_write_failure_retries();

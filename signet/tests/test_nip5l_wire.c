@@ -21,6 +21,23 @@
 #include <string.h>
 #include <time.h>
 
+static const char *plain = "caf\xc3\xa9 \xf0\x9f\x8e\x89 \"q\" \\ line\nend";
+
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+#include "../src/secret_json.h"
+
+static gint plaintext_wipes;
+static gint wipes_before_decrypt;
+static size_t last_wipe_size;
+static size_t decrypt_reply_size;
+
+static void observe_wipe(const void *data, size_t size) {
+  if (size) CHECK(sodium_is_zero(data, size));
+  if (size == strlen(plain)) g_atomic_int_inc(&plaintext_wipes);
+  last_wipe_size = size;
+}
+#endif
+
 static const char *sk = "0000000000000000000000000000000000000000000000000000000000000001";
 
 static char *get_pubkey(const char *agent, void *data) {
@@ -31,6 +48,9 @@ static char *get_pubkey(const char *agent, void *data) {
 typedef struct {
   GDataInputStream *in;
   GOutputStream *out;
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+  size_t reply_size;
+#endif
 } Conn;
 
 /* Send one request; return the reply's parsed root object (caller unrefs parser). */
@@ -42,6 +62,9 @@ static JsonObject *rpc(Conn *c, JsonParser *parser, const char *request) {
   g_free(line);
   char *reply = g_data_input_stream_read_line_utf8(c->in, NULL, NULL, &error);
   CHECK(reply && !error);
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+  c->reply_size = strlen(reply);
+#endif
   if (!json_parser_load_from_data(parser, reply, -1, &error)) {
     fprintf(stderr, "reply is not JSON: %s (%s)\n", reply, error ? error->message : "?");
     CHECK(!"NIP-5L reply must be valid JSON");
@@ -132,10 +155,15 @@ static gpointer client(gpointer data) {
 
   /* Non-ASCII, quote, backslash and newline: g_strescape rendered the UTF-8
    * bytes as octal escapes, which no JSON parser accepts. */
-  const char *plain = "caf\xc3\xa9 \xf0\x9f\x8e\x89 \"q\" \\ line\nend";
   char *ct = call_result(&c, "nip44_encrypt", f->pubkey, plain);
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+  wipes_before_decrypt = g_atomic_int_get(&plaintext_wipes);
+#endif
   char *back = call_result(&c, "nip44_decrypt", f->pubkey, ct);
   CHECK(strcmp(back, plain) == 0);
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+  decrypt_reply_size = c.reply_size;
+#endif
 
   g_free(challenge); g_free(authed); g_free(ct); g_free(back);
   g_io_stream_close(G_IO_STREAM(conn), NULL, NULL);
@@ -168,6 +196,9 @@ int main(void) {
 
   Fixture f = {.path = path, .pubkey = pk, .loop = g_main_loop_new(NULL, FALSE)};
   guint deadline = g_timeout_add_seconds(30, watchdog, NULL);
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+  signet_secret_json_set_wipe_hook(observe_wipe);
+#endif
   GThread *t = g_thread_new("nip5l-client", client, &f);
   g_main_loop_run(f.loop);
   g_thread_join(t);
@@ -181,6 +212,14 @@ int main(void) {
   CHECK(g_rmdir(dir) == 0);
   g_free(path);
   g_free(dir);
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+  /* The server has drained its client thread, including post-write cleanup.
+   * The decrypted bytes appear once in the JSON tree and once in the crypto
+   * result; the final wipe must be the serialized reply sent over the socket. */
+  signet_secret_json_set_wipe_hook(NULL);
+  CHECK(g_atomic_int_get(&plaintext_wipes) - wipes_before_decrypt == 2);
+  CHECK(last_wipe_size == decrypt_reply_size);
+#endif
   puts("test_nip5l_wire: all passed");
   return 0;
 }

@@ -11,7 +11,11 @@ and local tests are **not** release acceptance. The owner must execute the live
 checks below on a disposable Droplet before approving the release. No cloud
 resource is created by CI. Bootstrap is disabled at first launch; CTAP is
 experimental. MCP, git-credential, D-Bus and Unix socket transports are not shipped
-as supported container surfaces.
+as supported container surfaces. Do not publish port 47472 for this profile.
+For separately managed, non-container Signet deployments that enable D-Bus TCP,
+the default bind is now `127.0.0.1`; LAN access requires an explicit `[dbus]
+tcp_host` and network controls. Keep `tcp_allow_credentials = false` unless the
+connection is protected and credential access over TCP is required.
 
 ## Release inputs and trust
 

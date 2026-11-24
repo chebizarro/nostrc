@@ -11,7 +11,6 @@
  * Live-reloadable:
  *   - [nostr] relays              (relay pool reconfigure, subscriptions kept)
  *   - [nostr] provisioner_pubkeys (reconciled against persisted authorization)
- *   - [nostr] reconnect_interval_s
  *   - [policy_defaults] default_decision, allowed_kinds, rate_limit_rpm
  *   - the policy file's contents  (eager reload, not deferred to next lookup)
  *   - [server] log_level

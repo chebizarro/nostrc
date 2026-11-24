@@ -118,6 +118,8 @@ typedef enum {
  * @dbus_unix_enabled: system D-Bus (default false).
  * @dbus_tcp_enabled: TCP D-Bus (default false).
  * @dbus_tcp_port: default 47472.
+ * @dbus_tcp_host: bind host (default 127.0.0.1).
+ * @dbus_tcp_allow_credentials: permit secret-bearing Credentials replies over TCP (default false).
  * @nip5l_enabled: NIP-5L socket (default false).
  * @nip5l_socket_path: nip5l socket path value.
  * @ssh_agent_enabled: SSH agent socket (default false).
@@ -197,6 +199,8 @@ typedef struct {
   bool dbus_unix_enabled;          /* system D-Bus (default false) */
   bool dbus_tcp_enabled;           /* TCP D-Bus (default false) */
   int  dbus_tcp_port;              /* default 47472 */
+  char dbus_tcp_host[256];         /* default 127.0.0.1 */
+  bool dbus_tcp_allow_credentials; /* default false */
 
   /* --- [nip5l] --- */
   bool nip5l_enabled;              /* NIP-5L socket (default false) */

@@ -130,23 +130,6 @@ SignetAuditLogger *signet_audit_logger_new(const SignetAuditLoggerConfig *cfg);
  */
 void signet_audit_logger_free(SignetAuditLogger *l);
 
-/* Reopen log file (for external rotation).
- * No-op for stdout-only or disabled loggers.
- * Returns 0 on success, -1 on failure. */
-/**
- * signet_audit_logger_reopen:
- * @l: (not nullable): a #SignetAuditLogger
- *
- * Reopen log file (for external rotation). No-op for stdout-only or disabled loggers. Returns 0 on success, -1 on failure.
- *
- * Thread safety: this function is safe to call concurrently; access is serialized internally where required.
- *
- * Returns: operation-specific status or value as documented by the function
- *
- * Since: 1.0
- */
-int signet_audit_logger_reopen(SignetAuditLogger *l);
-
 /**
  * signet_audit_logger_request_reopen:
  *
@@ -158,18 +141,6 @@ int signet_audit_logger_reopen(SignetAuditLogger *l);
  * Since: 1.0
  */
 void signet_audit_logger_request_reopen(void);
-/**
- * signet_audit_logger_install_sighup_handler:
- *
- * Installs a SIGHUP handler that calls signet_audit_logger_request_reopen().
- * Subsequent audit writes notice the request and reopen the log.
- *
- * Returns: 0 on success, or -1 on failure
- *
- * Since: 1.0
- */
-int signet_audit_logger_install_sighup_handler(void);
-
 /* Write a single record:
  * - json_object MUST be a JSON object string (e.g. {"k":"v"}).
  * - The implementation wraps it into a canonical record containing timestamp
