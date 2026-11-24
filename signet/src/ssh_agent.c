@@ -230,21 +230,46 @@ static int ssh_sign_in_custody(const uint8_t secret_key[32], void *user_data) {
   return rc == 0 && actual == 64 ? 0 : -1;
 }
 
+int signet_ssh_agent_parse_sign_request(const uint8_t *data, size_t data_len,
+                                        SignetSshSignRequestView *out) {
+  /* string key_blob || string data || uint32 flags, nothing after it
+   * (draft-miller-ssh-agent §3.6.2). Every length is checked against the
+   * bytes that remain, never by adding to it, so a peer-supplied 32-bit length
+   * cannot wrap the bound. */
+  if (!data || !out) return -1;
+  memset(out, 0, sizeof(*out));
+  size_t left = data_len;
+  const uint8_t *dp = data;
+
+  if (left < 4) return -1;
+  uint32_t kb_len = get_u32(dp); dp += 4; left -= 4;
+  if (kb_len > left) return -1;
+  out->key_blob = dp; out->key_blob_len = kb_len;
+  dp += kb_len; left -= kb_len;
+
+  if (left < 4) return -1;
+  uint32_t msg_len = get_u32(dp); dp += 4; left -= 4;
+  if (msg_len > left) return -1;
+  out->data = dp; out->data_len = msg_len;
+  dp += msg_len; left -= msg_len;
+
+  if (left != 4) return -1;
+  /* The RSA SHA-2 flags do not apply to ssh-ed25519; they are read so the
+   * message is complete, then ignored as OpenSSH's agent does. */
+  out->flags = get_u32(dp);
+  return 0;
+}
+
 static int handle_sign_request(SignetSshAgent *sa, int client_fd,
                                  const char *agent_id,
                                  const uint8_t *data, uint32_t data_len) {
-  /* Parse: key_blob_len(4) + key_blob + data_len(4) + data + flags(4) */
-  if (data_len < 8) return send_failure(client_fd);
-
-  const uint8_t *dp = data;
-  uint32_t kb_len = get_u32(dp); dp += 4;
-  if (kb_len + 8 > data_len) return send_failure(client_fd);
-  const uint8_t *req_key_blob = dp; /* identity the client asked to sign with */
-  dp += kb_len;
-
-  uint32_t msg_len = get_u32(dp); dp += 4;
-  if ((uint32_t)(dp - data) + msg_len > data_len) return send_failure(client_fd);
-  const uint8_t *sign_data = dp;
+  SignetSshSignRequestView req;
+  if (signet_ssh_agent_parse_sign_request(data, data_len, &req) != 0)
+    return send_failure(client_fd);
+  const uint8_t *req_key_blob = req.key_blob; /* identity the client asked to sign with */
+  uint32_t kb_len = req.key_blob_len;
+  uint32_t msg_len = req.data_len;
+  const uint8_t *sign_data = req.data;
 
   /* Capability check. */
   if (sa->policy && !signet_policy_has_capability(sa->policy, agent_id,

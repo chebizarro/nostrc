@@ -17,6 +17,7 @@ extern "C" {
 #endif
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <sys/types.h>
 
@@ -67,6 +68,42 @@ typedef struct {
   SignetSshUidResolver uid_resolver;
   void *uid_resolver_data;
 } SignetSshAgentConfig;
+
+/**
+ * SignetSshSignRequestView:
+ * @key_blob: borrowed public-key blob the client asked to sign with.
+ * @key_blob_len: length of @key_blob.
+ * @data: borrowed bytes to sign.
+ * @data_len: length of @data.
+ * @flags: request flags (ignored for ssh-ed25519).
+ *
+ * Borrowed view of a parsed SSH_AGENTC_SIGN_REQUEST body.
+ *
+ * Since: 1.0
+ */
+typedef struct {
+  const uint8_t *key_blob;
+  uint32_t key_blob_len;
+  const uint8_t *data;
+  uint32_t data_len;
+  uint32_t flags;
+} SignetSshSignRequestView;
+
+/**
+ * signet_ssh_agent_parse_sign_request:
+ * @data: (array length=data_len): SSH_AGENTC_SIGN_REQUEST body after the type byte
+ * @data_len: length of @data
+ * @out: (out): borrowed view into @data
+ *
+ * Parse `string key_blob, string data, uint32 flags` exactly, with no trailing
+ * bytes. Used by the agent's request handler.
+ *
+ * Returns: 0 on success, -1 on a truncated, oversized or trailing body
+ *
+ * Since: 1.0
+ */
+int signet_ssh_agent_parse_sign_request(const uint8_t *data, size_t data_len,
+                                        SignetSshSignRequestView *out);
 
 /* Create SSH agent server. Returns NULL on OOM. */
 /**
