@@ -37,6 +37,7 @@
 #include "signet/nostr_auth.h"
 #include "signet/revocation.h"
 #include "signet/store.h"
+#include "signet/store_leases.h"
 #include "signet/capability.h"
 #include "signet/dbus_unix.h"
 #include "signet/dbus_tcp.h"
@@ -346,11 +347,25 @@ typedef struct {
   int64_t started_at;
   int64_t last_reconnect_attempt;
   int64_t fleet_sync_last_ts;
+  SignetStore *lease_store;
+  gint64 next_lease_prune_us;
 } HealthTimerCtx;
 
 static gboolean signetd_health_tick(gpointer data) {
   HealthTimerCtx *ctx = (HealthTimerCtx *)data;
   if (g_shutdown_requested) return G_SOURCE_REMOVE;
+
+  /* Use monotonic time for scheduling and wall time for persisted expirations. */
+  gint64 monotonic_now = g_get_monotonic_time();
+  if (ctx->lease_store && monotonic_now >= ctx->next_lease_prune_us) {
+    ctx->next_lease_prune_us = monotonic_now + 3600 * G_TIME_SPAN_SECOND;
+    int pruned = signet_store_cleanup_expired_leases(ctx->lease_store,
+                                                    signet_now_unix() - 24 * 3600);
+    if (pruned > 0)
+      g_message("[signetd] pruned %d expired leases", pruned);
+    else if (pruned < 0)
+      g_warning("[signetd] expired lease pruning failed");
+  }
 
   if (!ctx->health) return G_SOURCE_CONTINUE;
 
@@ -1181,6 +1196,7 @@ bool passkeys_start_failed = false;
    * and wakes immediately on SIGINT/SIGTERM via g_main_loop_quit().
    *
    * A 250ms GLib timeout source handles:
+   * - Hourly pruning of expired leases
    * - Health snapshot updates
    * - CLOSED subscription detection + re-subscribe
    * - Relay reconnect with 30s throttle */
@@ -1195,6 +1211,7 @@ bool passkeys_start_failed = false;
     .started_at = started_at,
     .last_reconnect_attempt = 0,
     .fleet_sync_last_ts = 0,
+    .lease_store = base_store,
   };
 
   /* SIGHUP reload wiring (fp-56t). Installed unconditionally so an operator

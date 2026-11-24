@@ -452,6 +452,16 @@ if(COMMAND nostrc_describe_test)
            "${CMAKE_CURRENT_SOURCE_DIR}/../src/memory_hardening.c")
 endif()
 
+signet_add_test_executable(lease_prune_fixture)
+add_test(NAME lease_prune_daemon COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_lease_prune_daemon.py
+  $<TARGET_FILE:signetd> $<TARGET_FILE:lease_prune_fixture>)
+set_tests_properties(lease_prune_daemon PROPERTIES TIMEOUT 45)
+if(COMMAND nostrc_describe_test)
+  nostrc_describe_test(lease_prune_daemon OWNER signet TARGETS signetd lease_prune_fixture
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_lease_prune_daemon.py")
+endif()
+
 # Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above
 # (nostrc-wqn0u). Must stay last, after every add_test() in this directory.
 if (BUILD_TESTING)

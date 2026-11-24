@@ -34,3 +34,6 @@
 This release also includes replay, credential, backup, HTTP resource-bound and
 secret/event ownership corrections from the quick-fix integration. No published
 release or tag is created by this version declaration.
+
+Signet now prunes credential leases that expired more than 24 hours ago, at
+most once per hour, and logs the number removed when non-zero.
