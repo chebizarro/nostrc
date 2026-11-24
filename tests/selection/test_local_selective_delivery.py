@@ -364,13 +364,15 @@ class GateEntrypointTests(PhysicalLegacyTests):
             registry.read_text().replace("linux", profile["platform"]))
         (self.source / "probe.py").write_text('''import os, signal, sys
 from pathlib import Path
-from ctest_quarantine import GTK_ASSERTION
+from ctest_quarantine import GTK_FAILURE
 
 name, mode = Path(sys.argv[1]).read_text().split()
 if name == sys.argv[2]:
-    print('unrelated assertion' if mode == 'different' else GTK_ASSERTION, flush=True)
+    print('unrelated assertion' if mode == 'different' else GTK_FAILURE, flush=True)
     if mode == 'sanitizer':
         print('ERROR: AddressSanitizer: synthetic report', flush=True)
+    if mode == 'abort':
+        os.abort()
     os.kill(os.getpid(), signal.SIGTRAP)
 ''')
         cmake = self.source / "CMakeLists.txt"
@@ -388,6 +390,7 @@ if name == sys.argv[2]:
         self.base = self.git("rev-parse", "HEAD")
         for profile_id, inputs, outcome, detail in (
             (native, "signer/ui-layout known", 0, "quarantined_failure"),
+            (native, "signer/ui-layout abort", 0, "quarantined_failure"),
             (asan, "signer/ui-layout known", 0, "quarantined_failure"),
             (native, "app.live known", 1, "CTest failed: app.live"),
             (native, "signer/ui-layout different", 1, "CTest failed: signer/ui-layout"),

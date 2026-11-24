@@ -142,6 +142,8 @@ rerun_status() {
         status = "Passed"
       } else if ($0 ~ /SIGTRAP\*\*\*/) {
         status = "SIGTRAP"
+      } else if ($0 ~ /Subprocess aborted\*\*\*/) {
+        status = "Subprocess aborted"
       } else {
         status = $0
         sub(/^[^*]*\*\*\*/, "", status)

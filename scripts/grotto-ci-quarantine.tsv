@@ -1,6 +1,6 @@
 # platform<TAB>exact CTest name<TAB>owning bead
 # Tests still execute. Only their known non-sanitizer failure is nonblocking.
-# GTK #8534: the assertion and SIGTRAP are checked by ctest_quarantine.py.
+# GTK #8534: the exact assertion and CTest SIGTRAP/abort status are checked by ctest_quarantine.py.
 linux	signer/ui-layout	nostrc-hmrgk
 linux	signer/ui-accessibility	nostrc-hmrgk
 linux-asan	signer/ui-layout	nostrc-hmrgk

@@ -9,6 +9,7 @@ SANITIZER_REPORT = re.compile(
     r"(ERROR|SUMMARY|WARNING|FATAL): [A-Za-z]+Sanitizer|: runtime error: |[A-Za-z]+Sanitizer:DEADLYSIGNAL"
 )
 GTK_ASSERTION = "Gtk-FATAL-CRITICAL: gtk_box_remove: assertion 'GTK_IS_BOX (box)' failed"
+GTK_FAILURE = f"not ok /signer/layout/backup-file-keyboard - {GTK_ASSERTION}"
 
 
 def registry(path, platform):
@@ -29,8 +30,11 @@ def matching_bead(names, name, status, output):
     if (not bead or not status or status in {"Passed", "not run"}
             or "Not Run" in status or "Skipped" in status or SANITIZER_REPORT.search(output)):
         return None
-    # GTK #8534: do not quarantine a timeout, unrelated assertion, or another signal.
-    if bead == "nostrc-hmrgk" and (not status.startswith("SIGTRAP") or GTK_ASSERTION not in output):
+    # CTest reports the known GTK #8534 crash differently across runners.
+    # Require the exact TAP subtest and assertion, not just an abort or a signal.
+    if bead == "nostrc-hmrgk" and (
+        status not in {"SIGTRAP", "Subprocess aborted"} or GTK_FAILURE not in output.splitlines()
+    ):
         return None
     return bead
 
