@@ -40,7 +40,7 @@ or shipped in this release**; a future native sidecar is separate work.
 - **Runtime Policy Updates** — SET_POLICY management command parses submitted JSON and applies policies in-memory with file persistence
 - **Capability Engine** — Fine-grained capability model (`nostr.sign`, `nostr.encrypt`, `credential.get_token`, `ssh.sign`, etc.) with rate limiting via token bucket
 - **Fleet Registry** — Pluggable authorization backend (NIP-51 fleet lists, deny lists, internal mint tables) checked on every request
-- **Deny List** — SQLCipher-backed pubkey deny list with emergency and normal revocation paths; deny list takes precedence over all other authorization
+- **Deny List** — SQLCipher-backed pubkey deny list updated by `agent/revoke`; deny-list checks take precedence over other authorization.
 
 ### Transports
 

@@ -124,15 +124,14 @@ bool signet_deny_list_contains(SignetDenyList *dl, const char *pubkey_hex) {
 
 /* ----------------------------- revocation -------------------------------- */
 
-static int signet_revoke_internal(SignetStore *store,
-                                   SignetKeyStore *keys,
-                                   SignetDenyList *deny,
-                                   SignetAuditLogger *audit,
-                                   const char *agent_id,
-                                   const char *pubkey_hex,
-                                   const char *reason,
-                                   int64_t now,
-                                   bool emergency) {
+int signet_revoke_agent(SignetStore *store,
+                        SignetKeyStore *keys,
+                        SignetDenyList *deny,
+                        SignetAuditLogger *audit,
+                        const char *agent_id,
+                        const char *pubkey_hex,
+                        const char *reason,
+                        int64_t now) {
   if (!store || !agent_id) return -1;
 
   sqlite3 *db = signet_store_get_db(store);
@@ -191,15 +190,14 @@ done:
   if (audit) {
     char *detail = g_strdup_printf(
         "{\"agent_id\":\"%s\",\"pubkey\":\"%s\",\"reason\":\"%s\","
-        "\"emergency\":%s,\"leases_revoked\":%d}",
+        "\"emergency\":true,\"leases_revoked\":%d}",
         agent_id,
         pubkey_hex ? pubkey_hex : "",
         reason ? reason : "",
-        emergency ? "true" : "false",
         lease_rc > 0 ? lease_rc : 0);
 
     signet_audit_log_append(store, now, agent_id,
-                            emergency ? "emergency_revoke" : "normal_revoke",
+                            "emergency_revoke",
                             NULL /* secret_id */,
                             NULL /* transport */,
                             detail);
@@ -207,30 +205,4 @@ done:
   }
 
   return rc;
-}
-
-int signet_revoke_agent(SignetStore *store,
-                         SignetKeyStore *keys,
-                         SignetDenyList *deny,
-                         SignetAuditLogger *audit,
-                         const char *agent_id,
-                         const char *pubkey_hex,
-                         const char *reason,
-                         int64_t now) {
-  return signet_revoke_internal(store, keys, deny, audit,
-                                 agent_id, pubkey_hex, reason, now,
-                                 true /* emergency */);
-}
-
-int signet_revoke_agent_normal(SignetStore *store,
-                                SignetKeyStore *keys,
-                                SignetDenyList *deny,
-                                SignetAuditLogger *audit,
-                                const char *agent_id,
-                                const char *pubkey_hex,
-                                int64_t now) {
-  return signet_revoke_internal(store, keys, deny, audit,
-                                 agent_id, pubkey_hex,
-                                 "removed from fleet list", now,
-                                 false /* normal */);
 }
