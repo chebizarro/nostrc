@@ -235,6 +235,23 @@ sys.exit(results[min(len(calls), len(results)-1)])
         self.assertIn("deb.debian.org/debian-security", debian)
         self.assertIn("packages.example.org/debian", debian)
 
+    def test_resolute_hosted_mirror_list_is_bypassed_on_fallback(self):
+        apt = self.root / "apt"
+        mirror_list = apt / "apt-mirrors.txt"
+        mirror_list.write_text("http://us-east-2.ec2.archive.ubuntu.com/ubuntu\n")
+        original = (f"Types: deb\nURIs: mirror+file:{mirror_list}\n"
+                    "Suites: resolute resolute-updates\nComponents: main universe\n"
+                    "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n")
+        self.source.write_text(original)
+        result, calls = self.run_apt([124, 0, 0], "install", "-y", "clang")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(calls), 3)
+        self.assertIn("update", calls[1])
+        self.assertEqual(calls[0], calls[2])
+        self.assertEqual(self.source.read_text(), original.replace(
+            f"mirror+file:{mirror_list}", "https://archive.ubuntu.com/ubuntu"))
+        self.assertEqual(mirror_list.read_text(), "http://us-east-2.ec2.archive.ubuntu.com/ubuntu\n")
+
     def test_failed_refresh_never_proceeds_to_install(self):
         result, calls = self.run_apt([100, 100], "install", "missing-capability")
         self.assertNotEqual(result.returncode, 0)

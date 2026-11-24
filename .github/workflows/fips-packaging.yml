@@ -132,10 +132,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: fipsd/packaging/testing
+          sparse-checkout: |
+            fipsd/packaging/testing
+            .github/actions/cache-apt
+            .github/workflows
+            scripts
+            packaging
+            debian
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with: { name: 'deb-ubuntu24.04-${{ matrix.arch }}', path: dist }
+      - name: Cache apt package downloads
+        id: apt-cache
+        uses: ./.github/actions/cache-apt
       - name: Install, start, query, remove, purge
         run: |
           set -eux
@@ -152,6 +161,12 @@ jobs:
           test ! -e /run/fips/gateway.sock
           test ! -e /run/fips-gateway
           ! getent group fips
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
 
   rpm:
     name: Fedora package (${{ matrix.arch }})
