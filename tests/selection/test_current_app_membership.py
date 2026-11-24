@@ -86,6 +86,18 @@ class CurrentAppMembership(unittest.TestCase):
         self.assertIn('supported.apps.grotto', plan['selected_checks'])
         self.assertFalse(any(check.startswith('libgo.') for check in plan['selected_checks']))
 
+    def test_signet_wire_regressions_are_selected(self):
+        names = {'nip5l_line_cap', 'nip5l_wire', 'ssh_agent_wire'}
+        ident = 'signet.wire_regressions'
+        check = self.policy['checks'][ident]
+        self.assertEqual(set(check['build_targets']), {'test_' + name for name in names})
+        for profile in ('core.linux', 'groundhog.mdk08'):
+            self.assertEqual(set(check['ctest_tests'][profile]), names)
+        for path in ('signet/src/nip5l_transport.c', 'signet/src/ssh_agent.c'):
+            plan = s.make_plan(self.policy, [change(path)], head='a' * 40, profiles=['core.linux'])
+            self.assertIn(ident, plan['selected_checks'])
+            self.assertFalse(any(check.startswith('libgo.') for check in plan['selected_checks']))
+
     def test_repaired_core_asan_tests_are_required_without_exclusions(self):
         names = {name for check in self.policy['checks'].values()
                  for name in check.get('ctest_tests', {}).get('core.linux.asan', [])}

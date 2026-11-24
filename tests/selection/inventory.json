@@ -20755,6 +20755,37 @@
       "runtime_inputs": [],
       "build_targets": []
     },
+    "signet.wire_regressions": {
+      "nodes": [
+        "signet"
+      ],
+      "profiles": [
+        "core.linux",
+        "groundhog.mdk08"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "core.linux": [
+          "nip5l_line_cap",
+          "nip5l_wire",
+          "ssh_agent_wire"
+        ],
+        "groundhog.mdk08": [
+          "nip5l_line_cap",
+          "nip5l_wire",
+          "ssh_agent_wire"
+        ]
+      },
+      "build_targets": [
+        "test_nip5l_line_cap",
+        "test_nip5l_wire",
+        "test_ssh_agent_wire"
+      ],
+      "runtime_inputs": []
+    },
     "supported.signet.tests": {
       "nodes": [
         "execution.core",
