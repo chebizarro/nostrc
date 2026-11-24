@@ -33228,9 +33228,9 @@
       "matrix_source": "matrix:\n        passkeys: [ 'OFF', 'ON' ]\n        sqlcipher: [ 'OFF', 'ON' ]\n        build_type: [ 'Debug' ]\n        include:\n          # Exercise binding-race and forced-secret regressions in one test\n          # build; the Release configuration below keeps hooks disabled.\n          - passkeys: 'ON'\n            sqlcipher: 'OFF'\n            build_type: 'Debug'\n            test_hooks: 'ON'\n          # fp-52iq: assurance comes from running tests the way the project is\n          # shipped. Release optimizes signet_core and defines NDEBUG, so cover\n          # the shipped configuration too instead of testing Debug only.\n          - passkeys: 'ON'\n            sqlcipher: 'ON'\n            build_type: 'Release'",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "af1d4f637739f6d2760a30d80d03c22cefb66b28ed0606ed1cbd74f576e78aee",
+      "source_sha256": "1ab821861dbae3277cb398c85bf49b88e3c79c0b5ba293c43025cf6228ef1309",
       "unsupported_reason": "Five passkeys/sqlcipher/hooks/build-type Meson variants and daemon/control smoke lack distinct exact profile/membership/runtime contracts.",
-      "workflow_sha256": "c9a604dcaca0b881479d0f4c5937116296d51ff1599b2a19ebb0ee8355700209"
+      "workflow_sha256": "3459087ecab09adda9656ea27369ad22f6d6f1df10b694127bf165246cfc5337"
     },
     ".github/workflows/static-checks.yml:static-checks": {
       "matrix_source": "",
