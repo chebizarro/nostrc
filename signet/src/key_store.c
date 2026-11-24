@@ -1263,6 +1263,21 @@ unsigned int signet_key_store_ephemeral_binding_count(SignetKeyStore *ks) {
   return n;
 }
 
+int signet_key_store_ephemeral_unbind_client(SignetKeyStore *ks,
+                                             const char *client_pubkey_hex) {
+  if (!ks) return -1;
+  char client[65];
+  if (!signet_ks_canonical_pubkey(client_pubkey_hex, client)) return 1;
+  g_mutex_lock(&ks->mu);
+  if (ks->store) {
+    g_mutex_unlock(&ks->mu);
+    return -1;
+  }
+  gboolean removed = g_hash_table_remove(ks->ephemeral_bindings, client);
+  g_mutex_unlock(&ks->mu);
+  return removed ? 0 : 1;
+}
+
 int signet_key_store_ephemeral_lookup_client(SignetKeyStore *ks,
                                              const char *client_pubkey_hex,
                                              char **out_agent_id,

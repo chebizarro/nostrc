@@ -378,6 +378,35 @@ static int signet_nip46_lookup_binding(SignetKeyStore *keys,
                                                   out_generation);
 }
 
+/* NIP-46 logout: end @client_pubkey_hex's session on whichever backend
+ * holds it. 0 removed, 1 nothing to remove, -1 error. */
+static int signet_nip46_unbind_client(SignetKeyStore *keys,
+                                      const char *client_pubkey_hex,
+                                      int64_t now) {
+  SignetStore *st = signet_key_store_get_store(keys);
+  if (st) return signet_store_revoke_client(st, client_pubkey_hex, now);
+  return signet_key_store_ephemeral_unbind_client(keys, client_pubkey_hex);
+}
+
+/* switch_relays result: the relays this signer listens on, as a JSON array. */
+static char *signet_nip46_relay_list_json(SignetRelayPool *relays) {
+  JsonBuilder *b = json_builder_new();
+  json_builder_begin_array(b);
+  size_t n_urls = 0;
+  const char *const *urls = relays ? signet_relay_pool_get_urls(relays, &n_urls) : NULL;
+  for (size_t i = 0; urls && i < n_urls; i++)
+    if (urls[i] && urls[i][0]) json_builder_add_string_value(b, urls[i]);
+  json_builder_end_array(b);
+  JsonNode *root = json_builder_get_root(b);
+  JsonGenerator *g = json_generator_new();
+  json_generator_set_root(g, root);
+  char *json = json_generator_to_data(g, NULL);
+  json_node_unref(root);
+  g_object_unref(g);
+  g_object_unref(b);
+  return json;
+}
+
 /* ------------------------------ server object ----------------------------- */
 
 struct SignetNip46Server {
@@ -714,8 +743,18 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
     }
   }
 
-  /* 4) Policy check */
-  if (!pairing_admitted && !pre_err && s->policy && parse_ok && method) {
+  /* 4) Policy check. NIP-46 session housekeeping needs a bound session (the
+   * lookup above) but not a method grant: logout only gives authority up,
+   * and switch_relays reports the relays a paired client already reached us
+   * on. Compliant clients send switch_relays right after connecting, so a
+   * policy pinning allow_methods would otherwise fail every new session. */
+  const bool session_method = parse_ok && method &&
+      (strcmp(method, "logout") == 0 || strcmp(method, "switch_relays") == 0);
+  if (session_method && !pre_err) {
+    policy_ok = true;
+    pres.decision = SIGNET_POLICY_DECISION_ALLOW;
+    pres.reason_code = "nip46.session_method";
+  } else if (!pairing_admitted && !pre_err && s->policy && parse_ok && method) {
     policy_ok = signet_policy_engine_eval(s->policy,
                                           policy_identity,
                                           client_pubkey_hex,
@@ -742,6 +781,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   bool result_is_json = false;
   char *err_str = NULL;
   bool allow = false;
+  bool logout_requested = false;
 
   if (rr == SIGNET_REPLAY_DUPLICATE) {
     code = "replay_duplicate";
@@ -912,6 +952,23 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
       code = "not_configured";
 #endif
 
+    } else if (strcmp(method, "switch_relays") == 0) {
+      /* Signet's relay set is operator configuration, so the reply is always
+       * the current list; a client already on it changes nothing. */
+      result = signet_nip46_relay_list_json(s->relays);
+      result_is_json = true;
+      status = result ? "ok" : "error";
+      code = result ? "ok" : "internal_error";
+      if (!result) err_str = g_strdup("failed to build relay list");
+
+    } else if (strcmp(method, "logout") == 0) {
+      /* Reply "ack" first; the binding is removed after the reply is queued. */
+      result = g_strdup("ack");
+      result_is_json = false;
+      status = "ok";
+      code = "ok";
+      logout_requested = true;
+
     } else if (strcmp(method, "get_relays") == 0) {
       /* Build a JSON object mapping relay URLs to empty read/write hints. */
       size_t n_urls = 0;
@@ -1002,6 +1059,15 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
       free(outer_evt);
     }
     g_free(outer_err);
+  }
+
+  /* NIP-46 logout: the "ack" above is queued; now end the session so any
+   * further request from this client needs a new connect. Done even when the
+   * reply could not be queued: the client asked to leave. */
+  if (logout_requested) {
+    int urc = signet_nip46_unbind_client(s->keys, client_pubkey_hex, now);
+    if (urc < 0)
+      g_warning("[signetd] nip46 logout: failed to remove client binding");
   }
 
   /* Cleanup — wipe sensitive material */

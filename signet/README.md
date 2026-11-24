@@ -541,6 +541,13 @@ policies pinning `allow_methods` explicitly must list them to enable the
 binary-safe path. `nip44_decrypt` rejects a plaintext that is not NUL-free
 UTF-8 with `invalid_plaintext` rather than truncating it.
 
+`switch_relays` replies with the relays Signet is configured to listen on (the
+relay set is operator configuration, so it never returns `null`). `logout`
+replies `"ack"` and then removes the client's binding; the client must
+`connect` with a fresh connect secret to pair again. Both need an existing
+binding but not a method grant, so a policy that pins `allow_methods` does
+not have to list them.
+
 For an identity fenced by `agent/writer-acquire`, `sign_event` and the four
 NIP-44 methods succeed only for the assigned owner client, and NIP-04 is
 refused; see [docs/WRITER_EPOCH_CUTOVER.md](docs/WRITER_EPOCH_CUTOVER.md).

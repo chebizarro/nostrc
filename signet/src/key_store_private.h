@@ -66,6 +66,13 @@ int signet_key_store_ephemeral_lookup_client(SignetKeyStore *ks,
                                              char **out_bound_secret_hash,
                                              uint64_t *out_generation);
 
+/* Cache-only unbind (NIP-46 logout): drops @client_pubkey_hex's binding so
+ * the client must connect again. Returns 0 when a binding was removed, 1 when
+ * there was none, -1 on error or when @ks has a persistent store (use
+ * signet_store_revoke_client). */
+int signet_key_store_ephemeral_unbind_client(SignetKeyStore *ks,
+                                             const char *client_pubkey_hex);
+
 /* NIP-46 custody path. The pin comes from the initial binding lookup. The
  * callback runs only if that same binding still authorizes the client, while
  * ks->mu and (with a store) the SQLite writer transaction protect the key. */
