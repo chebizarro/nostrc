@@ -49,6 +49,7 @@
  * groundhog-ci.yml's groundhog-sanitizers job runs this test); without it the
  * counters and white-box checks still pin the order and the release. */
 #include <arpa/inet.h>
+#include <errno.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -574,17 +575,19 @@ static void test_losing_dial_ignores_winner_lease(void) {
 typedef struct {
     NostrRelay *relay;
     NostrEvent *event;
+    GoContext *cancel;
     Error *error;
     bool accepted;
 } PublishCall;
 
-static void *publish_with_timeout(void *arg) {
+static void *publish_until_cancelled(void *arg) {
     PublishCall *call = arg;
-    call->accepted = nostr_relay_publish_and_wait(call->relay, call->event, 1, &call->error);
+    call->accepted = nostr_relay_publish_and_wait_with_context(call->relay, call->event,
+                                                              0, call->cancel, &call->error);
     return NULL;
 }
 
-static void test_publish_timeout_during_disconnect(void) {
+static void test_publish_cancel_during_disconnect(void) {
     NostrRelay *relay = relay_for_port(srv.port);
     Error *err = NULL;
     CHECK(nostr_relay_connect(relay, &err));
@@ -593,31 +596,37 @@ static void test_publish_timeout_during_disconnect(void) {
     DialBarrier failed = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, false, false };
     nostr_relay_test_set_lease_hook(hold_before_publish, &leased);
     nostr_relay_test_set_pending_ok_hook(hold_before_publish, &failed);
-    PublishCall call = { .relay = relay, .event = nostr_event_new() };
+    GoContext *root = go_context_background();
+    CancelContextResult cc = go_context_with_cancel(root);
+    CHECK(cc.context);
+    PublishCall call = { .relay = relay, .event = nostr_event_new(), .cancel = cc.context };
     CHECK(call.event);
     nostr_event_set_kind(call.event, 1);
     nostr_event_set_created_at(call.event, 1);
-    nostr_event_set_content(call.event, "timeout race");
+    nostr_event_set_content(call.event, "disconnect cancellation race");
     CHECK(nostr_event_sign(call.event,
           "0000000000000000000000000000000000000000000000000000000000000001") == 0);
     pthread_t publisher;
-    CHECK(pthread_create(&publisher, NULL, publish_with_timeout, &call) == 0);
+    CHECK(pthread_create(&publisher, NULL, publish_until_cancelled, &call) == 0);
     barrier_wait(&leased); /* waiter registered, publish still waiting for write */
     server_drop();
     barrier_wait(&failed); /* failure iterator owns detached map, before sending */
+    cc.cancel(cc.context);
+    CHECK(pthread_join(publisher, NULL) == 0); /* cancellation drops caller's reference */
+    CHECK(!call.accepted && call.error && call.error->code == ECANCELED);
     barrier_release(&leased);
-    CHECK(pthread_join(publisher, NULL) == 0); /* timeout drops caller's reference */
-    CHECK(!call.accepted && call.error);
     free_error(call.error);
     barrier_release(&failed); /* late failure still owns its waiter */
     nostr_relay_test_set_lease_hook(NULL, NULL);
     nostr_relay_test_set_pending_ok_hook(NULL, NULL);
     nostr_event_free(call.event);
+    go_context_unref(cc.context);
+    go_context_unref(root);
     nostr_relay_free(relay);
     barrier_destroy(&leased);
     barrier_destroy(&failed);
     WAIT_FOR(atomic_load(&srv.open) == 0);
-    puts("  [ok] publish timeout cannot free a detached disconnect waiter");
+    puts("  [ok] publish cancellation cannot free a detached disconnect waiter");
 }
 
 static void test_async_retirement_revokes_refire(void) {
@@ -878,7 +887,7 @@ int main(void) {
     test_reconnect_adopts_without_lease_wait();
     test_retirement_ignores_replacement_lease();
     test_losing_dial_ignores_winner_lease();
-    test_publish_timeout_during_disconnect();
+    test_publish_cancel_during_disconnect();
     test_async_retirement_revokes_refire();
     test_connect_during_reader_retirement();
     test_close_answers_writes_when_not_connected();
