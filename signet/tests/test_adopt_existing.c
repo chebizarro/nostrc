@@ -21,6 +21,7 @@
 #include <nostr-event.h>
 #include <nostr-keys.h>
 
+#include "test_connect_admission.h"
 #include "test_check.h"
 #include <stdbool.h>
 #include <stdio.h>
@@ -389,14 +390,13 @@ static void test_restore_existing_preserves_client_binding(void) {
   gen_keypair(original_sk, original_pk);
   char out_pk[65] = {0}; char *uri = NULL;
   CHECK(signet_key_store_adopt_agent(
-      ks, "stew", original_sk, original_pk, NULL, BUNKER_PK, RELAYS, 1,
+      ks, "stew", original_sk, original_pk, "pairing-secret", BUNKER_PK, RELAYS, 1,
       out_pk, &uri) == SIGNET_ADOPT_OK);
   g_free(uri);
 
   const char *client_pk =
       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-  CHECK(signet_store_bind_client(store, "stew", original_pk, client_pk,
-                                 "pairing-secret", 100) == 0);
+  test_pair_store_client(store, "stew", "pairing-secret", client_pk, 100);
   char *agent = NULL;
   CHECK(signet_store_lookup_client_binding(store, client_pk, 101,
                                            &agent, NULL) == 0);

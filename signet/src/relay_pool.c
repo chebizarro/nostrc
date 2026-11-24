@@ -1100,43 +1100,6 @@ static NostrFilters *signet_relay_pool_build_filters_locked(SignetRelayPool *rp)
  * without the lock. Releasing rp->mu here would need a separate in-use guard on
  * the inner pool to replace a guarantee we already have.
  */
-int signet_relay_pool_subscribe_kinds(SignetRelayPool *rp, const int *kinds, size_t n_kinds) {
-  if (!rp || !rp->pool) return -1;
-  if (!kinds || n_kinds == 0) return 0;
-
-  g_mutex_lock(&rp->mu);
-
-  /* Update kinds but preserve existing scoped filter params (pubkey, since).
-   * This allows reconnect paths to call subscribe_kinds() without losing
-   * the scoped parameters set by the initial subscribe_scoped() call. */
-  free(rp->active_kinds);
-  rp->active_kinds = (int *)malloc(n_kinds * sizeof(int));
-  if (rp->active_kinds) {
-    memcpy(rp->active_kinds, kinds, n_kinds * sizeof(int));
-    rp->n_active_kinds = n_kinds;
-  }
-
-  NostrFilters *filters = signet_relay_pool_build_filters_locked(rp);
-  if (!filters) {
-    g_mutex_unlock(&rp->mu);
-    return -1;
-  }
-
-  /* fp-1r0k: _async -- never dials on the caller's thread. Relays that are not
-   * up yet are registered and connected in the background; libnostr's reconcile
-   * pass fires this same filter set on each one as it connects (signet sets
-   * auto_unsub_on_eose false, which is what keeps that pass armed). */
-  nostr_simple_pool_subscribe_async(rp->pool,
-                                    (const char **)rp->urls, rp->n_urls,
-                                    *filters, true);
-  capture_required_locked(rp);
-
-  g_mutex_unlock(&rp->mu);
-
-  nostr_filters_free(filters);
-  return 0;
-}
-
 int signet_relay_pool_subscribe_scoped(SignetRelayPool *rp,
                                        const int *kinds, size_t n_kinds,
                                        const char *pubkey_hex,

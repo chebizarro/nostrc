@@ -21,12 +21,10 @@
 extern "C" {
 #endif
 
-#include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
 
 struct SignetRelayPool;
-struct SignetStore;
 
 /* Bootstrap delivery message content (JSON inside the DM). */
 /**
@@ -142,24 +140,6 @@ int signet_bootstrap_send_ack(const char *agent_sk_hex,
                                 const char *fleet_pubkey_hex,
                                 const char *agent_id,
                                 struct SignetRelayPool *relay_pool);
-
-/* Check if a bootstrap token should be reissued (expired but agent hasn't
- * bootstrapped yet). Returns true if reissue is needed. */
-/**
- * signet_bootstrap_needs_reissue:
- * @store: (nullable): a #SignetStore
- * @agent_id: (not nullable): agent identifier
- * @now: current Unix time in seconds
- *
- * Check if a bootstrap token should be reissued (expired but agent hasn't bootstrapped yet). Returns true if reissue is needed.
- *
- * Returns: %true if the condition is met, otherwise %false
- *
- * Since: 1.0
- */
-bool signet_bootstrap_needs_reissue(struct SignetStore *store,
-                                      const char *agent_id,
-                                      int64_t now);
 
 /* Free a received bootstrap message. Safe on NULL. */
 /**

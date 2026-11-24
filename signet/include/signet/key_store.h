@@ -93,27 +93,6 @@ SignetKeyStore *signet_key_store_new(struct SignetAuditLogger *audit,
  */
 void signet_key_store_free(SignetKeyStore *ks);
 
-/* Legacy raw key borrow exists only for cache-only test/development stores.
- * Every persisted identity can be fenced later, so a raw copy must never be
- * returned from a DB-backed key store. Use custody callbacks instead. */
-/**
- * signet_key_store_load_agent_key:
- * @ks: (not nullable): a #SignetKeyStore
- * @agent_id: (not nullable): agent identifier
- * @out_key: (out) (not nullable): return location for key
- *
- * Load a key only from a cache-only store. DB-backed stores always reject raw borrows.
- *
- * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
- *
- * Returns: %true if the condition is met, otherwise %false
- *
- * Since: 1.0
- */
-bool signet_key_store_load_agent_key(SignetKeyStore *ks,
-                                     const char *agent_id,
-                                     SignetLoadedKey *out_key);
-
 /* Execute a cryptographic operation under custody. client is the
  * authenticated NIP-46 client pubkey, or NULL for transports without one.
  * A fenced identity runs the callback only for its current owner client;
@@ -137,17 +116,6 @@ int signet_key_store_writer_revoke(SignetKeyStore *ks, const char *agent_id,
 int signet_key_store_crypt_legacy(SignetKeyStore *ks, const char *agent_id,
                                   const char *method, const char *peer_pubkey,
                                   const char *input, char **out_result);
-
-/* NIP-44 as an authenticated NIP-46 client. Only the four NIP-44 methods
- * are accepted. The owner check and crypto are serialized with
- * transfer/revoke in one transaction; on any failure *out_result is NULL.
- * Return -2 for non-text nip44_decrypt plaintext, which must use _b64.
- * NIP-46 supplies client from its authenticated envelope, never from request
- * parameters. */
-int signet_key_store_crypt_nip44(SignetKeyStore *ks, const char *agent_id,
-                                 const char *client,
-                                 const char *method, const char *peer_pubkey,
-                                 const char *input, char **out_result);
 
 /* Create or get an agent identity. Existing keys, client bindings and writer
  * custody are preserved; only the pending one-time connect secret is replaced.
@@ -292,50 +260,6 @@ int signet_key_store_rotate_agent(SignetKeyStore *ks,
                                    const char *agent_id,
                                    char *out_pubkey_hex,
                                    size_t out_pubkey_hex_sz);
-
-/* Validate and consume a connect_secret for an agent.
- * Returns 0 if secret matches and was consumed, 1 if no secret required,
- * -1 on mismatch or error. */
-/**
- * signet_key_store_validate_connect_secret:
- * @ks: (not nullable): a #SignetKeyStore
- * @agent_id: (not nullable): agent identifier
- * @provided_secret: (nullable): provided secret
- *
- * Validate and consume a connect_secret for an agent. Returns 0 if secret matches and was consumed, 1 if no secret required, -1 on mismatch or error.
- *
- * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
- *
- * Returns: operation-specific status or value as documented by the function
- *
- * Since: 1.0
- */
-int signet_key_store_validate_connect_secret(SignetKeyStore *ks,
-                                              const char *agent_id,
-                                              const char *provided_secret);
-
-/* Resolve and consume a connect_secret, returning the bound agent_id.
- * Returns 0 on success, 1 if no such secret exists, -1 on error.
- * Caller owns *out_agent_id (g_free). */
-/**
- * signet_key_store_consume_connect_secret:
- * @ks: (not nullable): a #SignetKeyStore
- * @provided_secret: (nullable): provided secret
- * @now: current Unix time in seconds
- * @out_agent_id: (out) (transfer full) (not nullable): return location for agent id
- *
- * Resolve and consume a connect_secret, returning the bound agent_id. Returns 0 on success, 1 if no such secret exists, -1 on error. Caller owns *out_agent_id (g_free).
- *
- * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
- *
- * Returns: operation-specific status or value as documented by the function
- *
- * Since: 1.0
- */
-int signet_key_store_consume_connect_secret(SignetKeyStore *ks,
-                                            const char *provided_secret,
-                                            int64_t now,
-                                            char **out_agent_id);
 
 /* Mint and persist a fresh one-time connect_secret for an EXISTING agent
  * (management agent/reissue-connect). The previous secret — consumed or not —

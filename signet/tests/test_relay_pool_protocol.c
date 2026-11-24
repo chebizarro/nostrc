@@ -289,7 +289,6 @@ static void test_subscribe_scoped_without_start(void) {
   for (int i = 0; i < 128; ++i) {
     CHECK(signet_relay_pool_subscribe_scoped(rp, kinds, 2,
       "abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234", i + 1) == 0);
-    CHECK(signet_relay_pool_subscribe_kinds(rp, kinds, 2) == 0);
   }
 
   signet_relay_pool_free(rp);
@@ -639,7 +638,8 @@ static void wire_event(const SignetRelayEventView *event, void *data) {
     CHECK(stats.accepted == 1); /* OK precedes EVENT on this same connection */
     g_atomic_int_set(&w->replied, TRUE);
     int barrier_kind[] = {12346};
-    CHECK(!signet_relay_pool_subscribe_kinds(w->pool, barrier_kind, 1));
+    CHECK(!signet_relay_pool_subscribe_scoped(w->pool, barrier_kind, 1,
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 424242));
   }
 }
 static void wire_subscription(const char *url, const char *state, const char *reason, void *data) {

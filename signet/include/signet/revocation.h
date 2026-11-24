@@ -57,44 +57,6 @@ SignetDenyList *signet_deny_list_new(struct SignetStore *store);
  */
 void signet_deny_list_free(SignetDenyList *dl);
 
-/* Add a pubkey to the deny list.
- * reason may be NULL.
- * Returns 0 on success, -1 on error. */
-/**
- * signet_deny_list_add:
- * @dl: (not nullable): a #SignetDenyList
- * @pubkey_hex: (not nullable): public key in hexadecimal form
- * @agent_id: (not nullable): agent identifier
- * @reason: (nullable): reason
- * @now: current Unix time in seconds
- *
- * Add a pubkey to the deny list. reason may be NULL. Returns 0 on success, -1 on error.
- *
- * Returns: operation-specific status or value as documented by the function
- *
- * Since: 1.0
- */
-int signet_deny_list_add(SignetDenyList *dl,
-                          const char *pubkey_hex,
-                          const char *agent_id,
-                          const char *reason,
-                          int64_t now);
-
-/* Remove a pubkey from the deny list.
- * Returns 0 on success, 1 if not found, -1 on error. */
-/**
- * signet_deny_list_remove:
- * @dl: (not nullable): a #SignetDenyList
- * @pubkey_hex: (not nullable): public key in hexadecimal form
- *
- * Remove a pubkey from the deny list. Returns 0 on success, 1 if not found, -1 on error.
- *
- * Returns: operation-specific status or value as documented by the function
- *
- * Since: 1.0
- */
-int signet_deny_list_remove(SignetDenyList *dl, const char *pubkey_hex);
-
 /* Check if a pubkey is denied. Returns true if in deny list. */
 /**
  * signet_deny_list_contains:

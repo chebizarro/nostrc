@@ -6,8 +6,6 @@
  */
 
 #include "signet/bootstrap_delivery.h"
-#include "signet/store.h"
-#include "signet/store_tokens.h"
 #include "signet/relay_pool.h"
 
 #include <stdlib.h>
@@ -15,7 +13,6 @@
 #include <inttypes.h>
 
 #include <glib.h>
-#include <sqlite3.h>
 #include <nostr-event.h>
 #include <nostr/nip17/nip17.h>
 #include <json.h>
@@ -180,50 +177,6 @@ int signet_bootstrap_send_ack(const char *agent_sk_hex,
   free(event_json);
 
   return rc;
-}
-
-/* ----------------------------- reissue check ------------------------------- */
-
-bool signet_bootstrap_needs_reissue(SignetStore *store,
-                                      const char *agent_id,
-                                      int64_t now) {
-  if (!store || !agent_id) return false;
-
-  /* Check if agent has been bootstrapped (has a key in the store). */
-  SignetAgentRecord rec;
-  memset(&rec, 0, sizeof(rec));
-  int rc = signet_store_get_agent(store, agent_id, &rec);
-
-  if (rc == 0) {
-    /* Agent already exists — no reissue needed. */
-    signet_agent_record_clear(&rec);
-    return false;
-  }
-
-  /* Agent doesn't exist yet — check if there's an active (non-expired,
-   * non-consumed) token for this agent. If a valid token exists, no reissue
-   * is needed. If all tokens are expired or consumed, reissue. */
-  sqlite3 *db = signet_store_get_db(store);
-  if (!db) return true; /* can't check — assume reissue needed */
-
-  const char *sql =
-      "SELECT COUNT(*) FROM bootstrap_tokens "
-      "WHERE agent_id = ? AND used_at IS NULL AND expires_at >= ?;";
-  sqlite3_stmt *stmt = NULL;
-  rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
-  if (rc != SQLITE_OK) return true; /* query failed — assume reissue needed */
-
-  sqlite3_bind_text(stmt, 1, agent_id, -1, SQLITE_TRANSIENT);
-  sqlite3_bind_int64(stmt, 2, now);
-
-  int active_tokens = 0;
-  if (sqlite3_step(stmt) == SQLITE_ROW) {
-    active_tokens = sqlite3_column_int(stmt, 0);
-  }
-  sqlite3_finalize(stmt);
-
-  /* If there are active, unexpired tokens, no reissue needed. */
-  return (active_tokens == 0);
 }
 
 /* ----------------------------- cleanup ------------------------------------- */

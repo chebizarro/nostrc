@@ -17,6 +17,7 @@
 #include "signet/store_leases.h"
 #include "signet/store_secrets.h"
 
+#include "test_deny_list_fixture.h"
 #include "test_check.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -325,14 +326,16 @@ int main(void) {
   delivery_req.expected_version = 0;
 
   /* The recipient of a mediated delivery is held to the deny list too. */
-  CHECK(signet_deny_list_add(deny, PUBKEY_B, "agent-b", "test", now) == 0);
+  deny = test_set_denied(store, deny, PUBKEY_B, "agent-b", now, true);
+  ctx.deny = deny;
   delivery_req.requester_pubkey = PUBKEY_B;
   CHECK(signet_credential_access_acquire(&ctx, &delivery_req, now, &grant) ==
         SIGNET_CRED_ACCESS_DENY_LISTED);
   expected_entries++;
   CHECK(grant.record.payload == NULL);
   CHECK(leases_for(store, cred_a) == leases_before);
-  CHECK(signet_deny_list_remove(deny, PUBKEY_B) == 0);
+  deny = test_set_denied(store, deny, PUBKEY_B, NULL, now, false);
+  ctx.deny = deny;
   delivery_req.requester_pubkey = NULL;
 
   /* Concurrent encrypted deliveries each get an independent lease which is
@@ -377,11 +380,13 @@ int main(void) {
                                        "token-access") == 0);
 
   /* 7. Deny-list precedence: capability held, still refused. */
-  CHECK(signet_deny_list_add(deny, PUBKEY_A, "agent-a", "test", now) == 0);
+  deny = test_set_denied(store, deny, PUBKEY_A, "agent-a", now, true);
+  ctx.deny = deny;
   CHECK(acquire(&ctx, "agent-a", cred_a, SIGNET_CAP_CREDENTIAL_GET_TOKEN,
                  NULL, false, now, &grant) == SIGNET_CRED_ACCESS_DENY_LISTED);
   expected_entries++;
-  CHECK(signet_deny_list_remove(deny, PUBKEY_A) == 0);
+  deny = test_set_denied(store, deny, PUBKEY_A, NULL, now, false);
+  ctx.deny = deny;
 
   /* 8. Expiry enforced at retrieval. */
   CHECK(acquire(&ctx, "agent-a", cred_a, SIGNET_CAP_CREDENTIAL_GET_TOKEN,

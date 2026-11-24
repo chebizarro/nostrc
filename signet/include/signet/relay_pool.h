@@ -178,28 +178,9 @@ int signet_relay_pool_start(SignetRelayPool *rp);
  */
 void signet_relay_pool_stop(SignetRelayPool *rp);
 
-/* Update subscribed kinds. Thread-safe.
- * Passing n_kinds=0 clears subscription intent. */
-/**
- * signet_relay_pool_subscribe_kinds:
- * @rp: (not nullable): a #SignetRelayPool
- * @kinds: (not nullable) (array): kinds
- * @n_kinds: number of elements
- *
- * Update subscribed kinds. Thread-safe. Passing n_kinds=0 clears subscription intent.
- *
- * Thread safety: this function is safe to call concurrently; access is serialized internally where required.
- *
- * Returns: operation-specific status or value as documented by the function
- *
- * Since: 1.0
- */
-int signet_relay_pool_subscribe_kinds(SignetRelayPool *rp, const int *kinds, size_t n_kinds);
-
 /* NPA-04: Subscribe with scoped filters.
- * Extends subscribe_kinds with optional #p tag (recipient pubkey) and since
- * timestamp. This reduces relay bandwidth by only receiving events addressed
- * to our pubkey and avoids replaying old events after reconnect.
+ * The optional #p tag (recipient pubkey) limits delivery to addressed events;
+ * the optional since timestamp limits replay after reconnect.
  * Pass pubkey_hex=NULL to omit #p tag. Pass since=0 to omit since. */
 /**
  * signet_relay_pool_subscribe_scoped:
@@ -209,7 +190,7 @@ int signet_relay_pool_subscribe_kinds(SignetRelayPool *rp, const int *kinds, siz
  * @pubkey_hex: (not nullable): public key in hexadecimal form
  * @since: since
  *
- * NPA-04: Subscribe with scoped filters. Extends subscribe_kinds with optional #p tag (recipient pubkey) and since timestamp. This reduces relay bandwidth by only receiving events addressed to our pubkey and avoids replaying old events after reconnect. Pass pubkey_hex=NULL to omit #p tag. Pass since=0 to omit since.
+ * Subscribe with an optional #p tag (recipient pubkey) and since timestamp to limit relay delivery and replay. Pass pubkey_hex=NULL to omit #p tag. Pass since=0 to omit since.
  *
  * Thread safety: this function is safe to call concurrently; access is serialized internally where required.
  *

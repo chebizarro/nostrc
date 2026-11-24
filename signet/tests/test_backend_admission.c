@@ -13,6 +13,7 @@
 #include <sqlite3.h>
 #include <time.h>
 #include <unistd.h>
+#include "test_deny_list_fixture.h"
 #include "test_check.h"
 
 #define MASTER "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -186,7 +187,7 @@ static void test_authenticated_ingress(void) {
   JsonObject *r=call(&f,f.boot_pk,"open",SNAP,NULL);json_object_unref(r);g_free(args);g_free(req);
   args=bound(&f,"\"op_id\":\"" OP "\",\"class\":\"STARTUP\",\"argument_digest\":\"" HASH "\"," SNAP);req=request("begin",args);
   gift(&f,f.clone_sk,req);CHECK(count(&f,"SELECT count(*) FROM backend_admission_ops")==0);
-  SignetDenyList *deny=signet_deny_list_new(f.store);CHECK(deny);CHECK(signet_deny_list_add(deny,f.boot_pk,NULL,"fixture",time(NULL))==0);signet_mgmt_handler_set_deny_list(f.mgmt,deny);
+  SignetDenyList *deny=test_set_denied(f.store,NULL,f.boot_pk,NULL,time(NULL),true);signet_mgmt_handler_set_deny_list(f.mgmt,deny);
   gift(&f,f.boot_sk,req);CHECK(count(&f,"SELECT count(*) FROM backend_admission_ops")==0);
   signet_mgmt_handler_set_deny_list(f.mgmt,NULL);signet_deny_list_free(deny);
   gift(&f,f.boot_sk,req);gift(&f,f.boot_sk,req);CHECK(count(&f,"SELECT count(*) FROM backend_admission_ops")==1);

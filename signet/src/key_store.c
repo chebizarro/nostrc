@@ -340,44 +340,6 @@ void signet_key_store_free(SignetKeyStore *ks) {
   free(ks);
 }
 
-bool signet_key_store_load_agent_key(SignetKeyStore *ks,
-                                     const char *agent_id,
-                                     SignetLoadedKey *out_key) {
-  if (!ks || !agent_id || !out_key) return false;
-  memset(out_key, 0, sizeof(*out_key));
-
-  g_mutex_lock(&ks->mu);
-
-  SignetCacheEntry *entry = (SignetCacheEntry *)g_hash_table_lookup(ks->cache, agent_id);
-  /* Persisted keys can become fenced at any time on another connection. A
-   * raw copy would outlive that transfer, so no persisted key may escape. */
-  if (!entry || ks->store) {
-    g_mutex_unlock(&ks->mu);
-    return false;
-  }
-
-  /* Copy the secret key into a fresh locked allocation. */
-  uint8_t *sk_copy = (uint8_t *)sodium_malloc(32);
-  if (!sk_copy) {
-    g_mutex_unlock(&ks->mu);
-    return false;
-  }
-  memcpy(sk_copy, entry->secret_key, 32);
-
-  out_key->secret_key = sk_copy;
-  out_key->secret_key_len = 32;
-  out_key->loaded_at = entry->loaded_at;
-  out_key->expires_at = 0;
-
-  /* Touch the last_used in the backing store (best-effort). */
-  if (ks->store) {
-    signet_store_touch_agent(ks->store, agent_id, (int64_t)time(NULL));
-  }
-
-  g_mutex_unlock(&ks->mu);
-  return true;
-}
-
 int signet_key_store_with_signing_key(SignetKeyStore *ks,
                                       const char *agent_id,
                                       const char *client,
@@ -543,23 +505,6 @@ int signet_key_store_crypt_legacy(SignetKeyStore *ks, const char *agent_id,
                                   const char *method, const char *peer_pubkey,
                                   const char *input, char **out_result) {
   return signet_key_store_crypt_in_custody(ks, agent_id, NULL,
-                                           method, peer_pubkey, input,
-                                           out_result);
-}
-
-int signet_key_store_crypt_nip44(SignetKeyStore *ks, const char *agent_id,
-                                 const char *client,
-                                 const char *method, const char *peer_pubkey,
-                                 const char *input, char **out_result) {
-  if (!client || !method ||
-      (strcmp(method, "nip44_encrypt") != 0 &&
-       strcmp(method, "nip44_decrypt") != 0 &&
-       strcmp(method, "nip44_encrypt_b64") != 0 &&
-       strcmp(method, "nip44_decrypt_b64") != 0)) {
-    if (out_result) *out_result = NULL;
-    return -1;
-  }
-  return signet_key_store_crypt_in_custody(ks, agent_id, client,
                                            method, peer_pubkey, input,
                                            out_result);
 }
@@ -938,66 +883,6 @@ done:
   g_mutex_unlock(&ks->mu);
   free(pk_hex);
   return result;
-}
-
-int signet_key_store_validate_connect_secret(SignetKeyStore *ks,
-                                              const char *agent_id,
-                                              const char *provided_secret) {
-  if (!ks || !agent_id) return -1;
-
-  g_mutex_lock(&ks->mu);
-
-  if (!ks->store) {
-    /* No backing store — no secret to validate. */
-    g_mutex_unlock(&ks->mu);
-    return 1; /* no secret required */
-  }
-
-  SignetAgentRecord rec;
-  memset(&rec, 0, sizeof(rec));
-  int rc = signet_store_get_agent(ks->store, agent_id, &rec);
-  if (rc != 0) {
-    g_mutex_unlock(&ks->mu);
-    return -1; /* agent not found or error */
-  }
-
-  int result;
-  if (!rec.connect_secret || !rec.connect_secret[0]) {
-    /* No connect_secret set — already consumed or never had one. */
-    result = 1; /* no secret required */
-  } else if (!provided_secret || !provided_secret[0]) {
-    /* Secret required but not provided. */
-    result = -1;
-  } else if (g_strcmp0(rec.connect_secret, provided_secret) == 0) {
-    /* Match! Consume the secret so it can't be reused. */
-    signet_store_consume_connect_secret(ks->store, agent_id);
-    result = 0;
-  } else {
-    /* Mismatch. */
-    result = -1;
-  }
-
-  signet_agent_record_clear(&rec);
-  g_mutex_unlock(&ks->mu);
-  return result;
-}
-
-int signet_key_store_consume_connect_secret(SignetKeyStore *ks,
-                                            const char *provided_secret,
-                                            int64_t now,
-                                            char **out_agent_id) {
-  if (out_agent_id) *out_agent_id = NULL;
-  if (!ks || !provided_secret || !provided_secret[0] || !out_agent_id) return -1;
-
-  g_mutex_lock(&ks->mu);
-  if (!ks->store) {
-    g_mutex_unlock(&ks->mu);
-    return -1;
-  }
-
-  int rc = signet_store_consume_connect_secret_value(ks->store, provided_secret, now, out_agent_id);
-  g_mutex_unlock(&ks->mu);
-  return rc;
 }
 
 /* ------------------- cache-only NIP-46 client bindings ------------------- */

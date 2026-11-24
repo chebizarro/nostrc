@@ -114,44 +114,6 @@ static void signet_deny_list_cache_add(SignetDenyList *dl,
   g_mutex_unlock(&dl->mu);
 }
 
-int signet_deny_list_add(SignetDenyList *dl,
-                          const char *pubkey_hex,
-                          const char *agent_id,
-                          const char *reason,
-                          int64_t now) {
-  int rc = signet_deny_list_insert(dl, pubkey_hex, agent_id, reason, now);
-  if (rc == 0)
-    signet_deny_list_cache_add(dl, pubkey_hex, agent_id);
-  return rc;
-}
-
-int signet_deny_list_remove(SignetDenyList *dl, const char *pubkey_hex) {
-  if (!dl || !pubkey_hex) return -1;
-
-  struct sqlite3 *db = signet_store_get_db(dl->store);
-  if (!db) return -1;
-
-  const char *sql =
-      "DELETE FROM deny_list WHERE pubkey_hex = ?1";
-  sqlite3_stmt *stmt = NULL;
-  if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK)
-    return -1;
-
-  sqlite3_bind_text(stmt, 1, pubkey_hex, -1, SQLITE_TRANSIENT);
-  int step_rc = sqlite3_step(stmt);
-  int changes = sqlite3_changes(db);
-  sqlite3_finalize(stmt);
-
-  if (step_rc != SQLITE_DONE) return -1;
-  if (changes == 0) return 1; /* not found */
-
-  g_mutex_lock(&dl->mu);
-  g_hash_table_remove(dl->cache, pubkey_hex);
-  g_mutex_unlock(&dl->mu);
-
-  return 0;
-}
-
 bool signet_deny_list_contains(SignetDenyList *dl, const char *pubkey_hex) {
   if (!dl || !pubkey_hex) return false;
   g_mutex_lock(&dl->mu);
