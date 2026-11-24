@@ -4,6 +4,13 @@
 
 ### Incompatible pre-1.0 production changes
 
+- When enabled, D-Bus TCP now binds to `127.0.0.1` instead of all IPv4
+  interfaces. LAN deployments must set `[dbus] tcp_host` (or
+  `SIGNET_DBUS_TCP_HOST`) explicitly. TCP `GetToken` and `GetSession` are now
+  disabled by default; `tcp_allow_credentials = true` restores transport access
+  only, retains normal authorization, and logs a plaintext warning. Unix D-Bus
+  is unchanged. Restart to apply either new setting (`nostrc-y0q09`).
+
 - Disabled-profile HTTP `/bootstrap` no longer accepts a bearer token plus public
   key equality. Clients must send a signed, token-bound server-challenge event
   object in `auth_event` (purpose `signet-bootstrap`); the response rotates the

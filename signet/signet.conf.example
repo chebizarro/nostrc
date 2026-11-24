@@ -116,7 +116,14 @@ trusted_proxy_cidrs = 127.0.0.0/8;::1/128;
 [dbus]
 unix_enabled = false
 tcp_enabled = false
+# Restart required for D-Bus listener and credential settings.
+# Bind to loopback unless a LAN interface is explicitly needed.
+# Env: SIGNET_DBUS_TCP_HOST overrides tcp_host.
+tcp_host = 127.0.0.1
 tcp_port = 47472
+# GetToken/GetSession are blocked over plaintext TCP by default. True logs a
+# startup warning and lifts only the transport block, not capability checks.
+tcp_allow_credentials = false
 
 [nip5l]
 enabled = false

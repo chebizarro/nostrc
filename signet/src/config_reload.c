@@ -88,6 +88,9 @@ static size_t reload_warn_restart_only(const SignetConfig *live,
   n += reload_warn_bool("[dbus] tcp_enabled", live->dbus_tcp_enabled,
                         cand->dbus_tcp_enabled);
   n += reload_warn_int("[dbus] tcp_port", live->dbus_tcp_port, cand->dbus_tcp_port);
+  n += reload_warn_str("[dbus] tcp_host", live->dbus_tcp_host, cand->dbus_tcp_host);
+  n += reload_warn_bool("[dbus] tcp_allow_credentials", live->dbus_tcp_allow_credentials,
+                        cand->dbus_tcp_allow_credentials);
   n += reload_warn_bool("[nip5l] enabled", live->nip5l_enabled, cand->nip5l_enabled);
   n += reload_warn_str("[nip5l] socket_path", live->nip5l_socket_path,
                        cand->nip5l_socket_path);

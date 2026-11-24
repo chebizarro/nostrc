@@ -1040,11 +1040,12 @@ bool passkeys_start_failed = false;
 
   /* 8e) D-Bus TCP transport */
   if (cfg.dbus_tcp_enabled) {
-    char tcp_addr[128];
-    snprintf(tcp_addr, sizeof(tcp_addr), "tcp:host=0.0.0.0,port=%d",
-             cfg.dbus_tcp_port > 0 ? cfg.dbus_tcp_port : 47472);
+    g_autofree char *host = g_dbus_address_escape_value(cfg.dbus_tcp_host);
+    g_autofree char *tcp_addr = g_strdup_printf("tcp:host=%s,port=%d", host,
+        cfg.dbus_tcp_port > 0 ? cfg.dbus_tcp_port : 47472);
     SignetDbusTcpServerConfig dt_cfg = {
       .listen_address = tcp_addr,
+      .allow_credentials = cfg.dbus_tcp_allow_credentials,
       .keys = keys,
       .policy = cap_registry,
       .store = base_store,
@@ -1061,6 +1062,8 @@ bool passkeys_start_failed = false;
       dbus_tcp = NULL;
     } else if (dbus_tcp) {
       g_message("[signetd] D-Bus TCP transport started on %s", tcp_addr);
+      if (cfg.dbus_tcp_allow_credentials)
+        g_warning("[signetd] [dbus] tcp_allow_credentials=true: D-Bus TCP may send credentials in plaintext");
     }
   }
 

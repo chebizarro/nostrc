@@ -232,6 +232,7 @@ void signet_config_init(SignetConfig *cfg) {
 
   cfg->log_level = SIGNET_LOG_INFO;
   cfg->health_port = 8080;
+  g_strlcpy(cfg->dbus_tcp_host, "127.0.0.1", sizeof(cfg->dbus_tcp_host));
   cfg->bootstrap_require_tls = true;
   cfg->bootstrap_trusted_proxy_cidrs = signet_parse_csv("127.0.0.0/8,::1/128", &cfg->n_bootstrap_trusted_proxy_cidrs);
 
@@ -407,6 +408,14 @@ static void signet_config_load_keyfile(GKeyFile *kf, SignetConfig *cfg) {
     cfg->dbus_tcp_port = g_key_file_get_integer(kf, "dbus", "tcp_port", NULL);
   else
     cfg->dbus_tcp_port = 47472;
+  val = g_key_file_get_string(kf, "dbus", "tcp_host", NULL);
+  if (val) {
+    if (g_strlcpy(cfg->dbus_tcp_host, val, sizeof(cfg->dbus_tcp_host)) >= sizeof(cfg->dbus_tcp_host))
+      cfg->dbus_tcp_host[0] = '\0'; /* Reject rather than bind a truncated host. */
+    g_free(val);
+  }
+  if (g_key_file_has_key(kf, "dbus", "tcp_allow_credentials", NULL))
+    cfg->dbus_tcp_allow_credentials = g_key_file_get_boolean(kf, "dbus", "tcp_allow_credentials", NULL);
 
   /* [nip5l] */
   if (g_key_file_has_key(kf, "nip5l", "enabled", NULL))
@@ -590,6 +599,10 @@ static int signet_config_apply_env(SignetConfig *cfg) {
 
   val = g_getenv("SIGNET_DBUS_TCP_PORT");
   if (val) cfg->dbus_tcp_port = signet_parse_port(val);
+
+  val = g_getenv("SIGNET_DBUS_TCP_HOST");
+  if (val && g_strlcpy(cfg->dbus_tcp_host, val, sizeof(cfg->dbus_tcp_host)) >= sizeof(cfg->dbus_tcp_host))
+    cfg->dbus_tcp_host[0] = '\0';
 
   val = g_getenv("SIGNET_NIP5L");
   if (val) cfg->nip5l_enabled = (atoi(val) != 0 || g_ascii_strcasecmp(val, "true") == 0);
@@ -848,6 +861,12 @@ int signet_config_validate(const SignetConfig *cfg, char *err_buf, size_t err_bu
   if (cfg->dbus_tcp_port < 0 || cfg->dbus_tcp_port > 65535) {
     if (err_buf && err_buf_len > 0)
       snprintf(err_buf, err_buf_len, "D-Bus TCP port must be in range 0..65535");
+    return -1;
+  }
+
+  if (cfg->dbus_tcp_enabled && !cfg->dbus_tcp_host[0]) {
+    if (err_buf && err_buf_len > 0)
+      snprintf(err_buf, err_buf_len, "D-Bus TCP host must be nonempty and at most 255 bytes");
     return -1;
   }
 
