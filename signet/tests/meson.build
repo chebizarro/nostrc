@@ -263,7 +263,7 @@ test_backend_admission = executable('test_backend_admission',
 test_mgmt_replay = executable('test_mgmt_replay',
   'test_mgmt_replay.c',
   link_with: signet_core,
-  include_directories: signet_includes,
+  include_directories: [signet_includes, include_directories('../src')],
   dependencies: signet_deps + [in_tree_dep],
   c_args: signet_test_c_args,
   install: false,
@@ -396,6 +396,11 @@ test('db_migration', test_db_migration)
 test('adopt_existing', test_adopt_existing)
 test('reissue_connect', test_reissue_connect)
 test('mgmt_replay', test_mgmt_replay)
+test('mgmt_agent_id', test_mgmt_replay, args: ['--agent-id'])
+if get_option('signet_enable_test_hooks')
+  test('mgmt_result_json', test_mgmt_replay, args: ['--result-json'])
+  test('nip46_result_json', test_client_bindings, args: ['--result-json'])
+endif
 test('backend_admission', test_backend_admission)
 test('pubkey_backfill', test_pubkey_backfill)
 test('reissue_self_service', test_reissue_self_service)
@@ -474,6 +479,12 @@ test('mgmt_ingress_wire', find_program('python3'),
   timeout: 30,
 )
   # End management ingress boundary block.
+if get_option('signet_enable_test_hooks')
+  test('mgmt_delivery_json', find_program('python3'),
+    args: [meson.current_source_dir() / 'test_mgmt_ingress_wire.py',
+           test_mgmt_replay.full_path(), '--delivery-json'],
+    depends: test_mgmt_replay, timeout: 30)
+endif
   test('backend_admission_daemon', find_program('python3'),
     args: [meson.current_source_dir() / 'test_backend_admission_daemon.py',
            signetd_exe.full_path(), backend_admission_fixture.full_path()],
