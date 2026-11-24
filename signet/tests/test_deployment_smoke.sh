@@ -30,8 +30,12 @@ if su -s /bin/sh signet -c 'signet-inspect-store state'; then exit 1; fi
 mv /data/signet.db /data/saved.db
 if su -s /bin/sh signet -c 'signet-inspect-store state'; then exit 1; fi
 test ! -e /data/signet.db
-! ldd /usr/local/bin/signetd | grep -q 'not found'
-! ldd /usr/local/bin/signetctl | grep -q 'not found'
+for binary in signetd signetctl signet-inspect-store; do
+    linkage=$(ldd "/usr/local/bin/$binary")
+    case "$linkage" in
+        *'not found'*) printf '%s\n' "$linkage" >&2; exit 1 ;;
+    esac
+done
 echo 'Runtime SQLCipher inspection, wrong-key and no-create refusals: PASS'
 SH
     ;;

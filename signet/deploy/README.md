@@ -19,15 +19,18 @@ connection is protected and credential access over TCP is required.
 
 ## Release inputs and trust
 
-`versions.env` selects Debian/Caddy by registry digest and CMake/Meson and host
-Docker/Compose/containerd by version. `build-image.sh OFF|ON` reads these pins;
-`--target test` executes the libnostr outbound TLS regression
+Both release variants use Debian 13 (`trixie-slim`) for the builder and runtime.
+`versions.env` pins its multi-architecture index and the Caddy images by digest,
+and CMake/Meson and host Docker/Compose/containerd by version. `build-image.sh
+OFF|ON` defaults to `linux/amd64`; pass `--platform linux/arm64` for native arm64
+verification. `--target test` executes the libnostr outbound TLS regression
 (`test_connection_tls_no_resumption`: ClientHello settings, untrusted-CA and
 wrong-hostname refusal) and BOTH SQLite and SQLCipher Meson suites. Runtime builds
 use SQLCipher, disable test hooks and contain only the daemon, CLI, required
 libraries, curl and a read-only SQLCipher inspection tool. libcbor is installed
-only for the passkeys variant. Package inventories and both `ldd` reports are in
-`/usr/share/signet/`. Apt inputs are recorded, not claimed byte-reproducible.
+only for the passkeys variant. `/usr/share/signet/` contains the build and runtime
+package inventories and `ldd` reports for `signetd`, `signetctl`, and
+`signet-inspect-store`. Apt inputs are recorded, not claimed byte-reproducible.
 
 `signet-release.yml` checks all four authoritative version sources, calls Signet
 CI, tests and scans both images before publishing either. Manual builds use

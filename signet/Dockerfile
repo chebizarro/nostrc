@@ -33,9 +33,9 @@ FROM builder AS test
 RUN apt-get update && apt-get install -y --no-install-recommends dbus-daemon libglib2.0-bin \
  && rm -rf /var/lib/apt/lists/*
 # Keep testing out of the runtime builder; compile only the outbound TLS regression
-# and its dependencies, without the unrelated GObject/test-framework trees.
+# and its dependencies, without the unrelated GObject, test-framework or FIPS trees.
 RUN cmake -B build-docker -DBUILD_TESTING=ON \
-      -DBUILD_NOSTR_GOBJECT=OFF -DBUILD_TESTING_FRAMEWORK=OFF \
+      -DBUILD_NOSTR_GOBJECT=OFF -DBUILD_TESTING_FRAMEWORK=OFF -DBUILD_FIPS=OFF \
  && cmake --build build-docker --target test_connection_tls_no_resumption -j2 \
  && ctest --test-dir build-docker/tests --output-on-failure --no-tests=error \
       -R '^test_connection_tls_no_resumption$'
@@ -64,10 +64,10 @@ LABEL org.opencontainers.image.source=$SOURCE_URL \
       org.opencontainers.image.licenses=MIT
 RUN case "$SIGNET_PASSKEYS" in ON|OFF) ;; *) exit 1;; esac \
  && apt-get update && apt-get install -y --no-install-recommends \
-    libglib2.0-0 libjson-glib-1.0-0 libjansson4 libssl3 libsqlcipher0 \
-    libsodium23 libmicrohttpd12 libsecp256k1-1 libnsync1 libwebsockets17 \
-    libcurl4 ca-certificates curl sqlcipher \
- && if [ "$SIGNET_PASSKEYS" = ON ]; then apt-get install -y --no-install-recommends libcbor0.8; fi \
+    libglib2.0-0t64 libjson-glib-1.0-0 libjansson4 libssl3t64 libsqlcipher1 \
+    libsodium23 libmicrohttpd12t64 libsecp256k1-2 libnsync1t64 libwebsockets19t64 \
+    libcurl4t64 ca-certificates curl sqlcipher \
+ && if [ "$SIGNET_PASSKEYS" = ON ]; then apt-get install -y --no-install-recommends libcbor0.10; fi \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd -g 10001 signet \
  && useradd -u 10001 -g 10001 -d /data -s /usr/sbin/nologin signet \
@@ -82,11 +82,12 @@ COPY --from=builder /src/build-docker/nips/nip04/libnip04.so* /usr/local/lib/
 COPY --from=builder /src/build-docker/nips/nip19/libnip19.so* /usr/local/lib/
 COPY --from=builder /src/build-docker/nips/nip44/libnip44.so* /usr/local/lib/
 COPY --from=builder /src/build-docker/nips/nip46/libnip46.so* /usr/local/lib/
+COPY --from=builder /src/build-docker/signet-inspect-store /usr/local/bin/signet-inspect-store
 RUN ldconfig \
  && ldd /usr/local/bin/signetd > /usr/share/signet/ldd-signetd.txt \
  && ldd /usr/local/bin/signetctl > /usr/share/signet/ldd-signetctl.txt \
+ && ldd /usr/local/bin/signet-inspect-store > /usr/share/signet/ldd-signet-inspect-store.txt \
  && ! grep -q 'not found' /usr/share/signet/ldd-*.txt
-COPY --from=builder /src/build-docker/signet-inspect-store /usr/local/bin/signet-inspect-store
 USER 10001:10001
 ENTRYPOINT ["signetd"]
 CMD ["-c", "/etc/signet/signet.conf"]

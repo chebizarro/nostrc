@@ -77,6 +77,7 @@ class DeploymentContracts(unittest.TestCase):
                          '-DSIGNET_ENABLE_TEST_HOOKS=OFF', 'AS test',
                          'build-meson-sqlite', 'build-meson-sqlcipher',
                          'ldd /usr/local/bin/signetd', 'ldd /usr/local/bin/signetctl',
+                         'ldd /usr/local/bin/signet-inspect-store',
                          'USER 10001:10001', '"/etc/signet/signet.conf"'):
             self.assertIn(required, d)
         self.assertNotIn('setcap', d)

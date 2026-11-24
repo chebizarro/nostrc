@@ -23,6 +23,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <assert.h>
+#include <unistd.h>
 
 #include <glib.h>
 
@@ -616,6 +617,7 @@ typedef struct {
   SignetRelayPool *pool;
   GMainLoop *loop;
   const char *json;
+  int replacement_ready_fd;
   int boundaries;
   gboolean replied;
   gboolean complete;
@@ -652,6 +654,7 @@ static void wire_subscription(const char *url, const char *state, const char *re
       CHECK(!signet_relay_pool_subscribe_scoped(w->pool, kinds, 1,
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 424242));
       CHECK(!signet_relay_pool_is_subscribed(w->pool));
+      CHECK(write(w->replacement_ready_fd, "R", 1) == 1);
     } else if (w->boundaries == 2) {
       CHECK(!signet_relay_pool_publish_reply(w->pool, w->json));
     }
@@ -668,8 +671,9 @@ static void wire_subscription(const char *url, const char *state, const char *re
   }
 }
 static int test_wire(int argc, char **argv) {
-  CHECK(argc == 4);
-  Wire w = {.expect_timeout = !strcmp(argv[1], "--wire-timeout")};
+  CHECK(argc == 5);
+  Wire w = {.expect_timeout = !strcmp(argv[1], "--wire-timeout"),
+            .replacement_ready_fd = atoi(argv[4])};
   w.loop = g_main_loop_new(NULL, FALSE);
   const char *urls[] = {argv[2], argv[3]};
   SignetRelayPoolConfig cfg = {.relays = urls, .n_relays = 2,

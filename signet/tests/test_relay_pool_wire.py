@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import os
+import select
 import signal
 import socket
 import struct
@@ -117,7 +118,7 @@ class Relay:
 def pool_wire(binary, timeout=False):
     shared = {'a_sid': None, 'old_sid': None, 'signed': None, 'events': 0}
     b_subscribed = threading.Event()
-    a = None
+    replacement_read_fd, replacement_write_fd = os.pipe()
     active = {'a': set(), 'b': set()}
 
     def primary(relay, frame):
@@ -134,6 +135,10 @@ def pool_wire(binary, timeout=False):
             shared['old_sid'], shared['a_sid'] = shared['a_sid'], sid
             if filt['since'] == 424242:
                 assert b_subscribed.wait(10), 'secondary never subscribed'
+                # Let the driver check that replacing a REQ clears readiness
+                # before the new EOSE can legitimately set it again.
+                assert select.select([replacement_read_fd], [], [], 10)[0], 'no pre-EOSE check'
+                assert os.read(replacement_read_fd, 1) == b'R'
                 if shared['old_sid']:
                     relay.send(['EOSE', shared['old_sid']])
             relay.send(['EOSE', sid])
@@ -164,13 +169,20 @@ def pool_wire(binary, timeout=False):
     a = Relay(primary)
     b = Relay(secondary)
     try:
-        result = subprocess.run([binary, '--wire-timeout' if timeout else '--wire', a.url, b.url], capture_output=True, text=True, timeout=25)
+        result = subprocess.run(
+            [binary, '--wire-timeout' if timeout else '--wire', a.url, b.url,
+             str(replacement_write_fd)], pass_fds=(replacement_write_fd,),
+            capture_output=True, text=True, timeout=25)
         assert result.returncode == 0, result.stdout + result.stderr
         assert shared['events'] == 2, shared
         print(result.stdout.strip())
     finally:
-        a.close()
-        b.close()
+        try:
+            a.close()
+            b.close()
+        finally:
+            os.close(replacement_read_fd)
+            os.close(replacement_write_fd)
 
 
 def reconnect_wire(binary):

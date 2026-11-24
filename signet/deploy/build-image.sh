@@ -10,7 +10,11 @@ source "$here/versions.env"
 variant=${1:?usage: build-image.sh ON|OFF [docker buildx build options]}
 shift
 [[ $variant == ON || $variant == OFF ]]
-exec docker buildx build --platform linux/amd64 -f "$root/signet/Dockerfile" \
+platform=(--platform linux/amd64)
+for option in "$@"; do
+  case "$option" in --platform|--platform=*) platform=(); break;; esac
+done
+exec docker buildx build ${platform[@]+"${platform[@]}"} -f "$root/signet/Dockerfile" \
   --build-arg "DEBIAN_IMAGE=$DEBIAN_IMAGE" --build-arg "CMAKE_VERSION=$CMAKE_VERSION" \
   --build-arg "MESON_VERSION=$MESON_VERSION" --build-arg "SIGNET_PASSKEYS=$variant" \
   --build-arg "REVISION=$(git -C "$root" rev-parse HEAD)" \
