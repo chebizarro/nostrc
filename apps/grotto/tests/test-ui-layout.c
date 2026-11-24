@@ -1203,8 +1203,21 @@ static void layout_activate(GApplication *application, gpointer data) {
     gtk_window_set_default_size(GTK_WINDOW(window), profile_widths[i] + profile_inset, 720);
     WAIT(gtk_widget_get_width(GTK_WIDGET(window)) == profile_widths[i]);
     g_assert_cmpint(gtk_widget_get_width(GTK_WIDGET(window)), ==, profile_widths[i]);
+    /* The window allocation is observable before the focus-restoration tick
+     * and the mapped dialog's own narrow-to-wide transition have completed. */
+    if (i > 0) {
+      WAIT(gtk_widget_get_mapped(GTK_WIDGET(profile_about)) &&
+           gtk_widget_get_width(GTK_WIDGET(profile_scroll)) > profile_widths[0]);
+      wait_frames(GTK_WIDGET(window));
+    }
     gtk_text_buffer_set_text(profile_buffer, biography->str, -1);
-    g_assert_true(gtk_widget_grab_focus(GTK_WIDGET(profile_about))); send_key(GTK_WINDOW(window), "ctrl+End");
+    /* Replacing the buffer puts the insertion mark at the end by itself. */
+    gtk_text_buffer_get_start_iter(profile_buffer, &start);
+    gtk_text_buffer_place_cursor(profile_buffer, &start);
+    focus_window(GTK_WINDOW(window));
+    g_assert_true(gtk_widget_grab_focus(GTK_WIDGET(profile_about)));
+    WAIT(gtk_widget_has_focus(GTK_WIDGET(profile_about)));
+    send_key(GTK_WINDOW(window), "ctrl+End");
     WAIT(text_cursor_offset(profile_buffer) == gtk_text_buffer_get_char_count(profile_buffer) &&
          gtk_widget_get_height(GTK_WIDGET(profile_about)) > gtk_widget_get_height(GTK_WIDGET(profile_scroll)) &&
          gtk_adjustment_get_value(profile_adjustment) > 0 && about_caret_visible(profile_about, window));
@@ -1212,6 +1225,7 @@ static void layout_activate(GApplication *application, gpointer data) {
     assert_about_caret_visible(profile_about, window);
     g_assert_cmpfloat(gtk_adjustment_get_value(profile_adjustment), >, 0);
     int chars_before_key = gtk_text_buffer_get_char_count(profile_buffer);
+    g_assert_true(gtk_widget_has_focus(GTK_WIDGET(profile_about)));
     send_key(GTK_WINDOW(window), "a");
     WAIT(gtk_text_buffer_get_char_count(profile_buffer) == chars_before_key + 1 &&
          about_caret_visible(profile_about, window));
