@@ -41,6 +41,7 @@
 #   NOSTRC_CTEST_QUARANTINE_PLATFORM=linux  opt in to named G12 baseline failures;
 #                              tests still run; sanitizer reports always block.
 #   JOBS                       build and test parallelism (default: container CPUs).
+#   RERUN_MAX=0                disable failure reruns for a qualification run.
 #   NOSTRC_SANITIZER_SHARED_PROFILE=ID  explicit shared phase-aware diagnostic.
 #                              Requires exact workflow/profile parity and the
 #                              phase-aware core; no legacy Ninja fallback.
@@ -145,6 +146,14 @@ if [ "$MODE" = sanitizers ]; then
     fi
 fi
 VOLUME="${NOSTRC_GATE_VOLUME:-$VOLUME}"
+
+SMOKE_GIT_MOUNT=()
+SMOKE_GIT_HEAD=
+if [ "$MODE" = smoke ]; then
+    SMOKE_GIT_HEAD="$(git -C "$SOURCE" rev-parse --verify HEAD)"
+    SMOKE_GIT_OBJECTS="$(git -C "$SOURCE" rev-parse --path-format=absolute --git-path objects)"
+    SMOKE_GIT_MOUNT=(-v "$SMOKE_GIT_OBJECTS:/gate-git-objects:ro")
+fi
 
 # Each invocation owns its container and its immutable build result, even if a
 # sibling checkout rebuilds the same human-readable image tag. Keep this small
@@ -274,6 +283,14 @@ fi
 rsync -rlc --delete --exclude=.git \
   --exclude=/build/ --exclude=/_build/ --exclude="/build-*/" --exclude="/cmake-build-*/" \
   /src/ /work/src/
+if [ "$MODE" = smoke ]; then
+  # The desktop contract resolves pinned screenshot blobs from Git history.
+  # Keep the copied tree independent: only the object store is shared, read-only.
+  git init -q --template= /work/src
+  mkdir -p /work/src/.git/objects/info
+  printf "%s\n" /gate-git-objects > /work/src/.git/objects/info/alternates
+  git -C /work/src update-ref --no-deref HEAD "$SMOKE_GIT_HEAD"
+fi
 echo "==> $GATE: source synced ($(stamp))"
 # QR pairing is mandatory in Groundhog; fail before configure if the image
 # loses its libqrencode development and runtime package.
@@ -401,7 +418,8 @@ docker run --rm --init --name "$RUN_ID" --label "org.nostrc.gate.run=$RUN_ID" \
     --cidfile "$RUN_STATE/container.id" --platform "linux/$ARCH" ${SIGNAL_MOUNT[@]+"${SIGNAL_MOUNT[@]}"} \
     ${SHARED_MOUNTS[@]+"${SHARED_MOUNTS[@]}"} \
     -e SHARED_PROFILE="$SHARED_PROFILE" -e SHARED_SOURCE="$SOURCE" -e RUN_ID="$RUN_ID" \
-    -e JOBS="${JOBS:-}" -e RUN_TESTS="${NOSTRC_GATE_LINUX_TESTS:-1}" \
+    ${SMOKE_GIT_MOUNT[@]+"${SMOKE_GIT_MOUNT[@]}"} -e SMOKE_GIT_HEAD="$SMOKE_GIT_HEAD" \
+    -e JOBS="${JOBS:-}" -e RUN_TESTS="${NOSTRC_GATE_LINUX_TESTS:-1}" -e RERUN_MAX="${RERUN_MAX:-}" \
     -e STRICT_CFLAGS="$STRICT_CFLAGS" -e SMOKE_EXCLUDE="$SMOKE_EXCLUDE" \
     -e VOLUME="$VOLUME" -e MODE="$MODE" -e GATE="$GATE" -e GATE_CONFIG="$GATE_CONFIG" \
     -e SANITIZER_TEST_JOBS="${NOSTRC_SANITIZER_TEST_JOBS:-}" \
