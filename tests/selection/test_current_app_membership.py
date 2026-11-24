@@ -13,8 +13,9 @@ APP_CHECKS = {
     'supported.apps.grotto.tests.private_bus',
 }
 
-# Suites deleted with the module they tested; no current check may claim them.
-RETIRED_SUITES = {'signer/hsm-provider', 'signer/social-recovery'}
+# Suites deleted with the module they tested, or because they tested only
+# their own mocks (signer/core); no current check may claim them.
+RETIRED_SUITES = {'signer/core', 'signer/hsm-provider', 'signer/social-recovery'}
 
 
 class CurrentAppMembership(unittest.TestCase):
@@ -38,7 +39,8 @@ class CurrentAppMembership(unittest.TestCase):
                         claims[name] = ident
                 # W4 replaces the retired dashboard model without rewriting the
                 # historical enrollment receipt; nostrc-83in5 deleted the unwired
-                # HSM and social-recovery modules together with their suites.
+                # HSM and social-recovery modules with their suites, and the
+                # mock-only signer/core suite.
                 current = {'signer/panel-inbox-model' if name == 'signer/home-model' else name
                            for name in data['registrations']} - RETIRED_SUITES
                 self.assertTrue(current <= claims.keys())

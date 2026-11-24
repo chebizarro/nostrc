@@ -269,25 +269,6 @@ set_tests_properties(signer/approval-dialog PROPERTIES
 )
 
 # ==============================================================================
-# Test: Core signer modules (secret_store, backup-recovery, session, relay)
-# Uses mock implementations to test core functionality without external dependencies
-# Issue: nostrc-ddh
-# ==============================================================================
-add_executable(test-core test-core.c)
-target_include_directories(test-core PRIVATE ${SIGNER_INCLUDE_DIRS})
-target_link_libraries(test-core PRIVATE ${SIGNER_TEST_LIBS})
-target_link_directories(test-core PRIVATE ${SIGNER_TEST_LINK_DIRS})
-target_compile_features(test-core PRIVATE c_std_11)
-apply_test_sanitizers(test-core)
-
-add_test(NAME signer/core COMMAND test-core)
-set_tests_properties(signer/core PROPERTIES
-    TIMEOUT 60
-    LABELS "signer;core;unit;secret_store;backup;session;relay"
-    ENVIRONMENT "GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/grotto"
-)
-
-# ==============================================================================
 # Test: Secure memory management
 # Issue: nostrc-ycd
 # ==============================================================================
@@ -355,7 +336,7 @@ set_tests_properties(signer/signer-core PROPERTIES
 # All signer tests target (convenience)
 # ==============================================================================
 add_custom_target(signer-tests
-    DEPENDS test-crypto test-identity test-session test-dbus test-rate-limiter test-ui test-approval-dialog test-core test-secure-mem test-signer-core
+    DEPENDS test-crypto test-identity test-session test-dbus test-rate-limiter test-ui test-approval-dialog test-secure-mem test-signer-core
     COMMENT "Building all grotto tests"
 )
 
