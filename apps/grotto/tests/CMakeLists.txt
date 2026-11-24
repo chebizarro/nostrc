@@ -650,11 +650,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (GNOSTR_ENABLE_ASAN OR GO_ENABLE_ASAN)
     target_compile_definitions(test-approval-controller PRIVATE
       GROTTO_GUI_LSAN_OPTIONS="suppressions=${CMAKE_CURRENT_SOURCE_DIR}/lsan.supp:print_suppressions=1")
   endif()
-  foreach(gui_suite signer/approval-integration signer/onboarding)
+  foreach(gui_suite signer/approval-integration signer/onboarding signer/ui-layout signer/ui-accessibility)
     if(TEST ${gui_suite})
       set_property(TEST ${gui_suite} APPEND PROPERTY ENVIRONMENT
         "LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/lsan.supp:print_suppressions=1")
     endif()
+  endforeach()
+  # Breakpoint snapshot ownership (nostrc-ccg7l) appears beneath nested GTK
+  # renders. Preserve inherited sanitizer settings while retaining that frame.
+  foreach(gui_suite signer/ui-layout signer/ui-accessibility)
+    set_property(TEST ${gui_suite} APPEND PROPERTY ENVIRONMENT_MODIFICATION
+      "ASAN_OPTIONS=string_append::malloc_context_size=100")
   endforeach()
 endif()
 

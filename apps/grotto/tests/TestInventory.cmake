@@ -56,7 +56,8 @@ foreach(suite ui-layout ui-accessibility dialog-sizing)
     TARGETS grotto_test_locales grotto_resources REQUIRES display private_bus
     INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/../../../gnome/grotto-panels/data/org.nostr.Grotto.Control1.xml"
       "${CMAKE_CURRENT_SOURCE_DIR}/../data/icons"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../po/es.po")
+      "${CMAKE_CURRENT_SOURCE_DIR}/../po/es.po"
+      "${CMAKE_CURRENT_SOURCE_DIR}/lsan.supp")
 endforeach()
 _grotto_test(signer/background test-background grotto.gui REQUIRES private_bus
   INPUTS "${CMAKE_CURRENT_BINARY_DIR}/../org.nostr.Grotto-autostart.desktop"

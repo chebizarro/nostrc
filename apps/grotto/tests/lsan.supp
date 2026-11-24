@@ -1,5 +1,5 @@
-# Linux ASAN GUI workers only: approval-integration, onboarding, and the
-# controller's separate presentation child (never its private-bus coordinator).
+# Linux ASAN GUI workers only: approval-integration, onboarding, layout,
+# accessibility, and the controller's presentation child (not its coordinator).
 # detect_leaks=1 stays on; no application/fixture allocations are exempt.
 # No module, allocator, GObject, GVariant or wildcard suppressions.
 # Matching Ubuntu debug symbols are required (also for inlined/static frames).
@@ -24,6 +24,11 @@ leak:gtk_file_system_model_got_enumerator
 # nostrc-ojtu3: GTK's path-bar callback also never unrefs the GFileInfo from
 # g_file_query_info_finish. Its allocation stack is the asynchronous GIO worker,
 # not the consuming GTK callback. Match that worker, NOT GObject/GLib allocators.
-# Restricted to these two GUI tests; neither Grotto nor their fixture owns/calls
+# Restricted to the GUI workers listed above; their code does not own/call
 # async file-info queries. Reassess this exception if that changes.
 leak:query_info_async_thread
+
+# nostrc-ccg7l: libadwaita 1.5.0 stores a snapshot in old_node on breakpoint
+# transitions, then drops the pointer without unref in breakpoint_changed_tick_cb.
+# Match the breakpoint snapshot owner, never a generic GTK/GSK allocation.
+leak:adw_breakpoint_bin_snapshot
