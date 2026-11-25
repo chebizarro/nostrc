@@ -2,6 +2,14 @@
 
 ## 0.10.0 (Unreleased)
 
+Release candidate `signet-v0.10.0-rc.1` was published on 2026-11-24 from
+`3ff50b762` (release run 45505993545):
+`ghcr.io/chebizarro/nostrc-signet@sha256:08200a3f5f4fd7c8f23758c3e6fbab60703ea75bb98cdb1fade191663bc8f97d`
+(default) and `@sha256:9203e883865ce496858e13572de57cda01c927b9d96b61e5cae0d69fc70c8a6f`
+(passkeys), both with verified SLSA provenance and SPDX SBOM attestations. It has
+not been drilled on a Droplet; do not promote it before the deployment drills
+are rerun.
+
 ### Incompatible pre-1.0 production changes
 
 - When enabled, D-Bus TCP now binds to `127.0.0.1` instead of all IPv4
